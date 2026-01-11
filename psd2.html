@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Editor Pro - Auto Segmentation</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
+
+        :root {
+            --bg-app: #121212;
+            --bg-panel: #1E1E1E;
+            --bg-header: #252526;
+            --bg-canvas: #0a0a0a;
+            --border: #333333;
+            --accent: #2979FF;
+            --text-main: #E0E0E0;
+            --text-muted: #888888;
+            --hover-item: #2A2A2B;
+            --active-item: #37373D;
+            --glass-bg: rgba(30, 30, 30, 0.75);
+            
+            /* Sizes */
+            --header-h: 40px;
+        }
+
+        * { box-sizing: border-box; user-select: none; outline: none; }
+        
+        body {
+            margin: 0;
+            background: var(--bg-app);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* --- Header --- */
+        header {
+            height: var(--header-h);
+            background: var(--bg-header);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .logo { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+        .logo span { width: 14px; height: 14px; background: var(--accent); border-radius: 3px; }
+        .menu { display: flex; gap: 15px; font-size: 12px; color: #ccc; }
+        .menu div:hover { color: white; cursor: pointer; }
+
+        /* --- Main Layout --- */
+        .workspace {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Panels Common Styles */
+        .panel {
+            background: var(--bg-panel);
+            display: flex;
+            flex-direction: column;
+            min-width: 200px; /* Min width constraint */
+            max-width: 500px;
+        }
+
+        .panel-header {
+            padding: 10px 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            background: #222;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .scroll-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+        .scroll-area::-webkit-scrollbar { width: 6px; }
+        .scroll-area::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+        /* --- LEFT PANEL (Tools & Settings) --- */
+        #leftPanel { width: 260px; }
+
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr); /* 4 column layout like modern PS toolbar */
+            gap: 4px;
+            margin-bottom: 20px;
+        }
+
+        .tool-btn {
+            aspect-ratio: 1;
+            background: transparent;
+            border-radius: 4px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            color: #aaa;
+            transition: 0.2s;
+        }
+        .tool-btn:hover { background: var(--hover-item); color: white; }
+        .tool-btn.active { background: var(--active-item); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+        .tool-btn svg { width: 18px; height: 18px; }
+
+        .setting-group { margin-bottom: 15px; }
+        .setting-label { font-size: 11px; color: var(--text-muted); margin-bottom: 6px; display:block; }
+        .setting-input, select {
+            width: 100%;
+            background: #111;
+            border: 1px solid var(--border);
+            color: white;
+            padding: 6px;
+            font-size: 12px;
+            border-radius: 4px;
+        }
+
+        /* --- RIGHT PANEL (History & Layers) --- */
+        #rightPanel { width: 300px; }
+
+        /* History Grid */
+        .history-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        .history-item {
+            aspect-ratio: 1;
+            background: #333;
+            border-radius: 4px;
+            overflow: hidden;
+            cursor: pointer;
+            border: 2px solid transparent;
+            position: relative;
+        }
+        .history-item img { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; transition: 0.2s; }
+        .history-item:hover img { opacity: 1; }
+        .history-item.selected { border-color: var(--accent); }
+        .history-item.selected img { opacity: 1; }
+
+        /* Segmented Layers */
+        .layers-list { display: flex; flex-direction: column; gap: 2px; }
+        
+        .layer-item {
+            display: flex;
+            align-items: center;
+            padding: 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            background: transparent;
+            border: 1px solid transparent;
+            gap: 10px;
+        }
+        .layer-item:hover { background: var(--hover-item); }
+        .layer-item.active { background: var(--active-item); border-color: #444; }
+
+        .layer-thumb-box {
+            width: 40px;
+            height: 40px;
+            background-image: linear-gradient(45deg, #222 25%, transparent 25%), 
+                              linear-gradient(-45deg, #222 25%, transparent 25%), 
+                              linear-gradient(45deg, transparent 75%, #222 75%), 
+                              linear-gradient(-45deg, transparent 75%, #222 75%);
+            background-size: 10px 10px;
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .layer-thumb-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; /* Shows the "cutout" effect */
+        }
+
+        .layer-info { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+        .layer-name { font-size: 12px; font-weight: 500; }
+        .layer-meta { font-size: 10px; color: #666; margin-top: 2px; }
+        .layer-vis { color: #555; }
+        .layer-vis:hover { color: #ddd; }
+
+        /* --- Resizers --- */
+        .resizer {
+            width: 5px;
+            background: var(--bg-app);
+            cursor: col-resize;
+            z-index: 10;
+            transition: background 0.2s;
+            border-left: 1px solid var(--border);
+            border-right: 1px solid var(--border);
+        }
+        .resizer:hover, .resizer.resizing { background: var(--accent); }
+
+        /* --- Canvas (Center) --- */
+        .canvas-container {
+            flex: 1;
+            background-color: var(--bg-canvas);
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            background-image: radial-gradient(#222 1px, transparent 1px);
+            background-size: 24px 24px;
+        }
+
+        .artboard-wrapper {
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            position: relative;
+        }
+        .main-img { display: block; max-height: 80vh; max-width: 100%; }
+
+        /* --- Prompt Bar (Bottom) --- */
+        .prompt-bar-area {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            max-width: 90%;
+            z-index: 100;
+        }
+
+        .glass-input {
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 8px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+            transition: all 0.3s ease;
+        }
+
+        .glass-input:focus-within {
+            border-color: rgba(41, 121, 255, 0.6);
+            box-shadow: 0 0 15px rgba(41, 121, 255, 0.3), 0 20px 50px rgba(0,0,0,0.8);
+            transform: scale(1.01);
+        }
+
+        .magic-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #333, #000);
+            display: flex; align-items: center; justify-content: center;
+            margin-right: 10px;
+            color: var(--accent);
+        }
+
+        .p-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            font-size: 14px;
+            color: white;
+            padding: 5px 0;
+        }
+        .p-input::placeholder { color: #666; }
+
+        .gen-btn {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .gen-btn:hover { background: #1c6aff; }
+
+        /* Loading Line */
+        .loading-strip {
+            height: 2px;
+            width: 0%;
+            background: cyan;
+            position: absolute;
+            bottom: 0; left: 12px; right: 12px;
+            border-radius: 2px;
+            transition: width 0.1s;
+            box-shadow: 0 0 10px cyan;
+        }
+        .generating .loading-strip {
+            width: calc(100% - 24px);
+            transition: width 2s ease-in-out;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo"><span></span> AI Segment Editor</div>
+        <div class="menu">
+            <div>File</div>
+            <div>Edit</div>
+            <div>Select</div>
+            <div>View</div>
+            <div>Window</div>
+        </div>
+        <div style="font-size:11px; color:#666">Auto-Segmentation Active</div>
+    </header>
+
+    <div class="workspace">
+        
+        <!-- LEFT RESIZABLE PANEL -->
+        <aside class="panel" id="leftPanel">
+            <div class="panel-header">Tools</div>
+            <div class="scroll-area">
+                <!-- Photoshop Style Toolbar Grid -->
+                <div class="tools-grid">
+                    <div class="tool-btn active" title="Move (V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 9l7-7 7 7M5 9v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9M12 2v10M12 12L5 9m7 3l7-3"/></svg></div>
+                    <div class="tool-btn" title="Marquee (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 4"/></svg></div>
+                    <div class="tool-btn" title="Lasso (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16.5 13c-1 1-2.5 1.5-3.5 1-2-1-3.5-2.5-3.5-5s1.5-4 3.5-4c1.5 0 3 .5 3.5 1.5"/></svg></div>
+                    <div class="tool-btn" title="Magic Wand (W)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2l4 4-10 10H8v-4L18 2z"/></svg></div>
+                    <div class="tool-btn" title="Crop (C)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></svg></div>
+                    <div class="tool-btn" title="Eyedropper (I)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></div>
+                    <div class="tool-btn" title="Brush (B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2l4 4-10 10H8v-4L18 2z"/><path d="M8 22s-6 0-6-6"/></svg></div>
+                    <div class="tool-btn" title="Eraser (E)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z"/></svg></div>
+                </div>
+
+                <div class="panel-header" style="margin: 20px -10px 10px -10px; border-top:1px solid var(--border);">Settings</div>
+
+                <div class="setting-group">
+                    <label class="setting-label">Model Checkpoint</label>
+                    <select><option>Realistic_Vision_V5.safetensors</option><option>SDXL_Base_1.0</option></select>
+                </div>
+                
+                <div class="setting-group">
+                    <label class="setting-label">Aspect Ratio</label>
+                    <div style="display:flex; gap:5px;">
+                        <input type="text" value="1024" class="setting-input" style="text-align:center;">
+                        <input type="text" value="1024" class="setting-input" style="text-align:center;">
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">Seed</label>
+                    <input type="text" value="83471234" class="setting-input">
+                </div>
+
+                <div class="setting-group">
+                    <label class="setting-label">CFG Scale</label>
+                    <input type="range" min="0" max="20" value="7" style="width:100%;">
+                </div>
+            </div>
+        </aside>
+
+        <!-- RESIZER -->
+        <div class="resizer" id="resizerLeft"></div>
+
+        <!-- CENTER CANVAS -->
+        <main class="canvas-container" id="canvasContainer">
+            <div class="artboard-wrapper">
+                <!-- Main Image -->
+                <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?q=80&w=900&auto=format&fit=crop" class="main-img" id="mainImage">
+            </div>
+
+            <!-- BOTTOM PROMPT BAR (Floating) -->
+            <div class="prompt-bar-area">
+                <div class="glass-input" id="promptBox">
+                    <div class="magic-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                    </div>
+                    <input type="text" class="p-input" placeholder="Describe changes (e.g. 'Make the dog wear sunglasses') or new generation...">
+                    <button class="gen-btn" onclick="simulateGen()">Generate</button>
+                    <div class="loading-strip"></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- RESIZER -->
+        <div class="resizer" id="resizerRight"></div>
+
+        <!-- RIGHT RESIZABLE PANEL -->
+        <aside class="panel" id="rightPanel">
+            
+            <!-- SECTION 1: History -->
+            <div class="panel-header">History</div>
+            <div class="scroll-area" style="flex: 0 0 auto; max-height: 300px;">
+                <div class="history-grid">
+                    <div class="history-item selected">
+                        <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?q=80&w=300&auto=format&fit=crop">
+                    </div>
+                    <div class="history-item">
+                        <img src="https://images.unsplash.com/photo-1507146426996-ef05306b995a?q=80&w=300&auto=format&fit=crop" style="filter: grayscale(100%)">
+                    </div>
+                    <div class="history-item">
+                        <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?q=80&w=300&auto=format&fit=crop" style="filter: sepia(50%)">
+                    </div>
+                    <div class="history-item" style="border: 1px dashed #444; display: flex; align-items: center; justify-content: center; background: transparent;">
+                        <span style="color:#444; font-size:20px;">+</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SECTION 2: Segmented Layers -->
+            <div class="panel-header" style="border-top:1px solid var(--border);">Auto Segments</div>
+            <div class="scroll-area">
+                <div class="layers-list">
+                    
+                    <!-- Layer 1: Dog -->
+                    <div class="layer-item active">
+                        <div class="layer-thumb-box">
+                             <!-- Simulated cutout of the dog -->
+                            <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?q=80&w=100&auto=format&fit=crop" style="transform: scale(2) translate(-5px, 5px);">
+                        </div>
+                        <div class="layer-info">
+                            <span class="layer-name">Golden Retriever</span>
+                            <span class="layer-meta">Mask • 98% conf.</span>
+                        </div>
+                        <div class="layer-vis">👁</div>
+                    </div>
+
+                    <!-- Layer 2: Foreground Grass -->
+                    <div class="layer-item">
+                        <div class="layer-thumb-box">
+                            <!-- Simulated cutout of grass -->
+                            <img src="https://images.unsplash.com/photo-1552053831-71594a27632d?q=80&w=100&auto=format&fit=crop" style="transform: scale(3) translateY(-10px); filter: contrast(1.2);">
+                        </div>
+                        <div class="layer-info">
+                            <span class="layer-name">Grass Field</span>
+                            <span class="layer-meta">Background</span>
+                        </div>
+                        <div class="layer-vis">👁</div>
+                    </div>
+
+                    <!-- Layer 3: Sky -->
+                    <div class="layer-item">
+                        <div class="layer-thumb-box">
+                            <!-- Simulated cutout of sky -->
+                            <div style="width:100%; height:100%; background: linear-gradient(to bottom, #87CEEB, transparent);"></div>
+                        </div>
+                        <div class="layer-info">
+                            <span class="layer-name">Sky Area</span>
+                            <span class="layer-meta">Atmosphere</span>
+                        </div>
+                        <div class="layer-vis">👁</div>
+                    </div>
+
+                </div>
+            </div>
+        </aside>
+
+    </div>
+
+    <script>
+        // --- RESIZE FUNCTIONALITY ---
+        function makeResizable(resizerId, panelId, direction) {
+            const resizer = document.getElementById(resizerId);
+            const panel = document.getElementById(panelId);
+            
+            let startX, startWidth;
+
+            resizer.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                startX = e.clientX;
+                startWidth = parseInt(document.defaultView.getComputedStyle(panel).width, 10);
+                document.documentElement.addEventListener('mousemove', doDrag, false);
+                document.documentElement.addEventListener('mouseup', stopDrag, false);
+                resizer.classList.add('resizing');
+            });
+
+            function doDrag(e) {
+                let newWidth;
+                if (direction === 'left') {
+                    // For left panel: dragging right increases width
+                    newWidth = startWidth + (e.clientX - startX);
+                } else {
+                    // For right panel: dragging left increases width (delta is negative)
+                    newWidth = startWidth - (e.clientX - startX);
+                }
+                
+                // Constraints
+                if (newWidth > 150 && newWidth < 600) {
+                    panel.style.width = newWidth + 'px';
+                }
+            }
+
+            function stopDrag() {
+                resizer.classList.remove('resizing');
+                document.documentElement.removeEventListener('mousemove', doDrag, false);
+                document.documentElement.removeEventListener('mouseup', stopDrag, false);
+            }
+        }
+
+        // Initialize resizers
+        makeResizable('resizerLeft', 'leftPanel', 'left');
+        makeResizable('resizerRight', 'rightPanel', 'right');
+
+
+        // --- UI INTERACTIONS ---
+
+        // Tool Selection
+        document.querySelectorAll('.tool-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+
+        // Layer Selection
+        document.querySelectorAll('.layer-item').forEach(layer => {
+            layer.addEventListener('click', () => {
+                document.querySelectorAll('.layer-item').forEach(l => l.classList.remove('active'));
+                layer.classList.add('active');
+            });
+        });
+
+        // Generation Simulation
+        function simulateGen() {
+            const box = document.getElementById('promptBox');
+            const btn = document.querySelector('.gen-btn');
+            
+            if(box.classList.contains('generating')) return;
+
+            box.classList.add('generating');
+            btn.textContent = "Working...";
+            
+            setTimeout(() => {
+                box.classList.remove('generating');
+                btn.textContent = "Generate";
+                
+                // Simulate Image Update
+                const img = document.getElementById('mainImage');
+                img.style.filter = "brightness(1.1) contrast(1.1)";
+                setTimeout(() => { img.style.filter = "none"; }, 200);
+            }, 2500);
+        }
+    </script>
+</body>
+</html>
