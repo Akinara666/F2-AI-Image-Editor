@@ -1,0 +1,13 @@
+
+.app-container {
+    display: flex;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    background-color: #222;
+}
+
+.editor-wrapper {
+    flex: 1;
+    position: relative;
+}

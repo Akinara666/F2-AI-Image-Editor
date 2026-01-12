@@ -12,6 +12,15 @@ from PIL import Image
 # Import core modules
 from core.manager import model_manager
 from core.utils import save_image_with_metadata, process_mask_for_inpainting
+from core.config import STYLE_PRESETS
+import logging
+
+# Setup Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Local AI Gen Service", version="0.1.0")
 
@@ -31,12 +40,7 @@ class GenerationRequest(BaseModel):
     type: str = "text2img" # text2img, img2img, inpainting
 
 # --- Presets & configuration ---
-STYLE_PRESETS = {
-    "Cinematic": "cinematic shot, dynamic lighting, 8k resolution, highly detailed, shallow depth of field, bokeh",
-    "Anime": "masterpiece, anime style, key visual, vibrant colors, studio ghibli style",
-    "Digital Art": "concept art, digital painting, smooth, sharp focus, artstation",
-    "Photographic": "raw photo, realistic, 8k, dslr, soft lighting"
-}
+# Imports from core.config
 
 # --- Endpoints ---
 
@@ -201,6 +205,7 @@ async def generate_image(
             
     except Exception as e:
         import traceback
+        logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -167,6 +167,28 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     }, [fabricCanvas, brushMode]);
 
 
+    // --- Helper Logic ---
+    const performUndo = () => {
+        if (!fabricCanvas || !genFrame) return;
+        const objects = fabricCanvas.getObjects();
+        if (objects.length > 0) {
+            // Let's filter out the frame first to be safe, or just check the last one.
+            const lastObj = objects[objects.length - 1];
+            
+            if (lastObj !== genFrame) {
+                fabricCanvas.remove(lastObj);
+            } else {
+                // find the last object that is NOT the frame.
+                for (let i = objects.length - 1; i >= 0; i--) {
+                    if (objects[i] !== genFrame) {
+                        fabricCanvas.remove(objects[i]);
+                        break; // Only remove one
+                    }
+                }
+            }
+        }
+    };
+
     // --- Exposed Methods ---
     useImperativeHandle(ref, () => ({
         
@@ -330,19 +352,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         },
 
         // --- History / Actions ---
-        undo: () => {
-            if (!fabricCanvas) return;
-            // Remove the last added object, BUT skip the Frame (which is usually the first or special)
-            // We should remove the last object in the list
-            const objects = fabricCanvas.getObjects();
-            if (objects.length > 0) {
-                const lastObj = objects[objects.length - 1];
-                // Don't delete the Generation Frame
-                if (lastObj !== genFrame) {
-                    fabricCanvas.remove(lastObj);
-                }
-            }
-        },
+        undo: performUndo,
 
         clearAll: () => {
              if (!fabricCanvas) return;
@@ -363,18 +373,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         const handleKeyDown = (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
                 e.preventDefault();
-                // Access undo via a local function or ref if possible, 
-                // but since we are inside the component we can just copy logic or use a stable callback.
-                // Since 'undo' logic depends on 'fabricCanvas' and 'genFrame' state which are in scope:
-                if (fabricCanvas) {
-                    const objects = fabricCanvas.getObjects();
-                    if (objects.length > 0) {
-                        const lastObj = objects[objects.length - 1];
-                        if (lastObj !== genFrame) {
-                            fabricCanvas.remove(lastObj);
-                        }
-                    }
-                }
+                performUndo();
             }
             // Delete key to remove active selection
             if (e.key === 'Delete' || e.key === 'Backspace') {

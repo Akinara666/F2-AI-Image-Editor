@@ -1,6 +1,7 @@
 import torch
 import gc
 import asyncio
+import logging
 from diffusers import (
     StableDiffusionPipeline, 
     StableDiffusionImg2ImgPipeline,
@@ -18,11 +19,12 @@ class ModelManager:
         self.current_model_id = None
         self.current_type = None
         self.lock = asyncio.Lock() # Async lock for sequential GPU access
+        self.logger = logging.getLogger("ModelManager")
 
     def _unload_current_model(self):
         """Forcefully unloads the current model from VRAM."""
         if self.current_pipeline is not None:
-            print(f"Unloading model: {self.current_model_id}")
+            self.logger.info(f"Unloading model: {self.current_model_id}")
             # Move to CPU first (optional, but helps detach) or just delete
             del self.current_pipeline
             self.current_pipeline = None
@@ -34,7 +36,7 @@ class ModelManager:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
-        print("VRAM cleared.")
+        self.logger.info("VRAM cleared.")
 
     async def get_model(
         self, 
@@ -56,7 +58,7 @@ class ModelManager:
             # Unload existing to free VRAM
             self._unload_current_model()
 
-            print(f"Loading model: {model_id} ({pipeline_type})")
+            self.logger.info(f"Loading model: {model_id} ({pipeline_type})")
             
             try:
                 # Basic optimizations: fp16, safetensors
@@ -109,7 +111,7 @@ class ModelManager:
                 try:
                     pipeline.enable_xformers_memory_efficient_attention()
                 except Exception as e:
-                    print(f"Could not enable xformers: {e}")
+                    self.logger.warning(f"Could not enable xformers: {e}")
 
                 # Move to GPU
                 pipeline.to(self.device)
@@ -122,7 +124,7 @@ class ModelManager:
                 return self.current_pipeline
 
             except Exception as e:
-                print(f"Error loading model: {e}")
+                self.logger.error(f"Error loading model: {e}")
                 self._unload_current_model() # Cleanup on failure
                 raise e
 
@@ -131,11 +133,11 @@ class ModelManager:
         Architecture hook for LoRA. Wrapper around diffusers load_lora_weights.
         """
         if self.current_pipeline:
-             print(f"Loading LoRA from {lora_path}")
+             self.logger.info(f"Loading LoRA from {lora_path}")
              try:
                  self.current_pipeline.load_lora_weights(lora_path, adapter_name=adapter_name)
              except Exception as e:
-                 print(f"Failed to load LoRA: {e}")
+                 self.logger.error(f"Failed to load LoRA: {e}")
 
 # Singleton instance
 model_manager = ModelManager()

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import axios from 'axios';
+import './App.css';
 
 function App() {
   const [params, setParams] = useState({
@@ -67,20 +68,14 @@ function App() {
 
     } catch (e) {
         console.error("Generation failed", e);
-        alert("Error: " + (e.response?.data?.detail || e.message));
+        console.error("Error details:", e.response?.data?.detail || e.message);
     } finally {
         setIsGenerating(false);
     }
   };
 
   return (
-    <div className="App" style={{ 
-        display: 'flex', 
-        width: '100vw', 
-        height: '100vh', 
-        overflow: 'hidden',
-        background: '#222'
-    }}>
+    <div className="app-container">
       <Sidebar 
          params={params} 
          setParams={setParams}
@@ -95,7 +90,7 @@ function App() {
          onUndo={() => editorRef.current?.undo()}
          onClear={() => editorRef.current?.clearAll()}
       />
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div className="editor-wrapper">
           <Editor 
             ref={editorRef}
             brushMode={brushMode}
