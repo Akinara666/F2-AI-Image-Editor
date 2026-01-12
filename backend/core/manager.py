@@ -3,6 +3,7 @@ import gc
 import asyncio
 from diffusers import (
     StableDiffusionPipeline, 
+    StableDiffusionImg2ImgPipeline,
     StableDiffusionInpaintPipeline,
     ControlNetModel,
     StableDiffusionControlNetPipeline,
@@ -38,7 +39,7 @@ class ModelManager:
     async def get_model(
         self, 
         model_id: str, 
-        pipeline_type: Literal["text2img", "inpainting", "controlnet"] = "text2img",
+        pipeline_type: Literal["text2img", "img2img", "inpainting", "controlnet"] = "text2img",
         **kwargs
     ):
         """
@@ -70,8 +71,9 @@ class ModelManager:
                 if model_id.endswith(".safetensors") or model_id.endswith(".ckpt"):
                     # Use from_single_file for legacy/webui models
                     if pipeline_type == "inpainting":
-                         # Inpainting implementation for single file might require specific config
                          pipeline = StableDiffusionInpaintPipeline.from_single_file(model_id, **load_args)
+                    elif pipeline_type == "img2img":
+                         pipeline = StableDiffusionImg2ImgPipeline.from_single_file(model_id, **load_args)
                     else:
                          pipeline = StableDiffusionPipeline.from_single_file(model_id, **load_args)
                 
@@ -80,6 +82,11 @@ class ModelManager:
                     if pipeline_type == "inpainting":
                         pipeline = StableDiffusionInpaintPipeline.from_pretrained(
                             model_id, 
+                            **load_args
+                        )
+                    elif pipeline_type == "img2img":
+                        pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                            model_id,
                             **load_args
                         )
                     elif pipeline_type == "controlnet":

@@ -62,8 +62,9 @@ async def generate_image(
     cfg: float = Form(default=7.5),
     seed: int = Form(default=-1),
     model_id: str = Form(default="runwayml/stable-diffusion-v1-5"),
-    mode: str = Form(default="text2img"), # text2img, inpainting
-    style_preset: Optional[str] = Form(None), # Added preset support
+    mode: str = Form(default="auto"), # auto, txt2img, img2img, inpainting
+    style_preset: Optional[str] = Form(None),
+    denoising_strength: float = Form(default=0.75),
     init_image: UploadFile = File(None),
     mask_image: UploadFile = File(None),
 ):
@@ -72,7 +73,25 @@ async def generate_image(
         final_prompt = prompt
         if style_preset and style_preset in STYLE_PRESETS:
              final_prompt = f"{prompt}, {STYLE_PRESETS[style_preset]}"
-        # 1. Prepare Params
+             
+        # 1. Determine Actual Mode (Smart Logic)
+        actual_mode = mode
+        if mode == "auto":
+             if mask_image:
+                 actual_mode = "inpainting"
+             elif init_image and denoising_strength < 1.0:
+                 actual_mode = "img2img"
+             else:
+                 actual_mode = "text2img"
+        
+        # 2. Load Model
+        # Map mode to internal pipeline type
+        pipeline_type = actual_mode
+        if actual_mode not in ["text2img", "img2img", "inpainting", "controlnet"]:
+            pipeline_type = "text2img" # fallback
+            
+        pipe = await model_manager.get_model(model_id, pipeline_type=pipeline_type)
+
         if seed == -1:
             import random
             seed = random.randint(0, 2**32 - 1)
@@ -108,7 +127,7 @@ async def generate_image(
         
         result_image = None
         
-        if mode == "text2img":
+        if actual_mode == "text2img":
             result = pipe(
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
@@ -120,10 +139,31 @@ async def generate_image(
             )
             result_image = result.images[0]
             
-        elif mode == "inpainting":
-            if not image_input or not mask_input:
-                raise HTTPException(status_code=400, detail="Inpainting requires init_image and mask_image")
+        elif actual_mode == "img2img":
+            if not image_input:
+                 # Fallback if logic failed or logic says img2img but no file
+                 raise HTTPException(status_code=400, detail="Img2Img requires init_image")
             
+            # Ensure correct pipeline signature handling (some unified pipelines use 'image')
+            result = pipe(
+                prompt=final_prompt,
+                negative_prompt=negative_prompt,
+                image=image_input,
+                num_inference_steps=steps,
+                guidance_scale=cfg,
+                strength=denoising_strength, # Key parameter for img2img
+                generator=generator
+            )
+            result_image = result.images[0]
+
+        elif actual_mode == "inpainting":
+            if not (image_input and mask_input):
+                 # Fallback
+                 # If only mask supplied but no init image? -> Not supported by std inpainting logic usually 
+                 # (unless we create black init image)
+                 if image_input is None:
+                     image_input = Image.new("RGB", (width, height), (0,0,0))
+                
             result = pipe(
                 prompt=final_prompt, # Use prompt with preset
                 negative_prompt=negative_prompt,
@@ -134,7 +174,7 @@ async def generate_image(
                 num_inference_steps=steps,
                 guidance_scale=cfg,
                 generator=generator,
-                padding_mask_crop=32 # Using mask padding as requested to preserve context
+                padding_mask_crop=32
             )
             result_image = result.images[0]
 
