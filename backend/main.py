@@ -48,9 +48,7 @@ def health_check():
 def read_root():
     return {"message": "AI Image Gen API is running. Visit /docs for Swagger UI."}
 
-@app.get("/")
-def read_root():
-    return {"message": "AI Image Gen API is running. Visit /docs for Swagger UI."}
+
 
 @app.post("/generate")
 async def generate_image(
@@ -98,11 +96,7 @@ async def generate_image(
         
         generator = None # Will be torch.Generator inside logic if needed, usually passed to pipeline
         
-        # 2. Load Model
-        # Map mode to internal pipeline type
-        pipeline_type = "inpainting" if mode == "inpainting" else "text2img"
-        
-        pipe = await model_manager.get_model(model_id, pipeline_type=pipeline_type)
+
         
         # 3. Process Inputs
         image_input = None
@@ -114,7 +108,7 @@ async def generate_image(
             # Resize if needed to match requested width/height or keep aspect ratio
             image_input = image_input.resize((width, height))
             
-        if mode == "inpainting" and mask_image:
+        if mask_image:
             mask_bytes = await mask_image.read()
             raw_mask = Image.open(io.BytesIO(mask_bytes))
             # Pre-process mask (Gaussian Blur for better blending)
@@ -159,8 +153,6 @@ async def generate_image(
         elif actual_mode == "inpainting":
             if not (image_input and mask_input):
                  # Fallback
-                 # If only mask supplied but no init image? -> Not supported by std inpainting logic usually 
-                 # (unless we create black init image)
                  if image_input is None:
                      image_input = Image.new("RGB", (width, height), (0,0,0))
                 
@@ -173,10 +165,20 @@ async def generate_image(
                 height=height,
                 num_inference_steps=steps,
                 guidance_scale=cfg,
-                generator=generator,
-                padding_mask_crop=32
+                strength=denoising_strength,
+                generator=generator
             )
-            result_image = result.images[0]
+            generated = result.images[0]
+            
+            # COMPOSITING: Paste generated content back onto original using the mask
+            if image_input and mask_input:
+                # Ensure sizes match
+                if generated.size == image_input.size == mask_input.size:
+                     result_image = Image.composite(generated, image_input, mask_input)
+                else:
+                     result_image = generated
+            else:
+                result_image = generated
 
         # 5. Save & Return
         if result_image:

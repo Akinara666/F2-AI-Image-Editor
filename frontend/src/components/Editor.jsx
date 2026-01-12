@@ -3,7 +3,6 @@ import { fabric } from 'fabric';
 
 /**
  * Editor Component for AI Image Generation
- * Now supports: Generation Frame, Brush Modes, Smart Export, Layer Stacking.
  */
 const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const canvasRef = useRef(null);
@@ -14,18 +13,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     // Initialize Fabric Canvas
     useEffect(() => {
         if (!canvasRef.current || !wrapperRef.current) return;
-
+        
         const canvas = new fabric.Canvas(canvasRef.current, {
             width: wrapperRef.current.clientWidth,
             height: wrapperRef.current.clientHeight,
             backgroundColor: '#1e1e1e',
-            isDrawingMode: false
+            isDrawingMode: false,
+            enableRetinaScaling: false, 
+            preserveObjectStacking: true
         });
 
         setFabricCanvas(canvas);
 
-        // --- Custom Properties ---
-        // Allow distinguishing mask strokes
         fabric.Object.prototype.toObject = (function(toObject) {
             return function() {
                 return fabric.util.object.extend(toObject.call(this), {
@@ -35,7 +34,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         })(fabric.Object.prototype.toObject);
 
 
-        // --- Default Content ---
+        // --- Default Content & Events (Zoom/Pan) ---
         // Add a draggable Generation Frame (512x512)
         const frame = new fabric.Rect({
             left: 100,
@@ -47,7 +46,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             strokeWidth: 2,
             strokeDashArray: [10, 5],
             hasBorders: true,
-            hasControls: false, // Cannot resize, only move
+            hasControls: false, 
             lockRotation: true,
             lockScalingX: true,
             lockScalingY: true,
@@ -57,7 +56,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         canvas.add(frame);
         setGenFrame(frame);
 
-        // --- Events ---
         // Zoom
         canvas.on('mouse:wheel', function(opt) {
             var delta = opt.e.deltaY;
@@ -70,7 +68,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             opt.e.stopPropagation();
         });
 
-        // Pan (Alt+Drag)
+        // Pan
         let isDragging = false;
         let lastPosX, lastPosY;
         canvas.on('mouse:down', function(opt) {
@@ -98,7 +96,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             canvas.selection = true;
         });
         
-        // Resize handle
         window.addEventListener('resize', () => {
              if(wrapperRef.current){
                 canvas.setWidth(wrapperRef.current.clientWidth);
@@ -115,22 +112,40 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         if (brushMode === 'none') {
             fabricCanvas.isDrawingMode = false;
+            fabricCanvas.selection = true;
+            // Restore selectability
+            fabricCanvas.getObjects().forEach(obj => {
+                // Keep frame unselectable as per its init logic
+                if (obj === genFrame) {
+                    obj.selectable = true; 
+                    obj.evented = true;
+                } else {
+                    obj.selectable = true;
+                    obj.evented = true;
+                }
+            });
         } else {
             fabricCanvas.isDrawingMode = true;
+            fabricCanvas.selection = false; // Disable group selection
+            
+            // Disable interaction with objects so clicks go to brush
+            fabricCanvas.getObjects().forEach(obj => {
+                obj.selectable = false;
+                obj.evented = false; 
+            });
+
             const brush = new fabric.PencilBrush(fabricCanvas);
             brush.width = brushSize;
             
             if (brushMode === 'mask') {
-                // Visualization for Mask: Red semi-transparent
-                // BUT we need to tag it. Fabric doesn't easily let us tag the path *before* creation using interactions.
-                // We use the 'path:created' event fallback logic.
                 brush.color = 'rgba(255, 0, 0, 0.5)';
             } else {
                 brush.color = brushColor;
             }
             fabricCanvas.freeDrawingBrush = brush;
         }
-    }, [brushMode, brushColor, brushSize, fabricCanvas]);
+        fabricCanvas.requestRenderAll();
+    }, [brushMode, brushColor, brushSize, fabricCanvas, genFrame]);
 
     // Tag paths created in mask mode
     useEffect(() => {
@@ -138,11 +153,13 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         
         const handlePathCreated = (e) => {
             if (brushMode === 'mask') {
-                e.path.set({ isMask: true, globalCompositeOperation: 'source-over' });
-                // We want masks to be on top? Or handled specially.
+                e.path.set({ 
+                    isMask: true
+                });
             } else {
                 e.path.set({ isMask: false });
             }
+            fabricCanvas.requestRenderAll();
         };
 
         fabricCanvas.on('path:created', handlePathCreated);
@@ -162,16 +179,39 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             const top = genFrame.top;
 
             fabric.Image.fromURL(url, (img) => {
+                // Calculate scale to fit the frame exactly
+                const displayWidth = genFrame.width * genFrame.scaleX;
+                const displayHeight = genFrame.height * genFrame.scaleY;
+                
+                const scaleX = displayWidth / img.width;
+                const scaleY = displayHeight / img.height;
+
                 img.set({
                     left: left,
                     top: top,
-                    selectable: true
+                    scaleX: scaleX, // Computed to fit exactly
+                    scaleY: scaleY,
+                    selectable: true,
+                    lockScalingX: true, // Prevent accidental resizing
+                    lockScalingY: true
                 });
                 fabricCanvas.add(img);
                 fabricCanvas.setActiveObject(img);
                 
-                // Ensure frame is always on top for next generation
+                // --- Reorder Layers ---
+                // We want: Images (Bottom) -> Masks/Paths (Middle) -> Frame (Top)
+                
+                // 1. Bring all paths (Sketches/Masks) to front
+                fabricCanvas.getObjects().forEach(obj => {
+                    if (obj.type === 'path' || obj.isMask) {
+                        obj.bringToFront();
+                    }
+                });
+
+                // 2. Ensure frame is always on top
                 genFrame.bringToFront();
+                
+                fabricCanvas.requestRenderAll();
             });
         },
 
@@ -182,7 +222,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             const rect = genFrame;
             const left = rect.left;
             const top = rect.top;
-            const width = rect.width; // Fixed 512
+            const width = rect.width;
             const height = rect.height;
 
             // Helper to get Blob from DataURL
@@ -191,85 +231,94 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 return await res.blob();
             };
 
-            // 1. Export INIT IMAGE (Everything EXCEPT Mask brushes and Frame)
-            // Hide Frame
-            rect.visible = false;
+            // State Storage
+            const originalVpt = [...fabricCanvas.viewportTransform];
+            const originalBg = fabricCanvas.backgroundColor;
             
-            // Hide Masks
-            const maskObjects = [];
-            fabricCanvas.getObjects().forEach(obj => {
-                if (obj.isMask) {
-                    obj.visible = false;
-                    maskObjects.push(obj);
-                }
-            });
-            fabricCanvas.renderAll();
+            // Snapshot all object states strictly
+            const objectStates = fabricCanvas.getObjects().map(obj => ({
+                obj: obj,
+                visible: obj.visible,
+                stroke: obj.stroke,
+                fill: obj.fill,
+                opacity: obj.opacity
+            }));
 
-            // Check if empty (simple check: is there anything relevant under rect?)
-            // We'll export anyway and let the backend/user logic decide, 
-            // OR we can check if the crop is fully transparent.
-            
-            const initDataURL = fabricCanvas.toDataURL({
-                format: 'png',
-                left: left, top: top, width: width, height: height,
-                multiplier: 1
-            });
-            
-            const initBlob = await dataToBlob(initDataURL);
+            let initDataURL = null;
+            let maskDataURL = null;
 
-            // Restore Masks
-            maskObjects.forEach(obj => obj.visible = true);
-            
-            // 2. Export MASK (Only Mask objects, White on Black)
-            // To do this, we need to hide everything else, change bg to black, change masks to white.
-            // This is visually disruptive. Better to stick to a clone/temp canvas approach?
-            // For MVP: fast flicker is acceptable or use filtering.
-            
-            // Let's rely on backend 'mask_image' ONLY if we actually have masks.
-            let maskBlob = null;
-            if (maskObjects.length > 0) {
-                 // Save current states
-                 const originalBg = fabricCanvas.backgroundColor;
-                 const objectStates = fabricCanvas.getObjects().map(o => ({ obj: o, visible: o.visible, color: o.stroke || o.fill }));
-                 
-                 // Setup for Mask Export
-                 fabricCanvas.backgroundColor = 'black';
-                 fabricCanvas.getObjects().forEach(obj => {
-                     if (obj === rect) {
-                         obj.visible = false;
-                         return;
-                     }
-                     if (obj.isMask) {
-                         obj.visible = true;
-                         obj.stroke = 'white'; // Paths use stroke
-                         obj.fill = 'white';
-                     } else {
-                         obj.visible = false; // Hide images/sketches
-                     }
-                 });
-                 fabricCanvas.renderAll();
-                 
-                 const maskDataURL = fabricCanvas.toDataURL({
+            try {
+                // 1. Reset Viewport
+                fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
+
+                // 2. Prepare for Init Image (Hide Masks, Hide Frame)
+                rect.visible = false;
+                fabricCanvas.getObjects().forEach(obj => {
+                    if (obj.isMask) {
+                        obj.visible = false;
+                    }
+                });
+                
+                initDataURL = fabricCanvas.toDataURL({
                     format: 'png',
                     left: left, top: top, width: width, height: height,
                     multiplier: 1
-                 });
-                 maskBlob = await dataToBlob(maskDataURL);
-                 
-                 // Restore
-                 fabricCanvas.backgroundColor = originalBg;
-                 objectStates.forEach((state, i) => {
-                     const obj = fabricCanvas.item(i);
-                     obj.visible = state.visible;
-                     if(obj.isMask) {
-                         // Restore red visualization
-                         obj.stroke = 'rgba(255, 0, 0, 0.5)';
-                     }
-                 });
-                 rect.visible = true; // Show frame again
-                 fabricCanvas.renderAll();
-            } else {
-                rect.visible = true; // Show frame if no masks processed
+                });
+
+                // 3. Prepare for Mask (Black BG, White Masks, Hide others)
+                const hasMasks = objectStates.some(s => s.obj.isMask);
+                
+                if (hasMasks) {
+                    fabricCanvas.backgroundColor = 'black';
+                    fabricCanvas.getObjects().forEach(obj => {
+                        if (obj === rect) {
+                            obj.visible = false;
+                            return;
+                        }
+                        if (obj.isMask) {
+                            obj.visible = true;
+                            // Force White Opaque
+                            obj.set({
+                                stroke: '#ffffff',
+                                fill: '',
+                                opacity: 1
+                            });
+                        } else {
+                            obj.visible = false; 
+                        }
+                    });
+
+                    maskDataURL = fabricCanvas.toDataURL({
+                        format: 'png',
+                        left: left, top: top, width: width, height: height,
+                        multiplier: 1
+                    });
+                }
+
+            } finally {
+                // RESTORATION (Guaranteed)
+                fabricCanvas.setViewportTransform(originalVpt);
+                fabricCanvas.backgroundColor = originalBg;
+                
+                objectStates.forEach(state => {
+                    state.obj.set({
+                        visible: state.visible,
+                        stroke: state.stroke,
+                        fill: state.fill,
+                        opacity: state.opacity
+                    });
+                });
+                // Ensure frame is visible (though state.visible should handle it, keeping explicit for safety)
+                rect.visible = true; 
+                
+                fabricCanvas.requestRenderAll();
+            }
+
+            // 4. Convert to Blobs
+            const initBlob = await dataToBlob(initDataURL);
+            let maskBlob = null;
+            if (maskDataURL) {
+                maskBlob = await dataToBlob(maskDataURL);
             }
 
             return {

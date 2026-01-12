@@ -16,7 +16,7 @@ function App() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
-  const [brushColor, setBrushColor] = useState('#000000');
+  const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(20);
   
   // Ref to Editor's export function
