@@ -9,6 +9,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [genFrame, setGenFrame] = useState(null);
+    const brushModeRef = useRef(brushMode);
+
+    // Keep ref in sync
+    useEffect(() => {
+        brushModeRef.current = brushMode;
+    }, [brushMode]);
 
     // Initialize Fabric Canvas
     useEffect(() => {
@@ -72,11 +78,13 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         let isDragging = false;
         let lastPosX, lastPosY;
         canvas.on('mouse:down', function(opt) {
-            if (opt.e.altKey === true) {
+            const evt = opt.e;
+            if (evt.altKey === true || brushModeRef.current === 'hand') {
                 isDragging = true;
                 canvas.selection = false;
-                lastPosX = opt.e.clientX;
-                lastPosY = opt.e.clientY;
+                lastPosX = evt.clientX;
+                lastPosY = evt.clientY;
+                canvas.defaultCursor = 'grabbing';
             }
         });
         canvas.on('mouse:move', function(opt) {
@@ -94,6 +102,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             canvas.setViewportTransform(canvas.viewportTransform);
             isDragging = false;
             canvas.selection = true;
+            canvas.defaultCursor = 'default';
+            // Restore hand cursor if in hand mode
+             if (brushModeRef.current === 'hand') {
+                canvas.defaultCursor = 'grab';
+                canvas.selection = false;
+            }
         });
         
         window.addEventListener('resize', () => {
@@ -123,6 +137,15 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     obj.selectable = true;
                     obj.evented = true;
                 }
+            });
+            });
+        } else if (brushMode === 'hand') {
+             fabricCanvas.isDrawingMode = false;
+             fabricCanvas.selection = false; // Disable selection box
+             fabricCanvas.defaultCursor = 'grab';
+             fabricCanvas.getObjects().forEach(obj => {
+                obj.selectable = false;
+                obj.evented = false;
             });
         } else {
             fabricCanvas.isDrawingMode = true;

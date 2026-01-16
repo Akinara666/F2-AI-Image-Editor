@@ -94,6 +94,10 @@ const Sidebar = ({
                         onClick={() => setBrushMode('mask')}
                         style={{flex: 1, background: brushMode === 'mask' ? '#e63946' : '#444', color: '#fff', border: 'none', padding: '5px'}}
                     >Mask</button>
+                    <button 
+                        onClick={() => setBrushMode('hand')}
+                        style={{flex: 1, background: brushMode === 'hand' ? '#2a9d8f' : '#444', color: '#fff', border: 'none', padding: '5px'}}
+                    >Hand</button>
                 </div>
                 
                 {brushMode !== 'none' && (
