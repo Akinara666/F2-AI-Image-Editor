@@ -1,0 +1,213 @@
+{"messages":[{"role":"user","content":"Сделай фото лучше"},{"role":"assistant","content":"Повышаем четкость, мягко корректируем свет и тени, улучшаем контраст и добавляем теплый тон. Фото в стиле 35мм, естественное освещение."}]}
+{"messages":[{"role":"user","content":"Сделай светлее"},{"role":"assistant","content":"Увеличить экспозицию и баланс белого, слегка поднять тени. Добавить ощущение утреннего солнца, мягкий рассеянный свет."}]}
+{"messages":[{"role":"user","content":"Сделай фото темнее"},{"role":"assistant","content":"Понизить экспозицию и контраст, добавить виньетку. Стиль — вечерний, тёплый свет лампы."}]}
+{"messages":[{"role":"user","content":"Добавь резкости"},{"role":"assistant","content":"Применить лёгкую повышающую резкость, особенно по краям объекта. Сохранить естественную текстуру кожи."}]}
+{"messages":[{"role":"user","content":"Добавь контраст"},{"role":"assistant","content":"Повысить контрастность, увеличить глубину теней, подчеркнуть основные линии. Фото в стиле редакционной съёмки."}]}
+{"messages":[{"role":"user","content":"Сделай фото мягче"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь глубину"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай портрет теплее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь холодный фильтр"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай кожу ровнее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь тёплый фильтр"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле ретро"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь эффект Polaroid"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото как из кино"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай снимок атмосферным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь зернистость"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фон размытым"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото чёрно-белым"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь эффект HDR"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото контрастным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь мягкий свет"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото как на плёнку"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь золотой оттенок"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай снимок холоднее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото живее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай портрет естественным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь ощущение заката"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле Instagram"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь фильтр заката"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай тени глубже"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь мягкую фокусировку"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото ярче"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь виньетку"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото художественным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь немного розового тона"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле минимализм"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь теплый свет"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото уютным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь атмосферу дождя"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай свет более мягким"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь свечение"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай цвета насыщеннее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото холоднее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь ощущение зимы"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь эффект боке"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото кинематографическим"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь винтажную обработку"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото чище"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь баланс белого"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле 90-х"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь золотой час"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай цвета натуральнее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь мягкие тени"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото спокойнее"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Добавь больше света"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото теплым и уютным"},{"role":"assistant","content":"Слегка скорректировать свет, контраст и цветовой баланс. Добавить мягкий свет и естественные тона."}]}
+{"messages":[{"role":"user","content":"Сделай фото атмосферным"},{"role":"assistant","content":"Добавить лёгкий туман и мягкое освещение, немного приглушить контраст. Создать ощущение спокойствия и глубины."}]}
+{"messages":[{"role":"user","content":"Добавь эффект плёнки"},{"role":"assistant","content":"Добавить зернистость, лёгкий тёплый оттенок и мягкий контраст. Симулировать старую камеру 80-х."}]}
+{"messages":[{"role":"user","content":"Сделай фото как зимний пейзаж"},{"role":"assistant","content":"Понизить температуру цвета, добавить голубые тени и мягкое рассеянное освещение. Создать ощущение морозного утра."}]}
+{"messages":[{"role":"user","content":"Добавь розовый фильтр"},{"role":"assistant","content":"Добавить лёгкий розово-бежевый оттенок, смягчить контраст. Создать нежную романтичную атмосферу."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле лайфстайл"},{"role":"assistant","content":"Добавить естественное освещение, лёгкие тёплые оттенки и мягкий контраст. Передать уют повседневного момента."}]}
+{"messages":[{"role":"user","content":"Добавь мягкое свечение"},{"role":"assistant","content":"Слегка подсветить края объекта, добавить ореол света. Создать ощущение магии и лёгкости."}]}
+{"messages":[{"role":"user","content":"Сделай фото в золотых тонах"},{"role":"assistant","content":"Добавить тёплые оттенки жёлтого и оранжевого, усилить свечение. Передать атмосферу заката."}]}
+{"messages":[{"role":"user","content":"Сделай фото как из журнала Vogue"},{"role":"assistant","content":"Сбалансировать свет, повысить чёткость деталей и добавить мягкий контраст. Создать модный студийный стиль."}]}
+{"messages":[{"role":"user","content":"Добавь осеннее настроение"},{"role":"assistant","content":"Добавить тёплые красно-коричневые тона, приглушить насыщенность и смягчить свет. Создать уют осеннего дня."}]}
+{"messages":[{"role":"user","content":"Сделай фото минималистичным"},{"role":"assistant","content":"Убрать лишние детали, сделать фон нейтральным, добавить мягкий рассеянный свет. Сфокусироваться на объекте."}]}
+{"messages":[{"role":"user","content":"Добавь контраст между светом и тенью"},{"role":"assistant","content":"Усилить направленный свет, выделить форму и глубину. Сохранить мягкость общей сцены."}]}
+{"messages":[{"role":"user","content":"Сделай фото с эффектом тумана"},{"role":"assistant","content":"Добавить лёгкий рассеянный слой, смягчить контраст и тени. Передать утреннюю атмосферу."}]}
+{"messages":[{"role":"user","content":"Добавь винтажную плёнку"},{"role":"assistant","content":"Придать изображению лёгкий шум и тёплый фильтр, слегка уменьшить контраст. Эффект старой фотографии."}]}
+{"messages":[{"role":"user","content":"Сделай фото как кадр из фильма"},{"role":"assistant","content":"Добавить мягкий цветовой градиент, чуть понизить насыщенность. Придать кинематографическое настроение."}]}
+{"messages":[{"role":"user","content":"Добавь утренний свет"},{"role":"assistant","content":"Сделать освещение мягким и тёплым, поднять яркость и лёгкие тени. Передать ощущение свежести утра."}]}
+{"messages":[{"role":"user","content":"Сделай фото как под дождём"},{"role":"assistant","content":"Добавить холодные оттенки, мягкие отражения и лёгкое размытие. Передать атмосферу дождливого дня."}]}
+{"messages":[{"role":"user","content":"Добавь мягкое боке"},{"role":"assistant","content":"Размыть фон, сохранить резкость объекта. Создать глубину и приятное рассеяние света."}]}
+{"messages":[{"role":"user","content":"Сделай фото как Polaroid"},{"role":"assistant","content":"Добавить рамку, лёгкое переэкспонирование и тёплые оттенки. Эффект мгновенного снимка."}]}
+{"messages":[{"role":"user","content":"Добавь эффект старой камеры"},{"role":"assistant","content":"Добавить лёгкое виньетирование, пыль и неровную текстуру. Эстетика 90-х."}]}
+{"messages":[{"role":"user","content":"Сделай фото реалистичнее"},{"role":"assistant","content":"Сбалансировать цветовую температуру, смягчить контраст и тени. Передать натуральное освещение."}]}
+{"messages":[{"role":"user","content":"Добавь вечернее освещение"},{"role":"assistant","content":"Понизить экспозицию, добавить тёплые жёлтые тона и лёгкое боковое освещение. Эффект золотого часа."}]}
+{"messages":[{"role":"user","content":"Сделай фото мягким и светлым"},{"role":"assistant","content":"Понизить контраст, осветлить фон и добавить рассеянный свет. Передать ощущение воздуха и лёгкости."}]}
+{"messages":[{"role":"user","content":"Добавь солнечные лучи"},{"role":"assistant","content":"Добавить диагональные блики и тёплые оттенки. Эффект света, проходящего через листву."}]}
+{"messages":[{"role":"user","content":"Сделай фото в стиле Pinterest"},{"role":"assistant","content":"Добавить лёгкий фильтр с тёплыми пастельными тонами. Создать эстетичное и мягкое настроение."}]}
+{"messages":[{"role":"user","content":"Добавь стиль утреннего окна"},{"role":"assistant","content":"Сделать освещение рассеянным, добавить отражения и мягкие тени. Эффект спокойного утра."}]}
+{"messages":[{"role":"user","content":"Сделай фото как из артбука"},{"role":"assistant","content":"Добавить лёгкий рисунок светом, мягкий контраст и текстуру бумаги. Художественная атмосфера."}]}
+{"messages":[{"role":"user","content":"Добавь лёгкий шум"},{"role":"assistant","content":"Немного увеличить зернистость, чтобы фото выглядело естественно. Эффект цифровой плёнки."}]}
+{"messages":[{"role":"user","content":"Сделай цвета пастельными"},{"role":"assistant","content":"Понизить насыщенность, смягчить контраст. Создать спокойную и нежную палитру."}]}
+{"messages":[{"role":"user","content":"Добавь настроение тепла"},{"role":"assistant","content":"Слегка согреть изображение, добавить мягкий свет и лёгкое свечение. Атмосфера уюта."}]}
+{"messages":[{"role":"user","content":"Сделай фото как старую открытку"},{"role":"assistant","content":"Добавить пожелтевший оттенок и мягкую текстуру бумаги. Эффект винтажной печати."}]}
+{"messages":[{"role":"user","content":"Добавь больше воздуха"},{"role":"assistant","content":"Осветлить фон, снизить контраст и сделать изображение лёгким. Эффект просторного пространства."}]}
+{"messages":[{"role":"user","content":"Сделай фото более кинематографичным"},{"role":"assistant","content":"Добавить teal-orange цветокор, мягкий контраст и приглушённые тени. Эффект художественного фильма."}]}
+{"messages":[{"role":"user","content":"Добавь золотое свечение"},{"role":"assistant","content":"Добавить тёплые мягкие лучи, немного осветлить тени. Передать атмосферу заката."}]}
+{"messages":[{"role":"user","content":"Сделай фото в духе старого кино"},{"role":"assistant","content":"Добавить лёгкое мерцание, виньетку и мягкий контраст. Эстетика 60-х."}]}
+{"messages":[{"role":"user","content":"Добавь отражение света"},{"role":"assistant","content":"Сделать свет направленным и добавить мягкие блики. Эффект отражения от стекла."}]}
+{"messages":[{"role":"user","content":"Сделай фото загадочным"},{"role":"assistant","content":"Понизить освещение, добавить мягкие тени и тёплый контраст. Создать интригующую атмосферу."}]}
+{"messages":[{"role":"user","content":"Добавь немного холодного свечения"},{"role":"assistant","content":"Добавить лёгкий голубой фильтр и мягкий свет. Создать ощущение зимнего вечера."}]}
+{"messages":[{"role":"user","content":"Сделай фото как с аналога"},{"role":"assistant","content":"Добавить зернистость, мягкий контраст и чуть смещённый цвет. Эффект старого объектива."}]}
+{"messages":[{"role":"user","content":"Добавь световые ореолы"},{"role":"assistant","content":"Добавить мягкие блики и свечение. Передать эффект контрового света."}]}
+{"messages":[{"role":"user","content":"Сделай фото в мягких тонах"},{"role":"assistant","content":"Понизить контраст, осветлить фон и добавить рассеянное освещение. Фото становится спокойным и лёгким."}]}
+{"messages":[{"role":"user","content":"Добавь ощущение движения"},{"role":"assistant","content":"Слегка размыть задний план, усилить контраст на объекте. Создать динамику кадра."}]}
+{"messages":[{"role":"user","content":"Сделай фото уютным и домашним"},{"role":"assistant","content":"Добавить тёплый свет, мягкий фильтр и немного зернистости. Эффект лампы в вечерней комнате."}]}
+{"messages":[{"role":"user","content":"Добавь эффект рассвета"},{"role":"assistant","content":"Осветлить края кадра, добавить лёгкие лучи и розоватый оттенок. Передать настроение утра."}]}
+{"messages":[{"role":"user","content":"Сделай фото как полароид с выцветшими цветами"},{"role":"assistant","content":"Добавить лёгкое выгорание оттенков, мягкий фильтр и белую рамку. Эффект старого снимка."}]}
+{"messages":[{"role":"user","content":"Добавь стиль городской фотографии"},{"role":"assistant","content":"Повысить контраст, добавить холодные оттенки и мягкий шум. Эффект вечернего города."}]}
+{"messages":[{"role":"user","content":"Сделай фото как из путешествия"},{"role":"assistant","content":"Добавить лёгкий золотой фильтр, подчеркнуть естественные цвета. Эффект дневного света и простора."}]}
+{"messages":[{"role":"user","content":"Добавь лёгкую дымку"},{"role":"assistant","content":"Слегка размыть дальний план, смягчить цвета. Эффект утреннего воздуха."}]}
+{"messages":[{"role":"user","content":"Сделай фото с тёплым настроением"},{"role":"assistant","content":"Добавить золотистый фильтр и мягкие тени. Создать уютную и приятную атмосферу."}]}
+{"messages":[{"role":"user","content":"Добавь мягкий блеск"},{"role":"assistant","content":"Добавить свечение на светлых участках, немного осветлить края. Фото становится нежным и светлым."}]}
+{"messages":[{"role":"user","content":"Сделай фото как из старого альбома"},{"role":"assistant","content":"Добавить текстуру бумаги, мягкий фильтр и слегка потёртые края. Эффект архивного снимка."}]}
+{"messages":[{"role":"user","content":"Добавь отражения и светлые блики"},{"role":"assistant","content":"Создать лёгкие световые переливы и мягкий контраст. Фото выглядит живым и объёмным."}]}
+{"messages":[{"role":"user","content":"Make the photo better"},{"role":"assistant","content":"Enhance clarity, gently balance light and shadows, improve contrast and add a warm tone. Natural 35mm look with soft lighting."}]}
+{"messages":[{"role":"user","content":"Brighten the image"},{"role":"assistant","content":"Slightly raise exposure and white balance, lift the shadows. Add a morning sunlight feel with soft, diffused light."}]}
+{"messages":[{"role":"user","content":"Darken the photo"},{"role":"assistant","content":"Lower exposure and contrast, add a vignette. Create a cozy evening tone with warm lamplight."}]}
+{"messages":[{"role":"user","content":"Add sharpness"},{"role":"assistant","content":"Apply subtle sharpening, especially along edges. Keep the natural skin texture intact."}]}
+{"messages":[{"role":"user","content":"Increase contrast"},{"role":"assistant","content":"Boost contrast, deepen shadows and define key lines. Editorial-style color balance."}]}
+{"messages":[{"role":"user","content":"Soften the photo"},{"role":"assistant","content":"Gently reduce contrast and highlights, add diffused light and smooth tones for a calm look."}]}
+{"messages":[{"role":"user","content":"Add depth"},{"role":"assistant","content":"Enhance foreground clarity and slightly blur the background. Create a natural sense of dimension."}]}
+{"messages":[{"role":"user","content":"Warm up the portrait"},{"role":"assistant","content":"Add a subtle golden hue, soften shadows and create a gentle, inviting tone."}]}
+{"messages":[{"role":"user","content":"Add a cool filter"},{"role":"assistant","content":"Shift color balance toward blue, reduce warmth and create a clean, crisp atmosphere."}]}
+{"messages":[{"role":"user","content":"Smooth the skin"},{"role":"assistant","content":"Reduce fine texture and blemishes while keeping a natural skin look and balanced light."}]}
+{"messages":[{"role":"user","content":"Add a warm filter"},{"role":"assistant","content":"Apply gentle orange and amber tones to create a cozy, sunlit atmosphere."}]}
+{"messages":[{"role":"user","content":"Make it retro"},{"role":"assistant","content":"Add grain, warm tint and soft contrast. Emulate the feel of vintage 80s film."}]}
+{"messages":[{"role":"user","content":"Add a Polaroid effect"},{"role":"assistant","content":"Add soft overexposure, warm tones and subtle grain. Give it a nostalgic instant photo look."}]}
+{"messages":[{"role":"user","content":"Make it cinematic"},{"role":"assistant","content":"Add teal-orange grading, lower saturation slightly and enhance mood lighting."}]}
+{"messages":[{"role":"user","content":"Add atmosphere"},{"role":"assistant","content":"Add a light haze and soft shadows. Create a calm, immersive tone with subtle warmth."}]}
+{"messages":[{"role":"user","content":"Add film grain"},{"role":"assistant","content":"Introduce a fine grain texture for a classic film look and organic feel."}]}
+{"messages":[{"role":"user","content":"Blur the background"},{"role":"assistant","content":"Add smooth bokeh to the background while keeping the subject sharp. Create depth and focus."}]}
+{"messages":[{"role":"user","content":"Convert to black and white"},{"role":"assistant","content":"Remove color, enhance contrast and texture for a timeless monochrome feel."}]}
+{"messages":[{"role":"user","content":"Add HDR effect"},{"role":"assistant","content":"Balance highlights and shadows to increase dynamic range while keeping it natural."}]}
+{"messages":[{"role":"user","content":"Make it high-contrast"},{"role":"assistant","content":"Enhance tonal separation between light and dark areas, keeping midtones smooth."}]}
+{"messages":[{"role":"user","content":"Add soft light"},{"role":"assistant","content":"Brighten with gentle diffused light, keeping a warm and even tone throughout the frame."}]}
+{"messages":[{"role":"user","content":"Make it look like film"},{"role":"assistant","content":"Add mild grain, soft contrast and warm tones. Simulate classic analog film style."}]}
+{"messages":[{"role":"user","content":"Add a golden tint"},{"role":"assistant","content":"Introduce subtle yellow and amber hues. Evoke the feeling of sunset warmth."}]}
+{"messages":[{"role":"user","content":"Cool down the tones"},{"role":"assistant","content":"Add soft blue cast and reduce warm light. Create a peaceful winter morning mood."}]}
+{"messages":[{"role":"user","content":"Make it more vivid"},{"role":"assistant","content":"Slightly boost color vibrance and clarity while keeping the image natural."}]}
+{"messages":[{"role":"user","content":"Make the portrait natural"},{"role":"assistant","content":"Keep skin tones balanced, add soft highlights and maintain realistic lighting."}]}
+{"messages":[{"role":"user","content":"Add a sunset feel"},{"role":"assistant","content":"Warm the tones and lower contrast. Create soft light as if taken during golden hour."}]}
+{"messages":[{"role":"user","content":"Make it Instagram-style"},{"role":"assistant","content":"Add pastel warm tones, gentle contrast and airy exposure. Balanced modern aesthetic."}]}
+{"messages":[{"role":"user","content":"Add a sunset filter"},{"role":"assistant","content":"Enhance orange-pink hues, soften shadows and add a glowing warmth."}]}
+{"messages":[{"role":"user","content":"Deepen the shadows"},{"role":"assistant","content":"Increase depth by darkening shadows while preserving overall softness."}]}
+{"messages":[{"role":"user","content":"Add soft focus"},{"role":"assistant","content":"Slightly blur the edges, keeping main details crisp. Gentle dreamy effect."}]}
+{"messages":[{"role":"user","content":"Make the photo brighter"},{"role":"assistant","content":"Lift exposure, soften contrast and enhance warm highlights."}]}
+{"messages":[{"role":"user","content":"Add a vignette"},{"role":"assistant","content":"Darken the corners slightly to draw attention toward the subject."}]}
+{"messages":[{"role":"user","content":"Make it artistic"},{"role":"assistant","content":"Balance tones, add a soft gradient and subtle color contrast for an artistic look."}]}
+{"messages":[{"role":"user","content":"Add a pink tone"},{"role":"assistant","content":"Apply gentle rose tint to highlights. Create a calm, romantic atmosphere."}]}
+{"messages":[{"role":"user","content":"Make it minimalist"},{"role":"assistant","content":"Simplify the frame, use neutral tones and smooth background. Focus on form and light."}]}
+{"messages":[{"role":"user","content":"Add warm lighting"},{"role":"assistant","content":"Enhance golden tones, reduce harsh shadows and add cozy warmth."}]}
+{"messages":[{"role":"user","content":"Make it cozy"},{"role":"assistant","content":"Add soft yellow glow and smooth shadows. Create an inviting indoor feeling."}]}
+{"messages":[{"role":"user","content":"Add rainy mood"},{"role":"assistant","content":"Cool down tones slightly, add reflections and soft haze for a moody rain effect."}]}
+{"messages":[{"role":"user","content":"Soften the lighting"},{"role":"assistant","content":"Reduce harsh highlights, balance midtones and create smooth light falloff."}]}
+{"messages":[{"role":"user","content":"Add glow"},{"role":"assistant","content":"Add subtle bloom on bright areas for a gentle glowing atmosphere."}]}
+{"messages":[{"role":"user","content":"Enhance colors"},{"role":"assistant","content":"Boost saturation slightly, refine tonal balance. Keep colors natural yet vivid."}]}
+{"messages":[{"role":"user","content":"Make it cooler"},{"role":"assistant","content":"Shift white balance toward blue and cyan, creating a crisp airy tone."}]}
+{"messages":[{"role":"user","content":"Add a winter vibe"},{"role":"assistant","content":"Lower warmth, add blue shadows and soft light to mimic a cold morning."}]}
+{"messages":[{"role":"user","content":"Add bokeh"},{"role":"assistant","content":"Apply smooth circular blur to background lights for a cinematic feel."}]}
+{"messages":[{"role":"user","content":"Make it cinematic"},{"role":"assistant","content":"Add subtle teal-orange grading and gentle contrast for a filmic depth."}]}
+{"messages":[{"role":"user","content":"Add a vintage edit"},{"role":"assistant","content":"Warm up the colors, lower clarity slightly and add fine grain for a nostalgic tone."}]}
+{"messages":[{"role":"user","content":"Clean up the photo"},{"role":"assistant","content":"Balance exposure, remove noise and maintain a clear, natural texture."}]}
+{"messages":[{"role":"user","content":"Fix white balance"},{"role":"assistant","content":"Adjust temperature and tint for true-to-life colors and natural lighting."}]}
+{"messages":[{"role":"user","content":"Make it 90s style"},{"role":"assistant","content":"Add warm tones, low contrast and slight fading. Evoke classic film nostalgia."}]}
+{"messages":[{"role":"user","content":"Add golden hour lighting"},{"role":"assistant","content":"Add soft warm sunlight, glowing highlights and gentle shadows for sunset ambiance."}]}
+{"messages":[{"role":"user","content":"Make colors look natural"},{"role":"assistant","content":"Reduce oversaturation, balance tones and keep realistic daylight hues."}]}
+{"messages":[{"role":"user","content":"Add soft shadows"},{"role":"assistant","content":"Enhance light direction with gentle, diffused shading. Preserve smooth highlights."}]}
+{"messages":[{"role":"user","content":"Make it calm"},{"role":"assistant","content":"Soften the contrast, reduce brightness and create a peaceful, balanced scene."}]}
+{"messages":[{"role":"user","content":"Add more light"},{"role":"assistant","content":"Lift exposure slightly, brighten highlights and create airy, open lighting."}]}
+{"messages":[{"role":"user","content":"Make it warm and cozy"},{"role":"assistant","content":"Add golden hues, soft shadows and natural glow for a comforting atmosphere."}]}
+{"messages":[{"role":"user","content":"Add dreamy tones"},{"role":"assistant","content":"Soften colors, reduce contrast, and add a gentle haze. Create a peaceful, cinematic dreamlike look."}]}
+{"messages":[{"role":"user","content":"Make it foggy"},{"role":"assistant","content":"Add soft white haze, lower contrast and saturation. Mimic early morning mist."}]}
+{"messages":[{"role":"user","content":"Enhance mood lighting"},{"role":"assistant","content":"Add directional warm light, deepen shadows and create emotional depth in the scene."}]}
+{"messages":[{"role":"user","content":"Add sunlight rays"},{"role":"assistant","content":"Introduce warm diagonal light streaks. Simulate sunlight filtering through leaves."}]}
+{"messages":[{"role":"user","content":"Make it glossy"},{"role":"assistant","content":"Add crisp highlights and reflective surfaces for a clean editorial look."}]}
+{"messages":[{"role":"user","content":"Add vintage colors"},{"role":"assistant","content":"Apply faded tones, warm highlights and soft grain. Evoke the feeling of old photographs."}]}
+{"messages":[{"role":"user","content":"Make it cinematic portrait"},{"role":"assistant","content":"Add filmic shadows, soft teal-orange tones and natural skin balance. Preserve depth and mood."}]}
+{"messages":[{"role":"user","content":"Add texture to the image"},{"role":"assistant","content":"Increase micro contrast and surface detail while maintaining a natural feel."}]}
+{"messages":[{"role":"user","content":"Make it moody"},{"role":"assistant","content":"Lower brightness, deepen shadows and add subtle blue undertones for dramatic mood."}]}
+{"messages":[{"role":"user","content":"Add sun flare"},{"role":"assistant","content":"Add lens flare and warm glow from one side. Create a nostalgic summer light effect."}]}
+{"messages":[{"role":"user","content":"Make it artistic"},{"role":"assistant","content":"Add balanced color grading and smooth light transitions. Give the image an expressive tone."}]}
+{"messages":[{"role":"user","content":"Add pastel tones"},{"role":"assistant","content":"Reduce saturation, soften contrast and highlight gentle warm hues."}]}
+{"messages":[{"role":"user","content":"Make it like a film still"},{"role":"assistant","content":"Add cinematic lighting, fine grain and soft color contrast. Capture movie-like mood."}]}
+{"messages":[{"role":"user","content":"Add texture and grain"},{"role":"assistant","content":"Enhance tactile details with fine grain for a more tangible film look."}]}
+{"messages":[{"role":"user","content":"Make it airy"},{"role":"assistant","content":"Brighten exposure, soften shadows and add white tones. Give it a light, spacious feel."}]}
+{"messages":[{"role":"user","content":"Add dramatic lighting"},{"role":"assistant","content":"Increase contrast between light and shadow. Highlight form and shape for intensity."}]}
+{"messages":[{"role":"user","content":"Make it nostalgic"},{"role":"assistant","content":"Add warm faded tones and light grain to evoke a gentle sense of memory."}]}
+{"messages":[{"role":"user","content":"Add haze"},{"role":"assistant","content":"Apply soft mist over the image, reducing sharpness for a cinematic atmosphere."}]}
+{"messages":[{"role":"user","content":"Make it cinematic landscape"},{"role":"assistant","content":"Add teal-orange grading, lower clarity slightly and preserve a wide tonal range."}]}
+{"messages":[{"role":"user","content":"Add golden light"},{"role":"assistant","content":"Add warm sunlight glow, soft edges and natural highlights. Perfect golden hour feel."}]}
+{"messages":[{"role":"user","content":"Make it soft and glowing"},{"role":"assistant","content":"Reduce contrast and add bloom to bright areas for a delicate ethereal tone."}]}
+{"messages":[{"role":"user","content":"Add cool morning tones"},{"role":"assistant","content":"Shift temperature slightly blue, soften light and create calm morning freshness."}]}
+{"messages":[{"role":"user","content":"Make it editorial style"},{"role":"assistant","content":"Add clean highlights, balanced shadows and neutral tones. Studio-like modern look."}]}
+{"messages":[{"role":"user","content":"Add reflection effect"},{"role":"assistant","content":"Simulate reflections on glass or water for subtle symmetry and light play."}]}
+{"messages":[{"role":"user","content":"Make it romantic"},{"role":"assistant","content":"Add soft pink tones, lower contrast and gentle light falloff. Create a tender mood."}]}
+{"messages":[{"role":"user","content":"Add dreamy glow"},{"role":"assistant","content":"Add soft bloom around light sources. Keep the focus sharp and the edges airy."}]}
+{"messages":[{"role":"user","content":"Make it dramatic"},{"role":"assistant","content":"Enhance shadows, cool midtones and tighten highlights for emotional contrast."}]}
+{"messages":[{"role":"user","content":"Add analog film look"},{"role":"assistant","content":"Add fine grain, warm tint and mild fading. Replicate authentic analog feel."}]}
+{"messages":[{"role":"user","content":"Make it editorial portrait"},{"role":"assistant","content":"Boost clarity, soften skin tones and balance shadows. Capture high-fashion light."}]}
+{"messages":[{"role":"user","content":"Add modern color grade"},{"role":"assistant","content":"Use neutral shadows, rich highlights and balanced tones. Minimal, clean mood."}]}
+{"messages":[{"role":"user","content":"Make it look like daylight"},{"role":"assistant","content":"Raise exposure, neutralize tones and add soft blue sky reflection."}]}
+{"messages":[{"role":"user","content":"Add golden reflections"},{"role":"assistant","content":"Add warm bouncing light to highlights and metallic surfaces. Sunset ambiance."}]}
+{"messages":[{"role":"user","content":"Make it futuristic"},{"role":"assistant","content":"Cool down tones, add cyan-blue accents and smooth contrast. Create modern atmosphere."}]}
+{"messages":[{"role":"user","content":"Add warm cinematic tone"},{"role":"assistant","content":"Blend orange and teal balance, keep low contrast for emotional softness."}]}
+{"messages":[{"role":"user","content":"Make it glossy studio style"},{"role":"assistant","content":"Add even light, clean background and polished highlights for professional finish."}]}
+{"messages":[{"role":"user","content":"Add gentle vignette"},{"role":"assistant","content":"Slightly darken the corners to draw attention toward the center focus."}]}
+{"messages":[{"role":"user","content":"Make it golden hour mood"},{"role":"assistant","content":"Warm up tones, reduce clarity and add soft low sunlight effect."}]}
+{"messages":[{"role":"user","content":"Add cool highlights"},{"role":"assistant","content":"Add bluish tones to the bright areas for a clean, crisp modern look."}]}
+{"messages":[{"role":"user","content":"Make it elegant"},{"role":"assistant","content":"Reduce saturation, refine shadows and maintain subtle balanced lighting."}]}
+{"messages":[{"role":"user","content":"Add motion blur"},{"role":"assistant","content":"Blur parts of the frame to simulate slight camera or subject movement."}]}
+{"messages":[{"role":"user","content":"Make it cinematic city shot"},{"role":"assistant","content":"Add moody lighting, reflective tones and teal-orange palette. Urban film mood."}]}
+{"messages":[{"role":"user","content":"Add soft ambient light"},{"role":"assistant","content":"Even out lighting, reduce shadows and create smooth light diffusion."}]}
+{"messages":[{"role":"user","content":"Make it gentle and pastel"},{"role":"assistant","content":"Use low saturation and balanced exposure. Add soft pink and beige tones."}]}
+{"messages":[{"role":"user","content":"Add rain reflections"},{"role":"assistant","content":"Add reflective ground textures, slight blur and cooler tones. Wet street effect."}]}
+{"messages":[{"role":"user","content":"Make it ethereal"},{"role":"assistant","content":"Add fog-like haze and soft glow. Keep muted contrast for an airy presence."}]}
+{"messages":[{"role":"user","content":"Add contrast in highlights"},{"role":"assistant","content":"Emphasize bright tones while keeping shadows subtle and natural."}]}
+{"messages":[{"role":"user","content":"Make it minimalist and clean"},{"role":"assistant","content":"Use negative space, neutral tones and balanced light. Keep composition simple."}]}
+{"messages":[{"role":"user","content":"Add warm atmosphere"},{"role":"assistant","content":"Enhance amber tones and soft glow for a calm, welcoming feeling."}]}
+{"messages":[{"role":"user","content":"Make it look timeless"},{"role":"assistant","content":"Blend classic film tones with neutral lighting. Keep natural warmth and balance."}]}
+{"messages":[{"role":"user","content":"Add cinematic softness"},{"role":"assistant","content":"Reduce harsh edges, lower clarity slightly and keep color tones balanced."}]}
