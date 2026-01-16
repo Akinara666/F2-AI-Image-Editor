@@ -98,6 +98,10 @@ const Sidebar = ({
                         onClick={() => setBrushMode('hand')}
                         style={{flex: 1, background: brushMode === 'hand' ? '#2a9d8f' : '#444', color: '#fff', border: 'none', padding: '5px'}}
                     >Hand</button>
+                    <button 
+                        onClick={() => setBrushMode('eraser')}
+                        style={{flex: 1, background: brushMode === 'eraser' ? '#f4a261' : '#444', color: '#fff', border: 'none', padding: '5px'}}
+                    >Eraser</button>
                 </div>
                 
                 {brushMode !== 'none' && (

@@ -10,6 +10,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [genFrame, setGenFrame] = useState(null);
     const brushModeRef = useRef(brushMode);
+    
+    // Staging / Candidates
+    const [candidate, setCandidate] = useState(null); // The Fabric Object
+    const [candidateUrl, setCandidateUrl] = useState(null); // For UI Feedback if needed
 
     // Keep ref in sync
     useEffect(() => {
@@ -74,12 +78,24 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             opt.e.stopPropagation();
         });
 
+        // Snap to Grid (64px) for Generation Frame
+        const GRID_SIZE = 64;
+        canvas.on('object:moving', function(e) {
+            if (e.target === frame) {
+                e.target.set({
+                    left: Math.round(e.target.left / GRID_SIZE) * GRID_SIZE,
+                    top: Math.round(e.target.top / GRID_SIZE) * GRID_SIZE
+                });
+            }
+        });
+
         // Pan
         let isDragging = false;
         let lastPosX, lastPosY;
         canvas.on('mouse:down', function(opt) {
             const evt = opt.e;
-            if (evt.altKey === true || brushModeRef.current === 'hand') {
+            // Allow dragging if Alt key, Hand Mode, OR SPACEBAR is pressed
+            if (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning) {
                 isDragging = true;
                 canvas.selection = false;
                 lastPosX = evt.clientX;
@@ -135,9 +151,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     obj.evented = true;
                 } else {
                     obj.selectable = true;
-                    obj.evented = true;
+                obj.evented = true;
                 }
-            });
             });
         } else if (brushMode === 'hand') {
              fabricCanvas.isDrawingMode = false;
@@ -162,6 +177,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             
             if (brushMode === 'mask') {
                 brush.color = 'rgba(255, 0, 0, 0.5)';
+            } else if (brushMode === 'eraser') {
+                brush.color = '#808080'; // Paint with background color (Eraser)
+                brush.width = brushSize * 2; // Make eraser slightly bigger
             } else {
                 brush.color = brushColor;
             }
@@ -179,6 +197,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 e.path.set({ 
                     isMask: true
                 });
+            } else if (brushMode === 'eraser') {
+                 // Eraser strokes are just "cover up" strokes, not masks.
+                 // We can tag them as 'eraser' if we want special logic later.
+                 e.path.set({ isMask: false, isEraser: true });
             } else {
                 e.path.set({ isMask: false });
             }
@@ -215,10 +237,16 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     // --- Exposed Methods ---
     useImperativeHandle(ref, () => ({
         
-        // Add Result
+        // Add Result (Staging Phase)
         addGeneratedImage: (url) => {
             if (!fabricCanvas || !genFrame) return;
             
+            // If there is already a candidate, remove it (replace mode)
+            if (candidate) {
+                fabricCanvas.remove(candidate);
+                setCandidate(null);
+            }
+
             // Get frame position
             const left = genFrame.left;
             const top = genFrame.top;
@@ -236,28 +264,61 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     top: top,
                     scaleX: scaleX, // Computed to fit exactly
                     scaleY: scaleY,
-                    selectable: true,
-                    lockScalingX: true, // Prevent accidental resizing
-                    lockScalingY: true
+                    selectable: false, // Not selectable yet
+                    evented: false,
+                    isCandidate: true, // Tag as candidate
+                    stroke: '#00ff00', // Green border to indicate "Pending"
+                    strokeWidth: 4, 
                 });
+                
                 fabricCanvas.add(img);
-                fabricCanvas.setActiveObject(img);
-                
-                // --- Reorder Layers ---
-                // We want: Images (Bottom) -> Masks/Paths (Middle) -> Frame (Top)
-                
-                // 1. Bring all paths (Sketches/Masks) to front
-                fabricCanvas.getObjects().forEach(obj => {
-                    if (obj.type === 'path' || obj.isMask) {
-                        obj.bringToFront();
-                    }
-                });
-
-                // 2. Ensure frame is always on top
-                genFrame.bringToFront();
+                img.bringToFront();
+                genFrame.bringToFront(); // Frame on top of everything
                 
                 fabricCanvas.requestRenderAll();
+                
+                // Set State to trigger UI
+                setCandidate(img);
+                setCandidateUrl(url);
             });
+        },
+        
+        // Staging Actions
+        acceptCandidate: () => {
+             if (!candidate || !fabricCanvas) return;
+             
+             // Commit: Remove "Candidate" status, Lock it.
+             candidate.set({
+                 selectable: true,
+                 evented: true,
+                 isCandidate: false,
+                 stroke: null, // Remove border
+                 strokeWidth: 0,
+                 // Default Lock settings
+                 lockMovementX: true,
+                 lockMovementY: true,
+                 lockRotation: true,
+                 lockScalingX: true,
+                 lockScalingY: true,
+                 hasControls: false
+             });
+             
+             // Send to back (background layer) but above other background?
+             // Usually we want it just below the frame.
+             fabricCanvas.sendToBack(candidate);
+             // Or keep order.
+             
+             setCandidate(null);
+             setCandidateUrl(null);
+             fabricCanvas.requestRenderAll();
+        },
+        
+        discardCandidate: () => {
+             if (!candidate || !fabricCanvas) return;
+             fabricCanvas.remove(candidate);
+             setCandidate(null);
+             setCandidateUrl(null);
+             fabricCanvas.requestRenderAll();
         },
 
         // Export Logic
@@ -433,6 +494,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 e.preventDefault();
                 performUndo();
             }
+            // Spacebar Panning (Press to Pan)
+            if (e.code === 'Space' && !e.repeat && brushModeRef.current !== 'hand') {
+                 e.preventDefault(); // Prevent scroll
+                 fabricCanvas.defaultCursor = 'grab';
+                 fabricCanvas.isDrawingMode = false; // Temp disable drawing
+                 fabricCanvas.selection = false;
+                 // Set a global flag or just rely on the 'spacePressed' state check in mouse:down
+                 fabricCanvas.isSpacePanning = true; 
+                 // We specifically disable object interaction during space pan
+                 fabricCanvas.forEachObject(o => o.evented = false); 
+            }
+
             // Delete key to remove active selection
             if (e.key === 'Delete' || e.key === 'Backspace') {
                  if(fabricCanvas && fabricCanvas.getActiveObject()) {
@@ -445,8 +518,26 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             }
         };
 
+        const handleKeyUp = (e) => {
+             if (e.code === 'Space' && fabricCanvas.isSpacePanning) {
+                 fabricCanvas.defaultCursor = 'default';
+                 fabricCanvas.isSpacePanning = false;
+                 
+                 // Restore interactions
+                 if (brushModeRef.current !== 'hand') {
+                      fabricCanvas.selection = true;
+                      fabricCanvas.isDrawingMode = (brushModeRef.current !== 'none');
+                      fabricCanvas.forEachObject(o => o.evented = true);
+                 }
+             }
+        };
+
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('keyup', handleKeyUp);
+        };
     }, [fabricCanvas, genFrame]);
 
     return (
@@ -455,6 +546,52 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             style={{ width: '100%', height: '100%', backgroundColor: '#222', position: 'relative', overflow: 'hidden' }}
         >
             <canvas ref={canvasRef} />
+            
+            {/* Staging UI Overlay */}
+            {candidateUrl && (
+                <div style={{
+                    position: 'absolute',
+                    bottom: '20px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    display: 'flex',
+                    gap: '10px',
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    padding: '10px',
+                    borderRadius: '8px',
+                    zIndex: 1000
+                }}>
+                    <button 
+                        onClick={() => {
+                            // Call internal method via ref logic (or just direct function since we are inside component)
+                            // We need to access the function we defined in useImperativeHandle? 
+                            // No, we can just define the logic outside or duplicate.
+                            // Better: Extract logic to component function.
+                            // For now, I'll access the same logic directly.
+                            if (!candidate || !fabricCanvas) return;
+                             candidate.set({
+                                 selectable: true, evented: true, isCandidate: false, stroke: null, strokeWidth: 0,
+                                 lockMovementX: true, lockMovementY: true, lockRotation: true, lockScalingX: true, lockScalingY: true, hasControls: false
+                             });
+                             setCandidate(null); setCandidateUrl(null); fabricCanvas.requestRenderAll();
+                        }}
+                        style={{background: '#2a9d8f', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
+                    >
+                        ✓ ACCEPT
+                    </button>
+                    
+                    <button 
+                         onClick={() => {
+                             if (!candidate || !fabricCanvas) return;
+                             fabricCanvas.remove(candidate);
+                             setCandidate(null); setCandidateUrl(null); fabricCanvas.requestRenderAll();
+                         }}
+                        style={{background: '#e63946', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'}}
+                    >
+                        ✕ DISCARD
+                    </button>
+                </div>
+            )}
         </div>
     );
 });
