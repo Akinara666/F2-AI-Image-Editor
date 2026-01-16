@@ -273,8 +273,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 // 1. Reset Viewport
                 fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
 
-                // 2. Prepare for Init Image (Hide Masks, Hide Frame)
+                // 2. Prepare for Init Image (Hide Masks, Hide Frame, TRANSPARENT BG)
                 rect.visible = false;
+                fabricCanvas.backgroundColor = null; // Important: Transparent background
+                
                 fabricCanvas.getObjects().forEach(obj => {
                     if (obj.isMask) {
                         obj.visible = false;
@@ -291,7 +293,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 const hasMasks = objectStates.some(s => s.obj.isMask);
                 
                 if (hasMasks) {
-                    fabricCanvas.backgroundColor = 'black';
+                    fabricCanvas.backgroundColor = 'black'; // Opaque Black for Mask
                     fabricCanvas.getObjects().forEach(obj => {
                         if (obj === rect) {
                             obj.visible = false;
@@ -330,7 +332,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                         opacity: state.opacity
                     });
                 });
-                // Ensure frame is visible (though state.visible should handle it, keeping explicit for safety)
+                // Ensure frame is visible
                 rect.visible = true; 
                 
                 fabricCanvas.requestRenderAll();

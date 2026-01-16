@@ -76,18 +76,75 @@ async def generate_image(
         if style_preset and style_preset in STYLE_PRESETS:
              final_prompt = f"{prompt}, {STYLE_PRESETS[style_preset]}"
              
+        # Detect Mode & Process Inputs Early
+        # We need to read images to know if there is an alpha channel for auto-outpainting
+        
+        image_input = None
+        mask_input = None
+        
+        # Load Init Image
+        if init_image:
+            img_bytes = await init_image.read()
+            # Open as RGBA to preserve transparency
+            image_input = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+            # Resize
+            image_input = image_input.resize((width, height))
+            
+        # Load Mask Image
+        if mask_image:
+            mask_bytes = await mask_image.read()
+            raw_mask = Image.open(io.BytesIO(mask_bytes))
+            # Pre-process mask (Gaussian Blur for better blending)
+            mask_input = process_mask_for_inpainting(raw_mask, blur_radius=4)
+            mask_input = mask_input.resize((width, height))
+
         # 1. Determine Actual Mode (Smart Logic)
         actual_mode = mode
+        
+        # Auto-detect Outpainting context (Alpha channel transparency)
+        # If no manual mask is provided, but init image has transparency, treat as Outpainting
         if mode == "auto":
-             if mask_image:
+             if mask_input:
                  actual_mode = "inpainting"
-             elif init_image and denoising_strength < 1.0:
-                 actual_mode = "img2img"
+             elif image_input and denoising_strength < 1.0:
+                 # Check for transparency
+                 has_transparency = False
+                 if image_input.mode == 'RGBA':
+                     # Simple check: if min alpha < 255
+                     alpha = image_input.getchannel('A')
+                     if alpha.getextrema()[0] < 255:
+                         has_transparency = True
+                 
+                 if has_transparency:
+                     actual_mode = "inpainting"
+                     logger.info("Auto-detected Transparency -> Switching to Inpainting/Outpainting mode")
+                     
+                     # Force high denoising strength for Outpainting to avoid "black void" retention
+                     # The model needs to hallucinate fully in the empty space.
+                     denoising_strength = 1.0
+                     
+                     # GENERATE MASK FROM ALPHA
+                     # Alpha: 0 (Transparent) -> Mask: 255 (White/Edit)
+                     # Alpha: 255 (Opaque) -> Mask: 0 (Black/Keep)
+                     alpha = image_input.getchannel('A')
+                     mask_from_alpha = Image.eval(alpha, lambda a: 255 if a < 255 else 0)
+                     mask_input = process_mask_for_inpainting(mask_from_alpha, blur_radius=4)
+                     
+                     # Composite image_input onto black for the model (remove alpha)
+                     bg = Image.new("RGB", image_input.size, (0, 0, 0))
+                     bg.paste(image_input, mask=image_input.split()[3]) # Paste using alpha
+                     image_input = bg
+                 else:
+                     actual_mode = "img2img"
+                     image_input = image_input.convert("RGB") # Drop alpha if opaque
              else:
                  actual_mode = "text2img"
-        
+
+        # Ensure image_input is RGB for pipeline if not handled above
+        if image_input and image_input.mode == 'RGBA':
+             image_input = image_input.convert("RGB")
+
         # 2. Load Model
-        # Map mode to internal pipeline type
         pipeline_type = actual_mode
         if actual_mode not in ["text2img", "img2img", "inpainting", "controlnet"]:
             pipeline_type = "text2img" # fallback
@@ -98,26 +155,7 @@ async def generate_image(
             import random
             seed = random.randint(0, 2**32 - 1)
         
-        generator = None # Will be torch.Generator inside logic if needed, usually passed to pipeline
-        
-
-        
-        # 3. Process Inputs
-        image_input = None
-        mask_input = None
-        
-        if init_image:
-            img_bytes = await init_image.read()
-            image_input = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            # Resize if needed to match requested width/height or keep aspect ratio
-            image_input = image_input.resize((width, height))
-            
-        if mask_image:
-            mask_bytes = await mask_image.read()
-            raw_mask = Image.open(io.BytesIO(mask_bytes))
-            # Pre-process mask (Gaussian Blur for better blending)
-            mask_input = process_mask_for_inpainting(raw_mask, blur_radius=4)
-            mask_input = mask_input.resize((width, height))
+        generator = None 
 
         # 4. Generate
         import torch
@@ -125,6 +163,8 @@ async def generate_image(
         
         result_image = None
         
+        logger.info(f"Starting Generation: Mode={actual_mode}, Size={width}x{height}, Seed={seed}")
+
         if actual_mode == "text2img":
             result = pipe(
                 prompt=final_prompt,
@@ -139,29 +179,26 @@ async def generate_image(
             
         elif actual_mode == "img2img":
             if not image_input:
-                 # Fallback if logic failed or logic says img2img but no file
                  raise HTTPException(status_code=400, detail="Img2Img requires init_image")
             
-            # Ensure correct pipeline signature handling (some unified pipelines use 'image')
             result = pipe(
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 image=image_input,
                 num_inference_steps=steps,
                 guidance_scale=cfg,
-                strength=denoising_strength, # Key parameter for img2img
+                strength=denoising_strength,
                 generator=generator
             )
             result_image = result.images[0]
 
         elif actual_mode == "inpainting":
             if not (image_input and mask_input):
-                 # Fallback
                  if image_input is None:
                      image_input = Image.new("RGB", (width, height), (0,0,0))
                 
             result = pipe(
-                prompt=final_prompt, # Use prompt with preset
+                prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 image=image_input,
                 mask_image=mask_input,
@@ -175,14 +212,37 @@ async def generate_image(
             generated = result.images[0]
             
             # COMPOSITING: Paste generated content back onto original using the mask
+            # For outpainting, specifically handle the artifact issue
             if image_input and mask_input:
-                # Ensure sizes match
-                if generated.size == image_input.size == mask_input.size:
-                     result_image = Image.composite(generated, image_input, mask_input)
-                else:
+                 # Standard Inpainting match
+                 if generated.size == image_input.size == mask_input.size:
+                     if mode == "auto" and has_transparency:
+                         # SPECIAL OUTPAINTING COMPOSITE
+                         # Fix: Use ERODED original alpha to blend strictly INSIDE the valid content.
+                         
+                         # 1. Recover original Alpha (Content=255, Void=0)
+                         
+                         # We need to Composite: Original (Top) over Generated (Bottom).
+                         # Mask: Defines where Original is visible.
+                         
+                         from PIL import ImageFilter
+                         # Erode alpha: Shrink white area (Content) to ensure edges don't touch black void
+                         # MinFilter(3) shrinks white regions by radius 1-2.
+                         eroded_alpha = alpha.filter(ImageFilter.MinFilter(3)) # Erode
+                         blurred_alpha = eroded_alpha.filter(ImageFilter.GaussianBlur(2)) # Soften
+                         
+                         # Composite(Top, Bottom, Mask) -> Mask=255 shows Top.
+                         result_image = Image.composite(image_input, generated, blurred_alpha)
+                     else:
+                         # Standard Inpainting (User mask)
+                         # mask_input is White for Edit (Generate).
+                         # Composite(Generatd, Original, Mask).
+                         result_image = Image.composite(generated, image_input, mask_input)
+                 else:
                      result_image = generated
             else:
                 result_image = generated
+
 
         # 5. Save & Return
         if result_image:
@@ -193,7 +253,8 @@ async def generate_image(
                 "seed": seed,
                 "steps": steps,
                 "cfg": cfg,
-                "model_id": model_id
+                "model_id": model_id,
+                "mode": actual_mode 
             }
             
             filename = save_image_with_metadata(result_image, meta, "static/outputs")
