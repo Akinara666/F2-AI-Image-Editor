@@ -273,26 +273,50 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 // 1. Reset Viewport
                 fabricCanvas.viewportTransform = [1, 0, 0, 1, 0, 0];
 
-                // 2. Prepare for Init Image (Hide Masks, Hide Frame, TRANSPARENT BG)
-                rect.visible = false;
-                fabricCanvas.backgroundColor = null; // Important: Transparent background
+                // 2. Prepare for Init Image
+                // LOGIC UPDATE: Handle Sketch-to-Image vs Outpainting vs Inpainting
                 
+                const hasExplicitMasks = objectStates.some(s => s.obj.isMask);
+                const hasSketches = objectStates.some(s => s.obj.type === 'path' && !s.obj.isMask);
+                
+                // Determine Export Strategy
+                let useOpaqueBackground = false;
+                
+                if (hasExplicitMasks) {
+                    // Scenario A: INPAINTING (Manual Mask)
+                    // We need transparency for layers + Mask file.
+                    fabricCanvas.backgroundColor = null;
+                } else if (hasSketches) {
+                    // Scenario B: SKETCH-TO-IMAGE
+                    // We must export an OPAQUE image to trigger 'img2img` on backend
+                    // and prevents 'auto-outpainting' (which keeps the sketch lines).
+                    fabricCanvas.backgroundColor = '#808080'; 
+                    useOpaqueBackground = true;
+                } else {
+                    // Scenario C: OUTPAINTING / PHOTO EDITING
+                    // No masks, no sketches (or just photo). Preserve transparency to allow Outpainting.
+                    fabricCanvas.backgroundColor = null;
+                }
+                
+                rect.visible = false;
+                
+                // Visibility Logic for Init Image
                 fabricCanvas.getObjects().forEach(obj => {
                     if (obj.isMask) {
-                        obj.visible = false;
+                        obj.visible = false; // Hide Masks from Init Image
                     }
+                    // Keep sketches visible (they are part of the image now)
                 });
                 
                 initDataURL = fabricCanvas.toDataURL({
-                    format: 'png',
+                    format: useOpaqueBackground ? 'jpeg' : 'png', // JPEG is always opaque, ensuring no alpha leaks
+                    quality: 0.95,
                     left: left, top: top, width: width, height: height,
                     multiplier: 1
                 });
 
-                // 3. Prepare for Mask (Black BG, White Masks, Hide others)
-                const hasMasks = objectStates.some(s => s.obj.isMask);
-                
-                if (hasMasks) {
+                // 3. Prepare for Mask (Black BG, White Masks)
+                if (hasExplicitMasks) {
                     fabricCanvas.backgroundColor = 'black'; // Opaque Black for Mask
                     fabricCanvas.getObjects().forEach(obj => {
                         if (obj === rect) {
@@ -300,23 +324,32 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                             return;
                         }
                         if (obj.isMask) {
-                            obj.visible = true;
-                            // Force White Opaque
-                            obj.set({
-                                stroke: '#ffffff',
-                                fill: '',
-                                opacity: 1
-                            });
+                            obj.visible = true; // Show Masks
+                            // Force Mask Color Visuals if needed
+                             if (obj.stroke !== 'white') {
+                                obj._originalStroke = obj.stroke;
+                                obj.stroke = 'white';
+                            }
                         } else {
-                            obj.visible = false; 
+                            obj.visible = false; // Hide Photos & Sketches for Mask generation
                         }
                     });
-
+                    
                     maskDataURL = fabricCanvas.toDataURL({
                         format: 'png',
                         left: left, top: top, width: width, height: height,
                         multiplier: 1
                     });
+                    
+                     // Cleanup temp white strokes
+                    fabricCanvas.getObjects().forEach(obj => {
+                        if (obj._originalStroke) {
+                            obj.stroke = obj._originalStroke;
+                            delete obj._originalStroke;
+                        }
+                    });
+                } else {
+                    maskDataURL = null; // No manual mask -> No Inpainting (unless Auto-Outpainting triggers via transparency)
                 }
 
             } finally {
