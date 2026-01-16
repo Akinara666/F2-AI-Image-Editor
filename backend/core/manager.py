@@ -7,8 +7,7 @@ from diffusers import (
     StableDiffusionImg2ImgPipeline,
     StableDiffusionInpaintPipeline,
     ControlNetModel,
-    StableDiffusionControlNetPipeline,
-    AutoencoderKL
+    StableDiffusionControlNetPipeline
 )
 from typing import Optional, Literal
 
@@ -66,7 +65,6 @@ class ModelManager:
                     "torch_dtype": torch.float16,
                     "use_safetensors": True,
                     "variant": "fp16", # Common for many huggingface models
-                    "local_files_only": True # TRY OFFLINE FIRST
                 }
                 
                 
