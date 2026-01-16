@@ -149,8 +149,9 @@ export const exportCanvasState = async (canvas, frame) => {
 
     const left = frame.left;
     const top = frame.top;
-    const width = frame.width;
-    const height = frame.height;
+    // Calculate effective size including scale
+    const width = Math.round(frame.width * frame.scaleX);
+    const height = Math.round(frame.height * frame.scaleY);
 
     const dataToBlob = async (dataURL) => {
         const res = await fetch(dataURL);

@@ -16,6 +16,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [candidate, setCandidate] = useState(null); // The Fabric Object
     const [candidateUrl, setCandidateUrl] = useState(null); // For UI Feedback if needed
 
+    const [genDimensions, setGenDimensions] = useState({ width: 512, height: 512 });
+
     // Keep ref in sync
     useEffect(() => {
         brushModeRef.current = brushMode;
@@ -57,12 +59,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             strokeWidth: 2,
             strokeDashArray: [10, 5],
             hasBorders: true,
-            hasControls: false,
+            hasControls: true, // Allow resizing
             lockRotation: true,
-            lockScalingX: true,
-            lockScalingY: true,
+            lockScalingX: false,
+            lockScalingY: false,
             label: 'generation_frame',
-            hoverCursor: 'move'
+            hoverCursor: 'input' // Indicate it's interactable
         });
         canvas.add(frame);
         setGenFrame(frame);
@@ -79,14 +81,33 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             opt.e.stopPropagation();
         });
 
-        // Snap to Grid (64px) for Generation Frame
+        // Snap to Grid (64px) for Generation Frame (Moving & Scaling)
         const GRID_SIZE = 64;
+
         canvas.on('object:moving', function (e) {
             if (e.target === frame) {
                 e.target.set({
                     left: Math.round(e.target.left / GRID_SIZE) * GRID_SIZE,
                     top: Math.round(e.target.top / GRID_SIZE) * GRID_SIZE
                 });
+            }
+        });
+
+        canvas.on('object:scaling', function (e) {
+            if (e.target === frame) {
+                // Snap dimensions
+                const w = e.target.width * e.target.scaleX;
+                const h = e.target.height * e.target.scaleY;
+
+                const snappedW = Math.round(w / GRID_SIZE) * GRID_SIZE;
+                const snappedH = Math.round(h / GRID_SIZE) * GRID_SIZE;
+
+                // Adjust scale to match snapped dimensions
+                e.target.scaleX = snappedW / e.target.width;
+                e.target.scaleY = snappedH / e.target.height;
+
+                // Update State
+                setGenDimensions({ width: snappedW, height: snappedH });
             }
         });
 
@@ -367,11 +388,26 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     }, [fabricCanvas, genFrame]);
 
     return (
-        <div
-            ref={wrapperRef}
-            style={{ width: '100%', height: '100%', backgroundColor: '#222', position: 'relative', overflow: 'hidden' }}
-        >
+        <div ref={wrapperRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
             <canvas ref={canvasRef} />
+
+            {/* Resolution Display Badge */}
+            <div style={{
+                position: 'absolute',
+                top: '10px',
+                left: '10px',
+                background: 'rgba(0, 0, 0, 0.6)',
+                color: '#00d4ff', // Cyan to match frame
+                padding: '5px 10px',
+                borderRadius: '4px',
+                pointerEvents: 'none',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                backdropFilter: 'blur(4px)',
+                border: '1px solid rgba(0, 212, 255, 0.3)'
+            }}>
+                {genDimensions.width} x {genDimensions.height}
+            </div>
 
             {/* Staging UI Overlay */}
             {candidateUrl && (
