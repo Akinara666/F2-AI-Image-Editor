@@ -194,6 +194,13 @@ async def generate_image(
             )
             result_image = result.images[0]
 
+            # COMPOSITING
+            # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
+            # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
+            if image_input and mask_input:
+                if result_image.size == image_input.size == mask_input.size:
+                    result_image = Image.composite(result_image, image_input, mask_input)
+
         # 5. Save & Return
         if result_image:
             # Metadata dict
