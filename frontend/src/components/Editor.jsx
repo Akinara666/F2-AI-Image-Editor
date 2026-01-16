@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { fabric } from 'fabric';
+import { undoCanvasAction, mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
 
 /**
  * Editor Component for AI Image Generation
@@ -211,8 +212,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         return () => fabricCanvas.off('path:created', handlePathCreated);
     }, [fabricCanvas, brushMode]);
 
-
-    import { undoCanvasAction, mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
 
     // --- Helper Logic ---
     const performUndo = () => {
