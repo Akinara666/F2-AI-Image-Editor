@@ -215,13 +215,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         if (!fabricCanvas) return;
 
         const handlePathCreated = (e) => {
-            if (brushMode === 'mask') {
+            // Use ref to get current mode without re-binding listener
+            const mode = brushModeRef.current;
+
+            if (mode === 'mask') {
                 e.path.set({
                     isMask: true
                 });
-            } else if (brushMode === 'eraser') {
-                // Eraser strokes are just "cover up" strokes, not masks.
-                // We can tag them as 'eraser' if we want special logic later.
+            } else if (mode === 'eraser') {
                 e.path.set({ isMask: false, isEraser: true });
             } else {
                 e.path.set({ isMask: false });
@@ -231,7 +232,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         fabricCanvas.on('path:created', handlePathCreated);
         return () => fabricCanvas.off('path:created', handlePathCreated);
-    }, [fabricCanvas, brushMode]);
+    }, [fabricCanvas]); // Run only once per canvas instance
 
 
     // --- Helper Logic ---
