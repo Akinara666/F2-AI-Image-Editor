@@ -7,8 +7,7 @@ from diffusers import (
     StableDiffusionImg2ImgPipeline,
     StableDiffusionInpaintPipeline,
     ControlNetModel,
-    StableDiffusionControlNetPipeline,
-    AutoencoderKL
+    StableDiffusionControlNetPipeline
 )
 from typing import Optional, Literal
 
@@ -65,47 +64,43 @@ class ModelManager:
                 load_args = {
                     "torch_dtype": torch.float16,
                     "use_safetensors": True,
-                    "variant": "fp16" # Common for many huggingface models
+                    "variant": "fp16", # Common for many huggingface models
                 }
                 
-                # Check for specific pipeline types
-                # Check context for Single File loading
-                if model_id.endswith(".safetensors") or model_id.endswith(".ckpt"):
-                    # Use from_single_file for legacy/webui models
-                    if pipeline_type == "inpainting":
-                         pipeline = StableDiffusionInpaintPipeline.from_single_file(model_id, **load_args)
-                    elif pipeline_type == "img2img":
-                         pipeline = StableDiffusionImg2ImgPipeline.from_single_file(model_id, **load_args)
-                    else:
-                         pipeline = StableDiffusionPipeline.from_single_file(model_id, **load_args)
                 
-                else: 
-                     # Standard Diffusers loading
-                    if pipeline_type == "inpainting":
-                        pipeline = StableDiffusionInpaintPipeline.from_pretrained(
-                            model_id, 
-                            **load_args
-                        )
-                    elif pipeline_type == "img2img":
-                        pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                            model_id,
-                            **load_args
-                        )
-                    elif pipeline_type == "controlnet":
-                        # Example logic for ControlNet - requires controlnet model path passed in kwargs
-                        cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
-                        controlnet = ControlNetModel.from_pretrained(cnet_path, torch_dtype=torch.float16)
-                        pipeline = StableDiffusionControlNetPipeline.from_pretrained(
-                            model_id, 
-                            controlnet=controlnet, 
-                            **load_args
-                        )
-                    else:
-                        # Default Text2Img / Img2Img shared pipeline
-                        pipeline = StableDiffusionPipeline.from_pretrained(
-                            model_id, 
-                            **load_args
-                        )
+                # Helper to instantiate pipeline with specific args
+                def create_pipeline(args_override):
+                    final_args = {**load_args, **args_override}
+                    
+                    if model_id.endswith(".safetensors") or model_id.endswith(".ckpt"):
+                        # Use from_single_file for legacy/webui models
+                        if pipeline_type == "inpainting":
+                             return StableDiffusionInpaintPipeline.from_single_file(model_id, **final_args)
+                        elif pipeline_type == "img2img":
+                             return StableDiffusionImg2ImgPipeline.from_single_file(model_id, **final_args)
+                        else:
+                             return StableDiffusionPipeline.from_single_file(model_id, **final_args)
+                    else: 
+                         # Standard Diffusers loading
+                        if pipeline_type == "inpainting":
+                            return StableDiffusionInpaintPipeline.from_pretrained(model_id, **final_args)
+                        elif pipeline_type == "img2img":
+                            return StableDiffusionImg2ImgPipeline.from_pretrained(model_id, **final_args)
+                        elif pipeline_type == "controlnet":
+                            cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
+                            controlnet = ControlNetModel.from_pretrained(cnet_path, torch_dtype=torch.float16)
+                            return StableDiffusionControlNetPipeline.from_pretrained(model_id, controlnet=controlnet, **final_args)
+                        else:
+                            return StableDiffusionPipeline.from_pretrained(model_id, **final_args)
+
+                # ATTEMPT 1: Load Offline
+                try:
+                    self.logger.info("Attempting to load model from local cache...")
+                    pipeline = create_pipeline({"local_files_only": True})
+                except Exception as e:
+                    self.logger.info(f"Local load failed ({e}). Attempting to download...")
+                    # ATTEMPT 2: Load Online
+                    pipeline = create_pipeline({"local_files_only": False})
 
                 # Enable xformers for speed/memory efficiency
                 try:
