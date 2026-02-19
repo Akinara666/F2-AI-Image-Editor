@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -11,7 +11,7 @@ import torch
 # Import core modules
 from core.manager import model_manager
 from core.utils import save_image_with_metadata, process_mask_for_inpainting, prepare_image_for_outpainting
-from core.config import STYLE_PRESETS
+from core.config import STYLE_PRESETS, settings
 import logging
 
 # Setup Logging
@@ -24,7 +24,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Local AI Gen Service", version="0.1.0")
 
 # Mount static folder for outputs
-app.mount("/outputs", StaticFiles(directory="static/outputs"), name="outputs")
+app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global Error: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "type": type(exc).__name__}
+    )
 
 # --- Schemas ---
 class GenerationRequest(BaseModel):
@@ -35,7 +43,7 @@ class GenerationRequest(BaseModel):
     cfg: float = 7.0
     width: int = 512
     height: int = 512
-    model_id: str = "runwayml/stable-diffusion-v1-5"
+    model_id: str = settings.DEFAULT_MODEL_ID
     type: str = "text2img" # text2img, img2img, inpainting
 
 # --- Presets & configuration ---
@@ -62,7 +70,7 @@ async def generate_image(
     steps: int = Form(default=20),
     cfg: float = Form(default=7.5),
     seed: int = Form(default=-1),
-    model_id: str = Form(default="runwayml/stable-diffusion-v1-5"),
+    model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
     mode: str = Form(default="auto"), # auto, txt2img, img2img, inpainting
     style_preset: Optional[str] = Form(None),
     denoising_strength: float = Form(default=0.75),
@@ -212,7 +220,7 @@ async def generate_image(
                 "mode": actual_mode 
             }
             
-            filename = save_image_with_metadata(result_image, meta, "static/outputs")
+            filename = save_image_with_metadata(result_image, meta, str(settings.OUTPUT_DIR))
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
@@ -243,7 +251,7 @@ async def upscale_image(
         new_height = int(pil_image.height * scale_factor)
         upscaled = pil_image.resize((new_width, new_height), Image.BICUBIC)
         
-        filename = save_image_with_metadata(upscaled, {"upscale": scale_factor}, "static/outputs")
+        filename = save_image_with_metadata(upscaled, {"upscale": scale_factor}, str(settings.OUTPUT_DIR))
         return {"status": "success", "url": f"/outputs/{filename}"}
         
     except Exception as e:

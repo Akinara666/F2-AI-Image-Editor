@@ -11,8 +11,10 @@ from diffusers import (
 )
 from typing import Optional, Literal
 
+from core.config import settings
+
 class ModelManager:
-    def __init__(self, device="cuda"):
+    def __init__(self, device=settings.DEVICE):
         self.device = device
         self.current_pipeline = None
         self.current_model_id = None

@@ -1,14 +1,14 @@
 import React from 'react';
 
-const Sidebar = ({ 
-    params, setParams, 
-    isGenerating, onGenerate, 
+const Sidebar = ({
+    params, setParams,
+    isGenerating, onGenerate,
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
     onUndo, onClear
 }) => {
-    
+
     const handleChange = (e) => {
         const { name, value, type } = e.target;
         setParams(prev => ({
@@ -18,133 +18,150 @@ const Sidebar = ({
     };
 
     return (
-        <div style={{
-            width: '300px', 
-            background: '#2b2b2b', 
-            color: '#eee', 
-            padding: '15px',
+        <div className="panel sidebar" style={{
+            width: '20rem',
+            minWidth: '250px',
+            maxWidth: '400px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '15px',
-            borderRight: '1px solid #444',
-            overflowY: 'auto'
+            animation: 'slideInLeft 0.3s ease',
+            height: '100%',
+            overflow: 'hidden' // Main container doesn't scroll
         }}>
-            <h2 style={{margin: '0 0 10px 0'}}>Settings</h2>
 
-            {/* Prompt */}
-            <div>
-                <label>Prompt</label>
-                <textarea 
-                    name="prompt" 
-                    value={params.prompt} 
-                    onChange={handleChange}
-                    style={{width: '100%', height: '80px', background: '#111', color: '#fff', border: '1px solid #555'}}
-                />
-            </div>
+            {/* Scrollable Content */}
+            <div className="custom-scrollbar" style={{
+                flex: 1,
+                overflowY: 'auto',
+                padding: 'var(--spacing-md)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--spacing-md)'
+            }}>
+                <h2 style={{ margin: '0', color: 'var(--primary)' }}>AI Settings</h2>
 
-            {/* Negative Prompt */}
-            <div>
-                <label>Negative Prompt</label>
-                <textarea 
-                    name="negative_prompt" 
-                    value={params.negative_prompt} 
-                    onChange={handleChange}
-                    style={{width: '100%', height: '60px', background: '#111', color: '#fff', border: '1px solid #555'}}
-                />
-            </div>
-
-            {/* Params */}
-            <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
-                <div>
-                    <label>Seed (-1 = Rnd)</label>
-                    <input type="number" name="seed" value={params.seed} onChange={handleChange} style={{width: '100%'}}/>
+                {/* Prompt */}
+                <div className="input-group">
+                    <label className="input-label">Prompt</label>
+                    <textarea
+                        name="prompt"
+                        className="input-field"
+                        value={params.prompt}
+                        onChange={handleChange}
+                        style={{ height: '80px' }}
+                    />
                 </div>
-                <div>
-                    <label>Steps</label>
-                    <input type="number" name="steps" value={params.steps} onChange={handleChange} style={{width: '100%'}}/>
+
+                {/* Negative Prompt */}
+                <div className="input-group">
+                    <label className="input-label">Negative Prompt</label>
+                    <textarea
+                        name="negative_prompt"
+                        className="input-field"
+                        value={params.negative_prompt}
+                        onChange={handleChange}
+                        style={{ height: '60px' }}
+                    />
                 </div>
-            </div>
 
-            <div>
-                <label>CFG Scale ({params.cfg})</label>
-                <input type="range" name="cfg" min="1" max="20" step="0.5" value={params.cfg} onChange={handleChange} style={{width: '100%'}}/>
-            </div>
-
-            <div>
-                <label>Denoising Strength ({params.denoising_strength})</label>
-                <input type="range" name="denoising_strength" min="0" max="1" step="0.05" value={params.denoising_strength} onChange={handleChange} style={{width: '100%'}}/>
-                <small style={{color: '#aaa'}}>1.0 = Ignore Init Image (Txt2Img)</small>
-            </div>
-
-            <hr style={{borderColor: '#444', width: '100%'}} />
-
-            {/* Brush Controls */}
-             <div>
-                <h3>Brush</h3>
-                <div style={{display: 'flex', gap: '5px', marginBottom: '10px'}}>
-                    <button 
-                        onClick={() => setBrushMode('none')}
-                        style={{flex: 1, background: brushMode === 'none' ? '#007acc' : '#444', color: '#fff', border: 'none', padding: '5px'}}
-                    >Cursor</button>
-                    <button 
-                        onClick={() => setBrushMode('sketch')}
-                        style={{flex: 1, background: brushMode === 'sketch' ? '#007acc' : '#444', color: '#fff', border: 'none', padding: '5px'}}
-                    >Sketch</button>
-                    <button 
-                        onClick={() => setBrushMode('mask')}
-                        style={{flex: 1, background: brushMode === 'mask' ? '#e63946' : '#444', color: '#fff', border: 'none', padding: '5px'}}
-                    >Mask</button>
-                    <button 
-                        onClick={() => setBrushMode('hand')}
-                        style={{flex: 1, background: brushMode === 'hand' ? '#2a9d8f' : '#444', color: '#fff', border: 'none', padding: '5px'}}
-                    >Hand</button>
-                    <button 
-                        onClick={() => setBrushMode('eraser')}
-                        style={{flex: 1, background: brushMode === 'eraser' ? '#f4a261' : '#444', color: '#fff', border: 'none', padding: '5px'}}
-                    >Eraser</button>
+                {/* Params */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-sm)' }}>
+                    <div className="input-group">
+                        <label className="input-label">Seed (-1 = Rnd)</label>
+                        <input type="number" className="input-field" name="seed" value={params.seed} onChange={handleChange} />
+                    </div>
+                    <div className="input-group">
+                        <label className="input-label">Steps</label>
+                        <input type="number" className="input-field" name="steps" value={params.steps} onChange={handleChange} />
+                    </div>
                 </div>
-                
-                {brushMode !== 'none' && (
-                    <>
-                        <div>
-                            <label>Size: {brushSize}</label>
-                            <input type="range" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{width: '100%'}}/>
-                        </div>
-                        {brushMode === 'sketch' && (
-                            <div>
-                                <label>Color</label>
-                                <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{width: '100%', height: '30px'}}/>
+
+                <div className="input-group">
+                    <label className="input-label">CFG Scale ({params.cfg})</label>
+                    <input type="range" className="input-range" name="cfg" min="1" max="20" step="0.5" value={params.cfg} onChange={handleChange} style={{ width: '100%', accentColor: 'var(--primary)' }} />
+                </div>
+
+                <div className="input-group">
+                    <label className="input-label">Denoising ({params.denoising_strength})</label>
+                    <input type="range" className="input-range" name="denoising_strength" min="0" max="1" step="0.05" value={params.denoising_strength} onChange={handleChange} style={{ width: '100%', accentColor: 'var(--accent)' }} />
+                    <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>1.0 = Ignore Init Image</small>
+                </div>
+
+                <hr style={{ borderColor: 'var(--border)', width: '100%', margin: 'var(--spacing-sm) 0' }} />
+
+                {/* Brush Controls */}
+                <div className="input-group">
+                    <h3 style={{ fontSize: '1rem', marginBottom: 'var(--spacing-sm)' }}>Brush Tools</h3>
+                    <div style={{ display: 'flex', gap: 'var(--spacing-xs)', marginBottom: 'var(--spacing-md)', flexWrap: 'wrap' }}>
+                        {[
+                            { id: 'none', label: 'Cursor', color: 'var(--primary)' },
+                            { id: 'sketch', label: 'Sketch', color: 'var(--primary)' },
+                            { id: 'mask', label: 'Mask', color: 'var(--danger)' },
+                            { id: 'hand', label: 'Hand', color: 'var(--accent)' },
+                            { id: 'eraser', label: 'Eraser', color: '#f4a261' },
+                        ].map(tool => (
+                            <button
+                                key={tool.id}
+                                className="btn"
+                                onClick={() => setBrushMode(tool.id)}
+                                style={{
+                                    flex: 1,
+                                    minWidth: '60px',
+                                    background: brushMode === tool.id ? tool.color : 'var(--bg-hover)',
+                                    color: brushMode === tool.id ? '#fff' : 'var(--text-muted)',
+                                    padding: '6px',
+                                    fontSize: '0.85rem'
+                                }}
+                            >
+                                {tool.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {brushMode !== 'none' && (
+                        <div className="input-group" style={{ animation: 'fadeIn 0.2s' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                                <label className="input-label" style={{ marginBottom: 0, width: '60px' }}>Size: {brushSize}</label>
+                                <input type="range" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1, accentColor: 'var(--text-main)' }} />
+                                {brushMode === 'sketch' && (
+                                    <input type="color" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} style={{ width: '30px', height: '30px', border: 'none', padding: 0, background: 'transparent' }} />
+                                )}
                             </div>
-                        )}
-                    </>
-                )}
-                
-                <div style={{display: 'flex', gap: '5px', marginTop: '10px'}}>
-                     <button onClick={onUndo} style={{flex: 1, padding: '5px', background: '#555', color: '#fff', border: '1px solid #777', cursor: 'pointer'}}>
-                        ↶ Undo
-                     </button>
-                     <button onClick={onClear} style={{flex: 1, padding: '5px', background: '#e63946', color: '#fff', border: '1px solid #777', cursor: 'pointer'}}>
-                        Clear Sketches
-                     </button>
+                        </div>
+                    )}
+
+                    <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-md)' }}>
+                        <button className="btn btn-secondary" onClick={onUndo} style={{ flex: 1 }}>
+                            ↶ Undo
+                        </button>
+                        <button className="btn btn-secondary" onClick={onClear} style={{ flex: 1, borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+                            Clear
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <hr style={{borderColor: '#444', width: '100%'}} />
-
-            <button 
-                onClick={onGenerate}
-                disabled={isGenerating}
-                style={{
-                    padding: '15px', 
-                    background: isGenerating ? '#555' : 'linear-gradient(45deg, #007acc, #00d4ff)', 
-                    color: '#fff', 
-                    border: 'none', 
-                    fontWeight: 'bold',
-                    cursor: isGenerating ? 'not-allowed' : 'pointer'
-                }}
-            >
-                {isGenerating ? 'Generating...' : 'GENERATE'}
-            </button>
+            {/* Footer - Fixed Button */}
+            <div style={{
+                padding: 'var(--spacing-md)',
+                borderTop: '1px solid var(--border)',
+                background: 'var(--bg-panel)'
+            }}>
+                <button
+                    className="btn btn-primary"
+                    onClick={onGenerate}
+                    disabled={isGenerating}
+                    style={{
+                        width: '100%',
+                        padding: 'var(--spacing-md)',
+                        fontSize: '1.1rem',
+                        opacity: isGenerating ? 0.7 : 1,
+                        cursor: isGenerating ? 'wait' : 'pointer'
+                    }}
+                >
+                    {isGenerating ? 'Running AI...' : '✨ GENERATE'}
+                </button>
+            </div>
         </div>
     );
 };

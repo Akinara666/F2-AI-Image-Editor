@@ -3,9 +3,13 @@ import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
 import axios from 'axios';
+import { useToast } from './components/ToastProvider';
+import { API_ENDPOINTS } from './constants';
+import './theme.css';
 import './App.css';
 
 function App() {
+  const { showSuccess, showError } = useToast();
   const [params, setParams] = useState({
     prompt: "A futuristic city",
     negative_prompt: "low quality, blurry",
@@ -58,12 +62,13 @@ function App() {
 
       // 3. Send Request
       // Note: Vite proxy set up in vite.config.js to localhost:8000
-      const response = await axios.post('/generate', formData, {
+      const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
+        showSuccess("Image generated successfully!");
         // 4. Add to Canvas
         editorRef.current.addGeneratedImage(response.data.url);
 
@@ -79,7 +84,9 @@ function App() {
 
     } catch (e) {
       console.error("Generation failed", e);
-      console.error("Error details:", e.response?.data?.detail || e.message);
+      const errorMsg = e.response?.data?.detail || e.message;
+      console.error("Error details:", errorMsg);
+      showError(`Generation failed: ${errorMsg}`);
     } finally {
       setIsGenerating(false);
     }

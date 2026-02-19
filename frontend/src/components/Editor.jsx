@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { fabric } from 'fabric';
 import { undoCanvasAction, mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
+import { CANVAS_DEFAULTS } from '../constants';
 
 /**
  * Editor Component for AI Image Generation
@@ -16,7 +17,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [candidate, setCandidate] = useState(null); // The Fabric Object
     const [candidateUrl, setCandidateUrl] = useState(null); // For UI Feedback if needed
 
-    const [genDimensions, setGenDimensions] = useState({ width: 512, height: 512 });
+    const [genDimensions, setGenDimensions] = useState({ width: CANVAS_DEFAULTS.DEFAULT_WIDTH, height: CANVAS_DEFAULTS.DEFAULT_HEIGHT });
 
     // Keep ref in sync
     useEffect(() => {
@@ -30,7 +31,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         const canvas = new fabric.Canvas(canvasRef.current, {
             width: wrapperRef.current.clientWidth,
             height: wrapperRef.current.clientHeight,
-            backgroundColor: '#1e1e1e',
+            backgroundColor: CANVAS_DEFAULTS.BG_COLOR,
             isDrawingMode: false,
             enableRetinaScaling: false,
             preserveObjectStacking: true
@@ -52,10 +53,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         const frame = new fabric.Rect({
             left: 100,
             top: 100,
-            width: 512,
-            height: 512,
+            width: CANVAS_DEFAULTS.DEFAULT_WIDTH,
+            height: CANVAS_DEFAULTS.DEFAULT_HEIGHT,
             fill: 'rgba(0, 0, 0, 0)', // Transparent
-            stroke: '#00d4ff',
+            stroke: CANVAS_DEFAULTS.FRAME_COLOR,
             strokeWidth: 2,
             strokeDashArray: [10, 5],
             hasBorders: true,
@@ -82,7 +83,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         });
 
         // Snap to Grid (64px) for Generation Frame (Moving & Scaling)
-        const GRID_SIZE = 64;
+        const GRID_SIZE = CANVAS_DEFAULTS.GRID_SIZE;
 
         canvas.on('object:moving', function (e) {
             if (e.target === frame) {
@@ -198,9 +199,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             brush.width = brushSize;
 
             if (brushMode === 'mask') {
-                brush.color = 'rgba(255, 0, 0, 0.5)';
+                brush.color = CANVAS_DEFAULTS.MASK_COLOR;
             } else if (brushMode === 'eraser') {
-                brush.color = '#808080'; // Paint with background color (Eraser)
+                brush.color = CANVAS_DEFAULTS.ERASER_COLOR; // Paint with background color (Eraser)
                 brush.width = brushSize * 2; // Make eraser slightly bigger
             } else {
                 brush.color = brushColor;
@@ -281,7 +282,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     selectable: false, // Not selectable yet
                     evented: false,
                     isCandidate: true, // Tag as candidate
-                    stroke: '#00ff00', // Green border to indicate "Pending"
+                    stroke: CANVAS_DEFAULTS.CANDIDATE_BORDER_COLOR, // Green border to indicate "Pending"
                     strokeWidth: 4,
                 });
 
@@ -398,14 +399,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 top: '10px',
                 left: '10px',
                 background: 'rgba(0, 0, 0, 0.6)',
-                color: '#00d4ff', // Cyan to match frame
+                color: CANVAS_DEFAULTS.FRAME_COLOR, // Cyan to match frame
                 padding: '5px 10px',
                 borderRadius: '4px',
                 pointerEvents: 'none',
                 fontWeight: 'bold',
                 fontSize: '14px',
                 backdropFilter: 'blur(4px)',
-                border: '1px solid rgba(0, 212, 255, 0.3)'
+                border: `1px solid ${CANVAS_DEFAULTS.FRAME_COLOR}4D`
             }}>
                 {genDimensions.width} x {genDimensions.height}
             </div>
