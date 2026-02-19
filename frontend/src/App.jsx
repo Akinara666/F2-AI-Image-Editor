@@ -5,6 +5,7 @@ import HistoryPanel from './components/HistoryPanel';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
 import { API_ENDPOINTS } from './constants';
+import './theme.css';
 import './App.css';
 
 function App() {
