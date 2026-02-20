@@ -16,21 +16,27 @@ from core.config import settings
 class ModelManager:
     def __init__(self, device=settings.DEVICE):
         self.device = device
+        self.pipelines_cache = {} # Cache for loaded pipelines: { cache_key: pipeline }
         self.current_pipeline = None
-        self.current_model_id = None
-        self.current_type = None
+        self.current_cache_key = None
         self.lock = asyncio.Lock() # Async lock for sequential GPU access
         self.logger = logging.getLogger("ModelManager")
 
+    def _generate_cache_key(self, model_id: str, pipeline_type: str) -> str:
+        return f"{model_id}::{pipeline_type}"
+
     def _unload_current_model(self):
-        """Forcefully unloads the current model from VRAM."""
+        """No longer fully unloads by default. Models are managed by cpu_offload.
+        This method is kept for explicit hard resets if needed.
+        """
+        self.logger.info("Hard VRAM clear requested.")
         if self.current_pipeline is not None:
-            self.logger.info(f"Unloading model: {self.current_model_id}")
-            # Move to CPU first (optional, but helps detach) or just delete
-            del self.current_pipeline
+            # We don't delete the pipeline if it's in the cache, 
+            # we just let cpu_offload handle VRAM.
+            # If we wanted to really delete it:
+            # del self.current_pipeline
             self.current_pipeline = None
-            self.current_model_id = None
-            self.current_type = None
+            self.current_cache_key = None
             
         # Hard cleanup
         gc.collect()
@@ -50,16 +56,21 @@ class ModelManager:
         swaps them out to save VRAM.
         """
         async with self.lock:
-            # Check if we already have this model loaded
-            if (self.current_pipeline is not None and 
-                self.current_model_id == model_id and 
-                self.current_type == pipeline_type):
+            cache_key = self._generate_cache_key(model_id, pipeline_type)
+            
+            # Check if it is the EXACT same pipeline already active
+            if self.current_cache_key == cache_key and self.current_pipeline is not None:
                 return self.current_pipeline
 
-            # Unload existing to free VRAM
-            self._unload_current_model()
+            # Check if we have it cached in RAM
+            if cache_key in self.pipelines_cache:
+                self.logger.info(f"Retrieving model {cache_key} from RAM cache...")
+                self.current_pipeline = self.pipelines_cache[cache_key]
+                self.current_cache_key = cache_key
+                return self.current_pipeline
 
-            self.logger.info(f"Loading model: {model_id} ({pipeline_type})")
+            # We need to load it fresh
+            self.logger.info(f"Loading model freshly: {model_id} ({pipeline_type})")
             
             try:
                 # Basic optimizations: fp16, safetensors
@@ -104,19 +115,26 @@ class ModelManager:
                     # ATTEMPT 2: Load Online
                     pipeline = create_pipeline({"local_files_only": False})
 
-                # Enable xformers for speed/memory efficiency
+                # Optimize and handle VRAM
                 try:
                     pipeline.enable_xformers_memory_efficient_attention()
                 except Exception as e:
                     self.logger.warning(f"Could not enable xformers: {e}")
 
-                # Move to GPU
-                pipeline.to(self.device)
+                # Enable CPU Offload to keep weights in RAM and move to VRAM dynamically
+                try:
+                    pipeline.enable_model_cpu_offload()
+                    self.logger.info("Enabled CPU offloading for model.")
+                except Exception as e:
+                    self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
+                    pipeline.to(self.device)
                 
+                # Cache it
+                self.pipelines_cache[cache_key] = pipeline
+
                 # Update state
                 self.current_pipeline = pipeline
-                self.current_model_id = model_id
-                self.current_type = pipeline_type
+                self.current_cache_key = cache_key
 
                 return self.current_pipeline
 
