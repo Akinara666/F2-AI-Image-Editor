@@ -44,7 +44,10 @@ def process_mask_for_inpainting(mask_image: Image.Image, hard_blur: int = 4, sof
         
     soft_mask = mask_image
     if soft_blur > 0:
-        soft_mask = mask_image.filter(ImageFilter.GaussianBlur(radius=soft_blur))
+        # For soft blending, creating a slight dilation BEFORE blur helps ensure the generated 
+        # pixels fully reach the edges of the original cut, preventing black/transparent halos.
+        soft_mask = mask_image.filter(ImageFilter.MaxFilter(5)) # Dilation
+        soft_mask = soft_mask.filter(ImageFilter.GaussianBlur(radius=soft_blur))
         
     return hard_mask, soft_mask
 
@@ -96,9 +99,9 @@ def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Imag
     bg_filled = small.resize(image.size, resample=Image.BICUBIC).convert("RGB")
     
     # 3. Add Noise to Background (Texture seeding)
-    # Convert to numpy to add noise efficienty
-    bg_arr = np.array(bg_filled)
-    noise = np.random.randint(0, 20, (bg_arr.shape[0], bg_arr.shape[1], 3), dtype=np.uint8)
+    # Convert to numpy to add noise efficienty. Use int32 to prevent uint8 overflow (which causes glitchy colors)
+    bg_arr = np.array(bg_filled).astype(np.int32)
+    noise = np.random.randint(-15, 15, (bg_arr.shape[0], bg_arr.shape[1], 3), dtype=np.int32)
     bg_arr = np.clip(bg_arr + noise, 0, 255).astype(np.uint8)
     bg_filled = Image.fromarray(bg_arr)
     
