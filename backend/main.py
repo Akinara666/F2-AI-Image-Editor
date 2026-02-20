@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+import os
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -70,6 +71,27 @@ def health_check():
 def read_root():
     return {"message": "AI Image Gen API is running. Visit /docs for Swagger UI."}
 
+@app.get("/models")
+def list_models():
+    # Base cloud models
+    models = [
+        {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)"},
+        {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)"},
+        {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)"}
+    ]
+    
+    # Scan local directory
+    models_dir = settings.MODELS_DIR
+    if models_dir.exists():
+        try:
+            for file in os.listdir(models_dir):
+                if file.endswith(".safetensors") or file.endswith(".ckpt"):
+                    abs_path = str(models_dir / file)
+                    models.append({"id": abs_path, "label": f"{file} (Local)"})
+        except Exception as e:
+            logger.error(f"Failed to scan models directory: {e}")
+                
+    return {"models": models}
 
 
 @app.post("/generate")

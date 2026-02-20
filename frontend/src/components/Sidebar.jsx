@@ -1,7 +1,8 @@
 import React from 'react';
-import { AVAILABLE_MODELS, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from '../constants';
+import { AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from '../constants';
 
 const Sidebar = ({
+    availableModels,
     params, setParams,
     isGenerating, onGenerate, onCancel,
     brushMode, setBrushMode,
@@ -64,7 +65,7 @@ const Sidebar = ({
                         onChange={handleChange}
                         style={{ padding: '8px' }}
                     >
-                        {AVAILABLE_MODELS.map(m => (
+                        {availableModels.map(m => (
                             <option key={m.id} value={m.id}>{m.label}</option>
                         ))}
                     </select>

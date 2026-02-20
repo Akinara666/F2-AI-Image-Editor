@@ -10,6 +10,7 @@ import './App.css';
 
 function App() {
   const { showSuccess, showError } = useToast();
+  const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState({
     prompt: "A futuristic city",
     negative_prompt: "low quality, blurry",
@@ -127,6 +128,7 @@ function App() {
   return (
     <div className="app-container">
       <Sidebar
+        availableModels={availableModels}
         params={params}
         setParams={setParams}
         isGenerating={isGenerating}
