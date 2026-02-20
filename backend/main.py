@@ -11,7 +11,7 @@ import torch
 
 # Import core modules
 from core.manager import model_manager
-from core.utils import save_image_with_metadata, process_mask_for_inpainting, prepare_image_for_outpainting
+from core.utils import save_image_with_metadata, process_mask_for_inpainting, prepare_image_for_outpainting, feather_blend
 from core.config import STYLE_PRESETS, settings
 import logging
 
@@ -123,7 +123,8 @@ async def generate_image(
         # Detect Mode & Process Inputs Early
         
         image_input = None
-        mask_input = None
+        hard_mask_input = None
+        soft_mask_input = None
         
         # Load Init Image
         if init_image:
@@ -138,14 +139,15 @@ async def generate_image(
             mask_bytes = await mask_image.read()
             raw_mask = Image.open(io.BytesIO(mask_bytes))
             # Pre-process mask (Gaussian Blur for better blending)
-            mask_input = process_mask_for_inpainting(raw_mask, blur_radius=4)
-            mask_input = mask_input.resize((width, height))
+            hard_mask, soft_mask = process_mask_for_inpainting(raw_mask, hard_blur=4, soft_blur=24)
+            hard_mask_input = hard_mask.resize((width, height))
+            soft_mask_input = soft_mask.resize((width, height))
 
         # 1. Determine Actual Mode & Prepare for Outpainting
         actual_mode = mode
         
         if mode == "auto":
-             if mask_input:
+             if hard_mask_input:
                  actual_mode = "inpainting"
              elif image_input:
                  # Check for transparency (Outpainting detection)
@@ -157,8 +159,10 @@ async def generate_image(
                      # --- CLEAN OUTPAINTING PREPARATION ---
                      # Use "Edge Padding / Blur Fill" logic to infill the void.
                      # This gives the model initialized pixels to hallucinate from.
-                     image_input, mask_from_alpha = prepare_image_for_outpainting(image_input)
-                     mask_input = mask_from_alpha
+                     ready_img, hm, sm = prepare_image_for_outpainting(image_input)
+                     image_input = ready_img
+                     hard_mask_input = hm
+                     soft_mask_input = sm
                      
                      # Force high denoising for Outpainting
                      # We want to replace the blurry infill with real details.
@@ -231,7 +235,7 @@ async def generate_image(
             result_image = result.images[0]
 
         elif actual_mode == "inpainting":
-            if not (image_input and mask_input):
+            if not (image_input and hard_mask_input):
                  if image_input is None:
                      image_input = Image.new("RGB", (width, height), (0,0,0))
                 
@@ -239,7 +243,7 @@ async def generate_image(
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 image=image_input,
-                mask_image=mask_input,
+                mask_image=hard_mask_input,
                 width=width,
                 height=height,
                 num_inference_steps=steps,
@@ -253,9 +257,10 @@ async def generate_image(
             # COMPOSITING
             # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
             # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-            if image_input and mask_input:
-                if result_image.size == image_input.size == mask_input.size:
-                    result_image = Image.composite(result_image, image_input, mask_input)
+            if image_input and soft_mask_input:
+                if result_image.size == image_input.size == soft_mask_input.size:
+                    # Use new feather_blend logic for seamless edges
+                    result_image = feather_blend(image_input, result_image, soft_mask_input)
 
         # 4.5 Check for cancellation
         if generation_state.get("cancel_requested", False):

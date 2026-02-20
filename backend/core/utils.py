@@ -28,23 +28,47 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
     image.save(filepath, "PNG", pnginfo=meta)
     return filename
 
-def process_mask_for_inpainting(mask_image: Image.Image, blur_radius: int = 4) -> Image.Image:
+def process_mask_for_inpainting(mask_image: Image.Image, hard_blur: int = 4, soft_blur: int = 16) -> tuple[Image.Image, Image.Image]:
     """
-    Prepares the mask for inpainting:
-    1. Ensures it is strictly 'L' mode (grayscale).
-    2. Applies Gaussian Blur to soften edges and prevent seams.
+    Prepares the mask for inpainting. Returns two masks:
+    1. Hard Mask: For the SD diffusers pipeline (slight blur).
+    2. Soft Mask: For the final alpha compositing to hide seams (heavy blur).
     """
     # Ensure mask is grayscale
     if mask_image.mode != "L":
         mask_image = mask_image.convert("L")
     
-    # Apply Blur
-    if blur_radius > 0:
-        mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+    hard_mask = mask_image
+    if hard_blur > 0:
+        hard_mask = mask_image.filter(ImageFilter.GaussianBlur(radius=hard_blur))
         
-    return mask_image
+    soft_mask = mask_image
+    if soft_blur > 0:
+        soft_mask = mask_image.filter(ImageFilter.GaussianBlur(radius=soft_blur))
+        
+    return hard_mask, soft_mask
 
-def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Image.Image]:
+def feather_blend(original_image: Image.Image, generated_image: Image.Image, soft_mask: Image.Image) -> Image.Image:
+    """
+    Blends the generated image back into the original image using the soft mask as an alpha channel.
+    This creates a seamless transition between AI pixels and original pixels.
+    """
+    if original_image.size != generated_image.size or original_image.size != soft_mask.size:
+        return generated_image # Fallback if sizes mismatch somehow
+        
+    # Ensure they are RGBA to freely paste using alpha
+    original_rgba = original_image.convert("RGBA")
+    generated_rgba = generated_image.convert("RGBA")
+    
+    # The mask itself dicts where the generated image appears.
+    # We paste the generated image ON TOP OF the original image, using the soft mask.
+    blended = original_rgba.copy()
+    blended.paste(generated_rgba, mask=soft_mask)
+    
+    # Return as RGB to avoid saving transparent PNGs by mistake
+    return blended.convert("RGB")
+
+def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Image.Image, Image.Image]:
     """
     Prepares an RGBA image for outpainting/inpainting.
     
@@ -84,8 +108,6 @@ def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Imag
     final_image.paste(image, mask=alpha)
     
     # 5. Process Mask (Feathering)
-    # We blur the mask slightly so the transition isn't pixel-perfect sharp
-    # Use existing helper
-    processed_mask = process_mask_for_inpainting(mask, blur_radius=8)
+    hard_mask, soft_mask = process_mask_for_inpainting(mask, hard_blur=4, soft_blur=24)
     
-    return final_image, processed_mask
+    return final_image, hard_mask, soft_mask
