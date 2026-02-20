@@ -21,6 +21,7 @@ function App() {
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [abortController, setAbortController] = useState(null);
   const [history, setHistory] = useState([]);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
   const [brushColor, setBrushColor] = useState('#ffffff');
@@ -32,6 +33,9 @@ function App() {
   const handleGenerate = async () => {
     if (!editorRef.current) return;
     setIsGenerating(true);
+
+    const controller = new AbortController();
+    setAbortController(controller);
 
     try {
       // 1. Get Crops from Editor
@@ -63,7 +67,8 @@ function App() {
       // 3. Send Request
       // Note: Vite proxy set up in vite.config.js to localhost:8000
       const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
       });
 
       if (response.data.status === 'success') {
@@ -83,12 +88,32 @@ function App() {
       }
 
     } catch (e) {
-      console.error("Generation failed", e);
-      const errorMsg = e.response?.data?.detail || e.message;
-      console.error("Error details:", errorMsg);
-      showError(`Generation failed: ${errorMsg}`);
+      if (axios.isCancel(e)) {
+        console.log("Request canceled by user");
+        // showSuccess is used here or showError, but usually cancellations don't need a harsh red error
+        showError("Generation cancelled.");
+      } else {
+        console.error("Generation failed", e);
+        const errorMsg = e.response?.data?.detail || e.message;
+        console.error("Error details:", errorMsg);
+        showError(`Generation failed: ${errorMsg}`);
+      }
     } finally {
       setIsGenerating(false);
+      setAbortController(null);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (abortController) {
+      abortController.abort();
+    }
+    setIsGenerating(false);
+    setAbortController(null);
+    try {
+      await axios.post(API_ENDPOINTS.CANCEL);
+    } catch (e) {
+      console.error("Failed to cleanly cancel on server", e);
     }
   };
 
@@ -103,6 +128,7 @@ function App() {
         setParams={setParams}
         isGenerating={isGenerating}
         onGenerate={handleGenerate}
+        onCancel={handleCancel}
         brushMode={brushMode}
         setBrushMode={setBrushMode}
         brushColor={brushColor}

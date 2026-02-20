@@ -2,7 +2,7 @@ import React from 'react';
 
 const Sidebar = ({
     params, setParams,
-    isGenerating, onGenerate,
+    isGenerating, onGenerate, onCancel,
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
@@ -147,20 +147,35 @@ const Sidebar = ({
                 borderTop: '1px solid var(--border)',
                 background: 'var(--bg-panel)'
             }}>
-                <button
-                    className="btn btn-primary"
-                    onClick={onGenerate}
-                    disabled={isGenerating}
-                    style={{
-                        width: '100%',
-                        padding: 'var(--spacing-md)',
-                        fontSize: '1.1rem',
-                        opacity: isGenerating ? 0.7 : 1,
-                        cursor: isGenerating ? 'wait' : 'pointer'
-                    }}
-                >
-                    {isGenerating ? 'Running AI...' : '✨ GENERATE'}
-                </button>
+                {isGenerating ? (
+                    <button
+                        className="btn btn-primary"
+                        onClick={onCancel}
+                        style={{
+                            width: '100%',
+                            padding: 'var(--spacing-md)',
+                            fontSize: '1.1rem',
+                            backgroundColor: 'var(--danger)',
+                            borderColor: 'var(--danger)',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        🛑 CANCEL
+                    </button>
+                ) : (
+                    <button
+                        className="btn btn-primary"
+                        onClick={onGenerate}
+                        style={{
+                            width: '100%',
+                            padding: 'var(--spacing-md)',
+                            fontSize: '1.1rem',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        ✨ GENERATE
+                    </button>
+                )}
             </div>
         </div>
     );

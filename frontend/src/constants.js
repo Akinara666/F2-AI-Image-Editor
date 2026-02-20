@@ -11,5 +11,6 @@ export const CANVAS_DEFAULTS = {
 
 export const API_ENDPOINTS = {
     GENERATE: '/generate',
-    HEALTH: '/health'
+    HEALTH: '/health',
+    CANCEL: '/cancel'
 };
