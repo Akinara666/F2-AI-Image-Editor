@@ -12,7 +12,12 @@ from diffusers import (
     EulerDiscreteScheduler,
     DPMSolverMultistepScheduler,
     DDIMScheduler,
-    LMSDiscreteScheduler
+    LMSDiscreteScheduler,
+    DPMSolverSDEScheduler,
+    KDPM2AncestralDiscreteScheduler,
+    HeunDiscreteScheduler,
+    UniPCMultistepScheduler,
+    DDPMScheduler
 )
 from typing import Optional, Literal
 
@@ -163,8 +168,18 @@ class ModelManager:
                 pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
             elif sampler_name == "DPM++ 2S a Karras":
                 pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++")
+            elif sampler_name == "DPM++ SDE Karras":
+                pipeline.scheduler = DPMSolverSDEScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
+            elif sampler_name == "DPM2 a Karras":
+                pipeline.scheduler = KDPM2AncestralDiscreteScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
             elif sampler_name == "DDIM":
                 pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "DDPM":
+                pipeline.scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "Heun":
+                pipeline.scheduler = HeunDiscreteScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "UniPC":
+                pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
             elif sampler_name == "LMS":
                 pipeline.scheduler = LMSDiscreteScheduler.from_config(pipeline.scheduler.config)
         except Exception as e:

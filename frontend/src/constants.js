@@ -26,7 +26,12 @@ export const AVAILABLE_SAMPLERS = [
     "Euler",
     "DPM++ 2M Karras",
     "DPM++ 2S a Karras",
+    "DPM++ SDE Karras",
+    "DPM2 a Karras",
     "DDIM",
+    "DDPM",
+    "Heun",
+    "UniPC",
     "LMS"
 ];
 
