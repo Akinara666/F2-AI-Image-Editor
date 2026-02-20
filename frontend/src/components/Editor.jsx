@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { fabric } from 'fabric';
-import { undoCanvasAction, mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
+import { mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS } from '../constants';
 
 /**
@@ -12,6 +12,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [genFrame, setGenFrame] = useState(null);
     const brushModeRef = useRef(brushMode);
+
+    // History Stack for robust undo
+    const undoStackRef = useRef([]);
 
     // Staging / Candidates
     const [candidate, setCandidate] = useState(null); // The Fabric Object
@@ -228,6 +231,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             } else {
                 e.path.set({ isMask: false });
             }
+
+            undoStackRef.current.push({ type: 'path', object: e.path });
             fabricCanvas.requestRenderAll();
         };
 
@@ -237,13 +242,34 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
 
     // --- Helper Logic ---
+    // --- Helper Logic ---
+    const discardCandidateHelper = () => {
+        if (!candidate || !fabricCanvas) return;
+        fabricCanvas.remove(candidate);
+        setCandidate(null);
+        setCandidateUrl(null);
+        fabricCanvas.requestRenderAll();
+    };
+
     const performUndo = () => {
-        undoCanvasAction(fabricCanvas, genFrame);
+        if (candidate) {
+            discardCandidateHelper();
+            return;
+        }
+        if (undoStackRef.current.length > 0) {
+            const lastAction = undoStackRef.current.pop();
+            if (fabricCanvas) {
+                fabricCanvas.remove(lastAction.object);
+                fabricCanvas.requestRenderAll();
+            }
+        }
     };
 
     // CORE LOGIC: Merge Candidate via Utils
     const performAccept = () => {
+        const acceptedObj = candidate;
         mergeCanvasLayers(fabricCanvas, candidate, genFrame, () => {
+            undoStackRef.current.push({ type: 'accept', object: acceptedObj });
             setCandidate(null);
             setCandidateUrl(null);
         });
@@ -304,11 +330,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         },
 
         discardCandidate: () => {
-            if (!candidate || !fabricCanvas) return;
-            fabricCanvas.remove(candidate);
-            setCandidate(null);
-            setCandidateUrl(null);
-            fabricCanvas.requestRenderAll();
+            discardCandidateHelper();
         },
 
         // Export Logic
@@ -328,6 +350,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 const obj = objects[i];
                 if (obj !== genFrame && obj.type === 'path') {
                     fabricCanvas.remove(obj);
+                    undoStackRef.current = undoStackRef.current.filter(act => act.object !== obj);
                 }
             }
         }
@@ -361,6 +384,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     const activeString = fabricCanvas.getActiveObject();
                     if (activeString !== genFrame) {
                         fabricCanvas.remove(activeString);
+                        undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeString);
                         fabricCanvas.discardActiveObject();
                     }
                 }
@@ -435,11 +459,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     </button>
 
                     <button
-                        onClick={() => {
-                            if (!candidate || !fabricCanvas) return;
-                            fabricCanvas.remove(candidate);
-                            setCandidate(null); setCandidateUrl(null); fabricCanvas.requestRenderAll();
-                        }}
+                        onClick={discardCandidateHelper}
                         style={{ background: '#e63946', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                     >
                         ✕ DISCARD
