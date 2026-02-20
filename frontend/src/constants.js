@@ -12,13 +12,13 @@ export const CANVAS_DEFAULTS = {
 export const API_ENDPOINTS = {
     GENERATE: '/generate',
     HEALTH: '/health',
-    CANCEL: '/cancel'
+    CANCEL: '/cancel',
+    MODELS: '/models'
 };
 
+// Now populated dynamically from backend
 export const AVAILABLE_MODELS = [
-    { id: "runwayml/stable-diffusion-v1-5", label: "SD v1.5 Base" },
-    { id: "Lykon/DreamShaper", label: "DreamShaper" },
-    { id: "prompthero/openjourney-v4", label: "OpenJourney v4" }
+    { id: "runwayml/stable-diffusion-v1-5", label: "Loading models..." }
 ];
 
 export const AVAILABLE_SAMPLERS = [

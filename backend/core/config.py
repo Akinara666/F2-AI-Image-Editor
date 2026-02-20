@@ -17,6 +17,7 @@ class Settings:
     # Paths
     BASE_DIR: Path = Path(__file__).parent.parent
     OUTPUT_DIR: Path = BASE_DIR / "static" / "outputs"
+    MODELS_DIR: Path = BASE_DIR / "models" / "Stable-diffusion"
     
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
