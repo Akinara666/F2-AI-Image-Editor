@@ -49,7 +49,18 @@ class GenerationRequest(BaseModel):
 # --- Presets & configuration ---
 # Imports from core.config
 
+# --- Global State ---
+generation_state = {
+    "cancel_requested": False
+}
+
 # --- Endpoints ---
+
+@app.post("/cancel")
+def cancel_generation():
+    generation_state["cancel_requested"] = True
+    logger.info("Cancellation requested by user.")
+    return {"status": "cancelled"}
 
 @app.get("/health")
 def health_check():
@@ -78,6 +89,9 @@ async def generate_image(
     mask_image: UploadFile = File(None),
 ):
     try:
+        # Reset cancel state for new generation
+        generation_state["cancel_requested"] = False
+
         # 0. Apply Preset
         final_prompt = prompt
         if style_preset and style_preset in STYLE_PRESETS:
@@ -153,6 +167,12 @@ async def generate_image(
         
         logger.info(f"Starting Generation: Mode={actual_mode}, Size={width}x{height}, Seed={seed}")
 
+        def step_callback(pipeline, step_index, timestep, callback_kwargs):
+            if generation_state.get("cancel_requested", False):
+                logger.info(f"Interrupting pipeline at step {step_index}...")
+                pipeline._interrupt = True
+            return callback_kwargs
+
         # 4. Generate
         if actual_mode == "text2img":
             result = pipe(
@@ -162,7 +182,8 @@ async def generate_image(
                 height=height,
                 num_inference_steps=steps,
                 guidance_scale=cfg,
-                generator=generator
+                generator=generator,
+                callback_on_step_end=step_callback
             )
             result_image = result.images[0]
             
@@ -177,7 +198,8 @@ async def generate_image(
                 num_inference_steps=steps,
                 guidance_scale=cfg,
                 strength=denoising_strength,
-                generator=generator
+                generator=generator,
+                callback_on_step_end=step_callback
             )
             result_image = result.images[0]
 
@@ -196,7 +218,8 @@ async def generate_image(
                 num_inference_steps=steps,
                 guidance_scale=cfg,
                 strength=denoising_strength,
-                generator=generator
+                generator=generator,
+                callback_on_step_end=step_callback
             )
             result_image = result.images[0]
 
@@ -206,6 +229,10 @@ async def generate_image(
             if image_input and mask_input:
                 if result_image.size == image_input.size == mask_input.size:
                     result_image = Image.composite(result_image, image_input, mask_input)
+
+        # 4.5 Check for cancellation
+        if generation_state.get("cancel_requested", False):
+            raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
         # 5. Save & Return
         if result_image:
