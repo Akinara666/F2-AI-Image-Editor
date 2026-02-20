@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
-import { API_ENDPOINTS } from './constants';
+import { API_ENDPOINTS, AVAILABLE_MODELS, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from './constants';
 import './theme.css';
 import './App.css';
 
@@ -17,7 +17,9 @@ function App() {
     steps: 20,
     cfg: 7.5,
     denoising_strength: 0.75,
-    model_id: "runwayml/stable-diffusion-v1-5"
+    model_id: AVAILABLE_MODELS[0].id,
+    sampler: AVAILABLE_SAMPLERS[0],
+    frame_size_index: 0
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -50,6 +52,7 @@ function App() {
       formData.append('cfg', params.cfg);
       formData.append('denoising_strength', params.denoising_strength);
       formData.append('model_id', params.model_id);
+      formData.append('sampler', params.sampler);
 
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
@@ -137,6 +140,7 @@ function App() {
         setBrushSize={setBrushSize}
         onUndo={() => editorRef.current?.undo()}
         onClear={() => editorRef.current?.clearAll()}
+        editorRef={editorRef}
       />
       <div className="editor-wrapper" style={{ flex: 1, position: 'relative' }}>
         <Editor

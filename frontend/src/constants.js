@@ -14,3 +14,25 @@ export const API_ENDPOINTS = {
     HEALTH: '/health',
     CANCEL: '/cancel'
 };
+
+export const AVAILABLE_MODELS = [
+    { id: "runwayml/stable-diffusion-v1-5", label: "SD v1.5 Base" },
+    { id: "Lykon/DreamShaper", label: "DreamShaper" },
+    { id: "prompthero/openjourney-v4", label: "OpenJourney v4" }
+];
+
+export const AVAILABLE_SAMPLERS = [
+    "Euler a",
+    "Euler",
+    "DPM++ 2M Karras",
+    "DPM++ 2S a Karras",
+    "DDIM",
+    "LMS"
+];
+
+export const AVAILABLE_SIZES = [
+    { width: 512, height: 512, label: "512 x 512 (Square)" },
+    { width: 768, height: 512, label: "768 x 512 (Landscape)" },
+    { width: 512, height: 768, label: "512 x 768 (Portrait)" },
+    { width: 768, height: 768, label: "768 x 768 (Square HD)" }
+];

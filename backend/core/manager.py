@@ -7,7 +7,12 @@ from diffusers import (
     StableDiffusionImg2ImgPipeline,
     StableDiffusionInpaintPipeline,
     ControlNetModel,
-    StableDiffusionControlNetPipeline
+    StableDiffusionControlNetPipeline,
+    EulerAncestralDiscreteScheduler,
+    EulerDiscreteScheduler,
+    DPMSolverMultistepScheduler,
+    DDIMScheduler,
+    LMSDiscreteScheduler
 )
 from typing import Optional, Literal
 
@@ -49,6 +54,7 @@ class ModelManager:
         self, 
         model_id: str, 
         pipeline_type: Literal["text2img", "img2img", "inpainting", "controlnet"] = "text2img",
+        sampler_name: str = "Euler a",
         **kwargs
     ):
         """
@@ -67,6 +73,7 @@ class ModelManager:
                 self.logger.info(f"Retrieving model {cache_key} from RAM cache...")
                 self.current_pipeline = self.pipelines_cache[cache_key]
                 self.current_cache_key = cache_key
+                self._apply_sampler(self.current_pipeline, sampler_name)
                 return self.current_pipeline
 
             # We need to load it fresh
@@ -136,12 +143,32 @@ class ModelManager:
                 self.current_pipeline = pipeline
                 self.current_cache_key = cache_key
 
+                self._apply_sampler(self.current_pipeline, sampler_name)
                 return self.current_pipeline
 
             except Exception as e:
                 self.logger.error(f"Error loading model: {e}")
                 self._unload_current_model() # Cleanup on failure
                 raise e
+
+    def _apply_sampler(self, pipeline, sampler_name: str):
+        """Applies the requested sampler to the pipeline."""
+        self.logger.info(f"Applying scheduler: {sampler_name}")
+        try:
+            if sampler_name == "Euler a":
+                pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "Euler":
+                pipeline.scheduler = EulerDiscreteScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "DPM++ 2M Karras":
+                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
+            elif sampler_name == "DPM++ 2S a Karras":
+                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++")
+            elif sampler_name == "DDIM":
+                pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
+            elif sampler_name == "LMS":
+                pipeline.scheduler = LMSDiscreteScheduler.from_config(pipeline.scheduler.config)
+        except Exception as e:
+            self.logger.warning(f"Could not apply sampler {sampler_name}: {e}")
 
     def load_lora_weights(self, lora_path: str, adapter_name: str = "default"):
         """

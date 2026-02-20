@@ -82,6 +82,7 @@ async def generate_image(
     cfg: float = Form(default=7.5),
     seed: int = Form(default=-1),
     model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    sampler: str = Form(default="Euler a"),
     mode: str = Form(default="auto"), # auto, txt2img, img2img, inpainting
     style_preset: Optional[str] = Form(None),
     denoising_strength: float = Form(default=0.75),
@@ -155,7 +156,11 @@ async def generate_image(
         if actual_mode not in ["text2img", "img2img", "inpainting", "controlnet"]:
             pipeline_type = "text2img" # fallback
             
-        pipe = await model_manager.get_model(model_id, pipeline_type=pipeline_type)
+        pipe = await model_manager.get_model(
+            model_id, 
+            pipeline_type=pipeline_type,
+            sampler_name=sampler
+        )
 
         if seed == -1:
             import random

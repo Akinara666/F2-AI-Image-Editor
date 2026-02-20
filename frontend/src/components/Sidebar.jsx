@@ -1,4 +1,5 @@
 import React from 'react';
+import { AVAILABLE_MODELS, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from '../constants';
 
 const Sidebar = ({
     params, setParams,
@@ -6,15 +7,28 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
-    onUndo, onClear
+    onUndo, onClear, editorRef
 }) => {
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
-        setParams(prev => ({
-            ...prev,
-            [name]: type === 'number' ? parseFloat(value) : value
-        }));
+
+        if (name === 'frame_size_index') {
+            const idx = parseInt(value);
+            const size = AVAILABLE_SIZES[idx];
+            if (editorRef && editorRef.current) {
+                editorRef.current.setGenFrameSize(size.width, size.height);
+            }
+            setParams(prev => ({
+                ...prev,
+                [name]: idx
+            }));
+        } else {
+            setParams(prev => ({
+                ...prev,
+                [name]: type === 'number' ? parseFloat(value) : value
+            }));
+        }
     };
 
     return (
@@ -39,6 +53,53 @@ const Sidebar = ({
                 gap: 'var(--spacing-md)'
             }}>
                 <h2 style={{ margin: '0', color: 'var(--primary)' }}>AI Settings</h2>
+
+                {/* Model & Sampler */}
+                <div className="input-group">
+                    <label className="input-label">Model</label>
+                    <select
+                        name="model_id"
+                        className="input-field"
+                        value={params.model_id}
+                        onChange={handleChange}
+                        style={{ padding: '8px' }}
+                    >
+                        {AVAILABLE_MODELS.map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--spacing-sm)' }}>
+                    <div className="input-group">
+                        <label className="input-label">Sampler</label>
+                        <select
+                            name="sampler"
+                            className="input-field"
+                            value={params.sampler}
+                            onChange={handleChange}
+                            style={{ padding: '8px' }}
+                        >
+                            {AVAILABLE_SAMPLERS.map(s => (
+                                <option key={s} value={s}>{s}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="input-group">
+                        <label className="input-label">Frame Size</label>
+                        <select
+                            name="frame_size_index"
+                            className="input-field"
+                            value={params.frame_size_index}
+                            onChange={handleChange}
+                            style={{ padding: '8px' }}
+                        >
+                            {AVAILABLE_SIZES.map((s, idx) => (
+                                <option key={idx} value={idx}>{s.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
 
                 {/* Prompt */}
                 <div className="input-group">
