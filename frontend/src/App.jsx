@@ -23,6 +23,27 @@ function App() {
     frame_size_index: 0
   });
 
+  // Fetch models on mount
+  React.useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const response = await axios.get(API_ENDPOINTS.MODELS);
+        if (response.data && response.data.models) {
+          setAvailableModels(response.data.models);
+          // Auto-select first model if none selected
+          setParams(prev => ({
+            ...prev,
+            model_id: prev.model_id === AVAILABLE_MODELS[0].id ? response.data.models[0].id : prev.model_id
+          }));
+        }
+      } catch (err) {
+        console.error("Failed to fetch models:", err);
+        showError("Failed to load models list from server.");
+      }
+    };
+    fetchModels();
+  }, []);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [abortController, setAbortController] = useState(null);
   const [history, setHistory] = useState([]);

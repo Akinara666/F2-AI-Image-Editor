@@ -99,16 +99,38 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         canvas.on('object:scaling', function (e) {
             if (e.target === frame) {
-                // Snap dimensions
-                const w = e.target.width * e.target.scaleX;
-                const h = e.target.height * e.target.scaleY;
+                const target = e.target;
 
-                const snappedW = Math.round(w / GRID_SIZE) * GRID_SIZE;
-                const snappedH = Math.round(h / GRID_SIZE) * GRID_SIZE;
+                // Snap dimensions
+                const w = target.width * target.scaleX;
+                const h = target.height * target.scaleY;
+
+                const snappedW = Math.max(GRID_SIZE, Math.round(w / GRID_SIZE) * GRID_SIZE);
+                const snappedH = Math.max(GRID_SIZE, Math.round(h / GRID_SIZE) * GRID_SIZE);
+
+                // Find which corner/handle is being dragged
+                const corner = e.transform ? e.transform.corner : '';
+
+                // Calculate the new scale ratios
+                const newScaleX = snappedW / target.width;
+                const newScaleY = snappedH / target.height;
+
+                // Adjust left/top position if we are scaling from the left or top handles
+                // so the opposite edge stays anchored
+                if (corner.includes('l')) {
+                    const rightEdge = target.left + (target.width * target.scaleX);
+                    target.left = rightEdge - (target.width * newScaleX);
+                }
+                if (corner.includes('t')) {
+                    const bottomEdge = target.top + (target.height * target.scaleY);
+                    target.top = bottomEdge - (target.height * newScaleY);
+                }
 
                 // Adjust scale to match snapped dimensions
-                e.target.scaleX = snappedW / e.target.width;
-                e.target.scaleY = snappedH / e.target.height;
+                target.set({
+                    scaleX: newScaleX,
+                    scaleY: newScaleY
+                });
 
                 // Update State
                 setGenDimensions({ width: snappedW, height: snappedH });
@@ -277,6 +299,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
     // --- Exposed Methods ---
     useImperativeHandle(ref, () => ({
+        setGenFrameSize: (w, h) => {
+            if (!genFrame || !fabricCanvas) return;
+            genFrame.set({ width: w, height: h, scaleX: 1, scaleY: 1 });
+            fabricCanvas.requestRenderAll();
+            setGenDimensions({ width: w, height: h });
+        },
 
         // Add Result (Staging Phase)
         addGeneratedImage: (url) => {
