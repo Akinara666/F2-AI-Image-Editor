@@ -192,6 +192,25 @@ const Sidebar = ({
                         </div>
                     )}
 
+                    {brushMode === 'mask' && (
+                        <div className="input-group" style={{ animation: 'fadeIn 0.2s', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 'var(--spacing-sm)', background: 'rgba(42,42,42,0.35)' }}>
+                            <h4 style={{ margin: '0 0 var(--spacing-sm) 0', fontSize: '0.9rem', color: 'var(--danger)' }}>Inpaint Mask</h4>
+
+                            <div className="input-group" style={{ marginBottom: 'var(--spacing-sm)' }}>
+                                <label className="input-label">Mask Blur ({params.mask_blur})</label>
+                                <input type="range" className="input-range" name="mask_blur" min="0" max="64" step="1" value={params.mask_blur} onChange={handleChange} style={{ width: '100%' }} />
+                            </div>
+
+                            <div className="input-group" style={{ marginBottom: 'var(--spacing-sm)' }}>
+                                <label className="input-label">Mask Padding ({params.mask_padding})</label>
+                                <input type="range" className="input-range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} style={{ width: '100%' }} />
+                            </div>
+                            <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+                                Blur размягчает край, Padding расширяет зону правки.
+                            </small>
+                        </div>
+                    )}
+
                     <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-md)' }}>
                         <button className="btn btn-secondary" onClick={onUndo} style={{ flex: 1 }}>
                             ↶ Undo

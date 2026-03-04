@@ -1,5 +1,4 @@
 import os
-import io
 import numpy as np
 from PIL import Image, PngImagePlugin, ImageFilter
 from datetime import datetime
@@ -28,30 +27,52 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
     image.save(filepath, "PNG", pnginfo=meta)
     return filename
 
-def process_mask_for_inpainting(mask_image: Image.Image, hard_blur: int = 4, soft_blur: int = 16) -> tuple[Image.Image, Image.Image]:
+def _odd_kernel_size(radius_px: int) -> int:
+    return max(3, radius_px * 2 + 1)
+
+def _combine_masks_max(mask_a: Image.Image | None, mask_b: Image.Image | None) -> Image.Image | None:
+    if mask_a is None:
+        return mask_b
+    if mask_b is None:
+        return mask_a
+
+    a = np.array(mask_a.convert("L"), dtype=np.uint8)
+    b = np.array(mask_b.convert("L"), dtype=np.uint8)
+    return Image.fromarray(np.maximum(a, b), mode="L")
+
+def process_mask_for_inpainting(
+    mask_image: Image.Image,
+    mask_padding: int = 32,
+    mask_blur: int = 4,
+    threshold: int = 127
+) -> tuple[Image.Image, Image.Image]:
     """
-    Prepares the mask for inpainting. Returns two masks:
-    1. Hard Mask: For the SD diffusers pipeline (slight blur).
-    2. Soft Mask: For the final alpha compositing to hide seams (heavy blur).
+    WebUI/Invoke-style mask processing:
+    1. Binary inpaint mask.
+    2. Optional padding (dilation) around mask.
+    3. Separate blurred blend mask for final compositing.
     """
-    # Ensure mask is grayscale
     if mask_image.mode != "L":
         mask_image = mask_image.convert("L")
-    
-    hard_mask = mask_image
-    if hard_blur > 0:
-        hard_mask = mask_image.filter(ImageFilter.GaussianBlur(radius=hard_blur))
+
+    mask_arr = np.array(mask_image, dtype=np.uint8)
+    hard_mask = Image.fromarray(np.where(mask_arr >= threshold, 255, 0).astype(np.uint8), mode="L")
+
+    if mask_padding > 0:
+        hard_mask = hard_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_padding)))
         
-    soft_mask = mask_image
-    if soft_blur > 0:
-        # For soft blending, creating a slight dilation BEFORE blur helps ensure the generated 
-        # pixels fully reach the edges of the original cut, preventing black/transparent halos.
-        soft_mask = mask_image.filter(ImageFilter.MaxFilter(5)) # Dilation
-        soft_mask = soft_mask.filter(ImageFilter.GaussianBlur(radius=soft_blur))
+    soft_mask = hard_mask
+    if mask_blur > 0:
+        soft_mask = hard_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
         
     return hard_mask, soft_mask
 
-def feather_blend(original_image: Image.Image, generated_image: Image.Image, soft_mask: Image.Image) -> Image.Image:
+def feather_blend(
+    original_image: Image.Image,
+    generated_image: Image.Image,
+    soft_mask: Image.Image,
+    hard_mask: Image.Image | None = None
+) -> Image.Image:
     """
     Blends the generated image back into the original image using the soft mask as an alpha channel.
     This creates a seamless transition between AI pixels and original pixels.
@@ -59,19 +80,37 @@ def feather_blend(original_image: Image.Image, generated_image: Image.Image, sof
     if original_image.size != generated_image.size or original_image.size != soft_mask.size:
         return generated_image # Fallback if sizes mismatch somehow
         
-    # Ensure they are RGBA to freely paste using alpha
-    original_rgba = original_image.convert("RGBA")
-    generated_rgba = generated_image.convert("RGBA")
-    
-    # The mask itself dicts where the generated image appears.
-    # We paste the generated image ON TOP OF the original image, using the soft mask.
-    blended = original_rgba.copy()
-    blended.paste(generated_rgba, mask=soft_mask)
-    
-    # Return as RGB to avoid saving transparent PNGs by mistake
-    return blended.convert("RGB")
+    orig = np.array(original_image.convert("RGB"), dtype=np.float32)
+    gen = np.array(generated_image.convert("RGB"), dtype=np.float32)
+    alpha = np.array(soft_mask.convert("L"), dtype=np.float32) / 255.0
+    if hard_mask is not None:
+        hard_alpha = (np.array(hard_mask.convert("L"), dtype=np.float32) >= 127.0).astype(np.float32)
+        alpha = np.maximum(alpha, hard_alpha * 0.98)
 
-def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Image.Image, Image.Image]:
+    alpha_3 = alpha[..., None]
+
+    blended = (orig * (1.0 - alpha_3)) + (gen * alpha_3)
+    return Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8), mode="RGB")
+
+def merge_generation_masks(
+    manual_hard_mask: Image.Image | None,
+    manual_soft_mask: Image.Image | None,
+    outpaint_hard_mask: Image.Image | None,
+    outpaint_soft_mask: Image.Image | None,
+) -> tuple[Image.Image | None, Image.Image | None]:
+    """
+    Combines user mask and transparency-derived outpainting mask.
+    """
+    return (
+        _combine_masks_max(manual_hard_mask, outpaint_hard_mask),
+        _combine_masks_max(manual_soft_mask, outpaint_soft_mask),
+    )
+
+def prepare_image_for_outpainting(
+    image: Image.Image,
+    mask_padding: int = 32,
+    mask_blur: int = 4,
+) -> tuple[Image.Image, Image.Image, Image.Image]:
     """
     Prepares an RGBA image for outpainting/inpainting.
     
@@ -95,7 +134,9 @@ def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Imag
     
     # 2. Create Infill Background (Blur Fill)
     # Downscale and Upscale to create average color wash
-    small = image.resize((image.width // 8, image.height // 8), resample=Image.BICUBIC)
+    small_w = max(1, image.width // 8)
+    small_h = max(1, image.height // 8)
+    small = image.resize((small_w, small_h), resample=Image.BICUBIC)
     bg_filled = small.resize(image.size, resample=Image.BICUBIC).convert("RGB")
     
     # 3. Add Noise to Background (Texture seeding)
@@ -111,6 +152,10 @@ def prepare_image_for_outpainting(image: Image.Image) -> tuple[Image.Image, Imag
     final_image.paste(image, mask=alpha)
     
     # 5. Process Mask (Feathering)
-    hard_mask, soft_mask = process_mask_for_inpainting(mask, hard_blur=4, soft_blur=24)
+    hard_mask, soft_mask = process_mask_for_inpainting(
+        mask,
+        mask_padding=mask_padding,
+        mask_blur=mask_blur
+    )
     
     return final_image, hard_mask, soft_mask

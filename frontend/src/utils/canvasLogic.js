@@ -1,5 +1,24 @@
 import { fabric } from 'fabric';
 
+export const enforceCanvasLayerOrder = (canvas, genFrame) => {
+    if (!canvas) return;
+
+    const objects = canvas.getObjects();
+    const isFrame = (obj) => genFrame && obj === genFrame;
+    const isOverlay = (obj) => obj.id === 'maskGroup' || obj.isMask || obj.type === 'path';
+    const isCandidate = (obj) => !!obj.isCandidate;
+
+    const baseObjects = objects.filter(obj => !isFrame(obj) && !isOverlay(obj) && !isCandidate(obj));
+    const candidateObjects = objects.filter(obj => !isFrame(obj) && isCandidate(obj));
+    const overlayObjects = objects.filter(obj => !isFrame(obj) && isOverlay(obj));
+
+    // Desired order (bottom -> top): base -> candidates -> overlays -> generation frame.
+    baseObjects.forEach(obj => obj.bringToFront());
+    candidateObjects.forEach(obj => obj.bringToFront());
+    overlayObjects.forEach(obj => obj.bringToFront());
+    if (genFrame) genFrame.bringToFront();
+};
+
 export const mergeCanvasLayers = (canvas, candidate, genFrame, onComplete) => {
     if (!candidate || !canvas) return;
 
@@ -18,18 +37,7 @@ export const mergeCanvasLayers = (canvas, candidate, genFrame, onComplete) => {
         hoverCursor: 'default'
     });
     
-    // We leave candidate's z-index where it is (above older backgrounds)
-    // but ensure drawn paths and the generation frame stay on top.
-    const objects = canvas.getObjects();
-    objects.forEach(obj => {
-        if (obj.type === 'path') {
-            obj.bringToFront();
-        }
-    });
-
-    if (genFrame) {
-        genFrame.bringToFront();
-    }
+    enforceCanvasLayerOrder(canvas, genFrame);
 
     canvas.requestRenderAll();
     
@@ -73,8 +81,10 @@ export const exportCanvasState = async (canvas, frame) => {
     try {
         canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
         
-        const hasExplicitMasks = objectStates.some(s => s.obj.isMask);
-        const hasSketches = objectStates.some(s => s.obj.type === 'path' && !s.obj.isMask);
+        // Check for explicit standalone masks or paths within maskGroup
+        const maskGroup = canvas.getObjects().find(o => o.id === 'maskGroup');
+        const hasExplicitMasks = (maskGroup && maskGroup.getObjects().length > 0) || objectStates.some(s => s.obj.isMask);
+        const hasSketches = objectStates.some(s => s.obj.type === 'path' && !s.obj.isMask && !s.obj.isEraser);
 
         // 1. Init Image Export
         let useOpaqueBackground = false;
@@ -89,7 +99,7 @@ export const exportCanvasState = async (canvas, frame) => {
 
         frame.visible = false;
         canvas.getObjects().forEach(obj => {
-            if (obj.isMask) obj.visible = false;
+            if (obj.isMask || obj.id === 'maskGroup') obj.visible = false;
         });
 
         initDataURL = canvas.toDataURL({
@@ -107,8 +117,27 @@ export const exportCanvasState = async (canvas, frame) => {
                     obj.visible = false;
                     return;
                 }
-                if (obj.isMask) {
+                
+                // If it's the mask group, we need to process its children
+                if (obj.id === 'maskGroup') {
                     obj.visible = true;
+                    obj._originalOpacity = obj.opacity;
+                    obj.opacity = 1.0; // Make group fully opaque
+                    
+                    obj.getObjects().forEach(child => {
+                        child._originalOpacity = child.opacity;
+                        child.opacity = 1.0;
+                        if (child.stroke !== 'white') {
+                            child._originalStroke = child.stroke;
+                            child.stroke = 'white';
+                        }
+                    });
+                } else if (obj.isMask) {
+                    // Fallback for standalone masks (if any)
+                    obj.visible = true;
+                    // Ensure the mask is fully opaque for the export
+                    obj._originalOpacity = obj.opacity;
+                    obj.opacity = 1.0;
                     if (obj.stroke !== 'white') {
                         obj._originalStroke = obj.stroke;
                         obj.stroke = 'white';
@@ -126,9 +155,30 @@ export const exportCanvasState = async (canvas, frame) => {
 
              // Cleanup temp white strokes
             canvas.getObjects().forEach(obj => {
-                if (obj._originalStroke) {
-                    obj.stroke = obj._originalStroke;
-                    delete obj._originalStroke;
+                if (obj.id === 'maskGroup') {
+                    if (obj._originalOpacity !== undefined) {
+                        obj.opacity = obj._originalOpacity;
+                        delete obj._originalOpacity;
+                    }
+                    obj.getObjects().forEach(child => {
+                        if (child._originalStroke) {
+                            child.stroke = child._originalStroke;
+                            delete child._originalStroke;
+                        }
+                        if (child._originalOpacity !== undefined) {
+                            child.opacity = child._originalOpacity;
+                            delete child._originalOpacity;
+                        }
+                    });
+                } else {
+                    if (obj._originalStroke) {
+                        obj.stroke = obj._originalStroke;
+                        delete obj._originalStroke;
+                    }
+                    if (obj._originalOpacity !== undefined) {
+                        obj.opacity = obj._originalOpacity;
+                        delete obj._originalOpacity;
+                    }
                 }
             });
         }
