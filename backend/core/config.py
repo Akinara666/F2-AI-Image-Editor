@@ -31,6 +31,7 @@ class Settings:
 
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
+    MAX_CACHED_MODELS: int = 2    # Max pipelines kept in RAM (LRU eviction)
 
     def __init__(self):
         # Ensure output directory exists

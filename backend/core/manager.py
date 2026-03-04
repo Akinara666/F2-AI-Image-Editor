@@ -2,6 +2,7 @@ import torch
 import gc
 import asyncio
 import logging
+from collections import OrderedDict
 from diffusers import (
     StableDiffusionPipeline, 
     StableDiffusionImg2ImgPipeline,
@@ -24,9 +25,10 @@ from typing import Optional, Literal
 from core.config import settings
 
 class ModelManager:
-    def __init__(self, device=settings.DEVICE):
+    def __init__(self, device=settings.DEVICE, max_cache_size=settings.MAX_CACHED_MODELS):
         self.device = device
-        self.pipelines_cache = {} # Cache for loaded pipelines: { cache_key: pipeline }
+        self.pipelines_cache = OrderedDict()  # LRU cache: { cache_key: pipeline }
+        self.max_cache_size = max_cache_size
         self.current_pipeline = None
         self.current_cache_key = None
         self.lock = asyncio.Lock() # Async lock for sequential GPU access
@@ -76,6 +78,8 @@ class ModelManager:
             # Check if we have it cached in RAM
             if cache_key in self.pipelines_cache:
                 self.logger.info(f"Retrieving model {cache_key} from RAM cache...")
+                # Move to end (most recently used)
+                self.pipelines_cache.move_to_end(cache_key)
                 self.current_pipeline = self.pipelines_cache[cache_key]
                 self.current_cache_key = cache_key
                 self._apply_sampler(self.current_pipeline, sampler_name)
@@ -141,7 +145,8 @@ class ModelManager:
                     self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
                     pipeline.to(self.device)
                 
-                # Cache it
+                # Cache it (with LRU eviction)
+                self._evict_if_needed()
                 self.pipelines_cache[cache_key] = pipeline
 
                 # Update state
@@ -155,6 +160,19 @@ class ModelManager:
                 self.logger.error(f"Error loading model: {e}")
                 self._unload_current_model() # Cleanup on failure
                 raise e
+
+    def _evict_if_needed(self):
+        """Evict least-recently-used pipelines when cache exceeds max size."""
+        while len(self.pipelines_cache) >= self.max_cache_size:
+            evicted_key, evicted_pipeline = self.pipelines_cache.popitem(last=False)
+            self.logger.info(f"Evicting LRU model from cache: {evicted_key}")
+            if self.current_cache_key == evicted_key:
+                self.current_pipeline = None
+                self.current_cache_key = None
+            del evicted_pipeline
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _apply_sampler(self, pipeline, sampler_name: str):
         """Applies the requested sampler to the pipeline."""
