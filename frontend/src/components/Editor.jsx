@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { fabric } from 'fabric';
-import { mergeCanvasLayers, exportCanvasState } from '../utils/canvasLogic';
+import { mergeCanvasLayers, exportCanvasState, enforceCanvasLayerOrder } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS } from '../constants';
 
 /**
@@ -34,7 +34,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         const canvas = new fabric.Canvas(canvasRef.current, {
             width: wrapperRef.current.clientWidth,
             height: wrapperRef.current.clientHeight,
-            backgroundColor: CANVAS_DEFAULTS.BG_COLOR,
+            backgroundColor: null, // Transparent inside Fabric so destination-out reveals the div below
             isDrawingMode: false,
             enableRetinaScaling: false,
             preserveObjectStacking: true
@@ -193,10 +193,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             fabricCanvas.selection = true;
             // Restore selectability
             fabricCanvas.getObjects().forEach(obj => {
-                // Keep frame unselectable as per its init logic
-                if (obj === genFrame) {
-                    obj.selectable = true;
-                    obj.evented = true;
+                if (obj.isMask || obj.isEraser) {
+                    // Drawn paths should not be treated as distinct selectable objects by the user
+                    obj.selectable = false;
+                    obj.evented = false;
                 } else {
                     obj.selectable = true;
                     obj.evented = true;
@@ -220,16 +220,26 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 obj.evented = false;
             });
 
-            const brush = new fabric.PencilBrush(fabricCanvas);
-            brush.width = brushSize;
-
-            if (brushMode === 'mask') {
-                brush.color = CANVAS_DEFAULTS.MASK_COLOR;
-            } else if (brushMode === 'eraser') {
-                brush.color = CANVAS_DEFAULTS.ERASER_COLOR; // Paint with background color (Eraser)
-                brush.width = brushSize * 2; // Make eraser slightly bigger
+            let brush;
+            if (brushMode === 'eraser' && fabric.EraserBrush) {
+                brush = new fabric.EraserBrush(fabricCanvas);
+                brush.width = brushSize * 2;
             } else {
-                brush.color = brushColor;
+                brush = new fabric.PencilBrush(fabricCanvas);
+                brush.width = brushSize;
+
+                if (brushMode === 'mask') {
+                    // Draw with SOLID red so the brush is clearly visible while drawing
+                    brush.color = 'rgba(255, 0, 0, 1.0)';
+                } else if (brushMode === 'eraser') {
+                    // To actually erase image pixels, we draw a stroke that acts as a mask
+                    // using destination-out. The color doesn't matter for the final merge, 
+                    // but setting it to white/black ensures maximum opacity for the cut.
+                    brush.color = 'white';
+                    brush.width = brushSize * 2;
+                } else {
+                    brush.color = brushColor;
+                }
             }
             fabricCanvas.freeDrawingBrush = brush;
         }
@@ -245,22 +255,58 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             const mode = brushModeRef.current;
 
             if (mode === 'mask') {
+                // The newly created path is solid red. 
                 e.path.set({
-                    isMask: true
+                    isMask: true,
+                    selectable: false,
+                    evented: false,
+                    opacity: 1.0
                 });
+
+                // Move path into the unified mask group where group opacity prevents stacking
+                let maskGroup = fabricCanvas.getObjects().find(o => o.id === 'maskGroup');
+                if (!maskGroup) {
+                    maskGroup = new fabric.Group([], {
+                        id: 'maskGroup',
+                        selectable: false,
+                        evented: false,
+                        opacity: 0.5, // Group handles the semitransparency for all paths seamlessly
+                        objectCaching: true
+                    });
+                    fabricCanvas.add(maskGroup);
+                }
+
+                maskGroup.addWithUpdate(e.path);
+                fabricCanvas.remove(e.path);
+
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
+
+                undoStackRef.current.push({ type: 'mask', object: e.path });
             } else if (mode === 'eraser') {
-                e.path.set({ isMask: false, isEraser: true });
+                // Set the path to use destination-out. This will make the stroke
+                // punch a hole through all underlying intersecting objects on the canvas layer,
+                // revealing the canvas background color (which we can export as transparent if needed).
+                e.path.set({
+                    isMask: false,
+                    isEraser: true,
+                    globalCompositeOperation: 'destination-out',
+                    selectable: false,
+                    evented: false
+                });
+                undoStackRef.current.push({ type: 'path', object: e.path });
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
             } else {
                 e.path.set({ isMask: false });
+                undoStackRef.current.push({ type: 'path', object: e.path });
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
             }
 
-            undoStackRef.current.push({ type: 'path', object: e.path });
             fabricCanvas.requestRenderAll();
         };
 
         fabricCanvas.on('path:created', handlePathCreated);
         return () => fabricCanvas.off('path:created', handlePathCreated);
-    }, [fabricCanvas]); // Run only once per canvas instance
+    }, [fabricCanvas, genFrame]); // Rely on genFrame to keep it on top
 
 
     // --- Helper Logic ---
@@ -281,7 +327,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         if (undoStackRef.current.length > 0) {
             const lastAction = undoStackRef.current.pop();
             if (fabricCanvas) {
-                fabricCanvas.remove(lastAction.object);
+                if (lastAction.type === 'mask') {
+                    let maskGroup = fabricCanvas.getObjects().find(o => o.id === 'maskGroup');
+                    if (maskGroup) {
+                        maskGroup.removeWithUpdate(lastAction.object);
+                        if (maskGroup.getObjects().length === 0) {
+                            fabricCanvas.remove(maskGroup);
+                        }
+                    }
+                } else if (lastAction.type === 'path') {
+                    fabricCanvas.remove(lastAction.object);
+                }
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
                 fabricCanvas.requestRenderAll();
             }
         }
@@ -302,6 +359,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         setGenFrameSize: (w, h) => {
             if (!genFrame || !fabricCanvas) return;
             genFrame.set({ width: w, height: h, scaleX: 1, scaleY: 1 });
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
             fabricCanvas.requestRenderAll();
             setGenDimensions({ width: w, height: h });
         },
@@ -341,8 +399,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 });
 
                 fabricCanvas.add(img);
-                img.bringToFront();
-                genFrame.bringToFront(); // Frame on top of everything
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
 
                 fabricCanvas.requestRenderAll();
 
@@ -371,16 +428,19 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         clearAll: () => {
             if (!fabricCanvas) return;
-            // Remove only brush strokes (paths)
+            // Remove only brush strokes (paths) and maskGroup
             const objects = fabricCanvas.getObjects();
-            // iterate backwards to avoid index issues
             for (let i = objects.length - 1; i >= 0; i--) {
                 const obj = objects[i];
                 if (obj !== genFrame && obj.type === 'path') {
                     fabricCanvas.remove(obj);
-                    undoStackRef.current = undoStackRef.current.filter(act => act.object !== obj);
+                } else if (obj.id === 'maskGroup') {
+                    fabricCanvas.remove(obj);
                 }
             }
+            undoStackRef.current = [];
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
+            fabricCanvas.requestRenderAll();
         }
     }));
 
@@ -414,6 +474,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                         fabricCanvas.remove(activeString);
                         undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeString);
                         fabricCanvas.discardActiveObject();
+                        enforceCanvasLayerOrder(fabricCanvas, genFrame);
                     }
                 }
             }
@@ -442,7 +503,16 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     }, [fabricCanvas, genFrame]);
 
     return (
-        <div ref={wrapperRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+        <div ref={wrapperRef} style={{
+            width: '100%',
+            height: '100%',
+            position: 'relative',
+            backgroundColor: CANVAS_DEFAULTS.BG_COLOR,
+            // A subtle CSS checkerboard pattern to indicate transparency
+            backgroundImage: `linear-gradient(45deg, #252525 25%, transparent 25%), linear-gradient(-45deg, #252525 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #252525 75%), linear-gradient(-45deg, transparent 75%, #252525 75%)`,
+            backgroundSize: `20px 20px`,
+            backgroundPosition: `0 0, 0 10px, 10px -10px, -10px 0px`
+        }}>
             <canvas ref={canvasRef} />
 
             {/* Resolution Display Badge */}

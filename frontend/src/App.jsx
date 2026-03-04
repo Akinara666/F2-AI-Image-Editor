@@ -18,6 +18,8 @@ function App() {
     steps: 20,
     cfg: 7.5,
     denoising_strength: 0.75,
+    mask_blur: 4,
+    mask_padding: 32,
     model_id: AVAILABLE_MODELS[0].id,
     sampler: AVAILABLE_SAMPLERS[0],
     frame_size_index: 0
@@ -73,6 +75,8 @@ function App() {
       formData.append('steps', params.steps);
       formData.append('cfg', params.cfg);
       formData.append('denoising_strength', params.denoising_strength);
+      formData.append('mask_blur', params.mask_blur);
+      formData.append('mask_padding', params.mask_padding);
       formData.append('model_id', params.model_id);
       formData.append('sampler', params.sampler);
 

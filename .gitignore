@@ -1,5 +1,6 @@
 image_generation/.env
 frontend/node_modules
+frontend/dist
 backend/venv
 __pycache__
 backend/static/outputs/
