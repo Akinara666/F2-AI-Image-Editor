@@ -232,26 +232,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 obj.evented = false;
             });
 
-            let brush;
-            if (brushMode === 'eraser' && fabric.EraserBrush) {
-                brush = new fabric.EraserBrush(fabricCanvas);
+            const brush = new fabric.PencilBrush(fabricCanvas);
+            brush.width = brushSize;
+
+            if (brushMode === 'mask') {
+                // Draw with SOLID red so the brush is clearly visible while drawing
+                brush.color = 'rgba(255, 0, 0, 1.0)';
+            } else if (brushMode === 'eraser') {
+                // Color is irrelevant for destination-out; full opacity ensures clean cut
+                brush.color = 'rgba(0, 0, 0, 1.0)';
                 brush.width = brushSize * 2;
             } else {
-                brush = new fabric.PencilBrush(fabricCanvas);
-                brush.width = brushSize;
-
-                if (brushMode === 'mask') {
-                    // Draw with SOLID red so the brush is clearly visible while drawing
-                    brush.color = 'rgba(255, 0, 0, 1.0)';
-                } else if (brushMode === 'eraser') {
-                    // To actually erase image pixels, we draw a stroke that acts as a mask
-                    // using destination-out. The color doesn't matter for the final merge, 
-                    // but setting it to white/black ensures maximum opacity for the cut.
-                    brush.color = 'white';
-                    brush.width = brushSize * 2;
-                } else {
-                    brush.color = brushColor;
-                }
+                brush.color = brushColor;
             }
             fabricCanvas.freeDrawingBrush = brush;
         }
@@ -295,13 +287,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
                 pushUndo({ type: 'mask', object: e.path });
             } else if (mode === 'eraser') {
-                // Set the path to use destination-out. This will make the stroke
-                // punch a hole through all underlying intersecting objects on the canvas layer,
-                // revealing the canvas background color (which we can export as transparent if needed).
+                // destination-out erases pixels under the stroke.
+                // objectCaching MUST be false — otherwise Fabric renders to a cache
+                // bitmap first and the composite operation doesn't affect the main canvas.
                 e.path.set({
                     isMask: false,
                     isEraser: true,
                     globalCompositeOperation: 'destination-out',
+                    objectCaching: false,
                     selectable: false,
                     evented: false
                 });
@@ -364,7 +357,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     // CORE LOGIC: Merge Candidate via Utils
     const performAccept = () => {
         const acceptedObj = candidate;
-        mergeCanvasLayers(fabricCanvas, candidate, genFrame, () => {
+        mergeCanvasLayers(fabricCanvas, candidate, genFrame, (removedErasers) => {
+            // Clean eraser entries from undo stack (they were removed from canvas)
+            if (removedErasers && removedErasers.length > 0) {
+                const removedSet = new Set(removedErasers);
+                undoStackRef.current = undoStackRef.current.filter(
+                    act => !removedSet.has(act.object)
+                );
+            }
             pushUndo({ type: 'accept', object: acceptedObj });
             setCandidate(null);
             setCandidateUrl(null);
