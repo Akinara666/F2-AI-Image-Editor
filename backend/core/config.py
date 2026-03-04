@@ -25,7 +25,7 @@ class Settings:
     
     # Generation Defaults
     DEFAULT_STEPS: int = 20
-    DEFAULT_guidance_scale: float = 7.5
+    DEFAULT_GUIDANCE_SCALE: float = 7.5
     DEFAULT_WIDTH: int = 512
     DEFAULT_HEIGHT: int = 512
 

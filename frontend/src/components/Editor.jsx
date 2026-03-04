@@ -3,6 +3,8 @@ import { fabric } from 'fabric';
 import { mergeCanvasLayers, exportCanvasState, enforceCanvasLayerOrder } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS } from '../constants';
 
+const MAX_UNDO_STEPS = 50;
+
 /**
  * Editor Component for AI Image Generation
  */
@@ -13,8 +15,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [genFrame, setGenFrame] = useState(null);
     const brushModeRef = useRef(brushMode);
 
-    // History Stack for robust undo
+    // History Stack for robust undo (capped at MAX_UNDO_STEPS)
     const undoStackRef = useRef([]);
+    const pushUndo = (action) => {
+        undoStackRef.current.push(action);
+        if (undoStackRef.current.length > MAX_UNDO_STEPS) {
+            undoStackRef.current.splice(0, undoStackRef.current.length - MAX_UNDO_STEPS);
+        }
+    };
 
     // Staging / Candidates
     const [candidate, setCandidate] = useState(null); // The Fabric Object
@@ -54,8 +62,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         // --- Default Content & Events (Zoom/Pan) ---
         // Add a draggable Generation Frame (512x512)
         const frame = new fabric.Rect({
-            left: 100,
-            top: 100,
+            left: CANVAS_DEFAULTS.GRID_SIZE * 2,
+            top: CANVAS_DEFAULTS.GRID_SIZE * 2,
             width: CANVAS_DEFAULTS.DEFAULT_WIDTH,
             height: CANVAS_DEFAULTS.DEFAULT_HEIGHT,
             fill: 'rgba(0, 0, 0, 0)', // Transparent
@@ -174,14 +182,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             }
         });
 
-        window.addEventListener('resize', () => {
+        const handleResize = () => {
             if (wrapperRef.current) {
                 canvas.setWidth(wrapperRef.current.clientWidth);
                 canvas.setHeight(wrapperRef.current.clientHeight);
             }
-        });
+        };
+        window.addEventListener('resize', handleResize);
 
-        return () => canvas.dispose();
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            canvas.dispose();
+        };
     }, []);
 
     // --- Brush Handling ---
@@ -220,26 +232,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 obj.evented = false;
             });
 
-            let brush;
-            if (brushMode === 'eraser' && fabric.EraserBrush) {
-                brush = new fabric.EraserBrush(fabricCanvas);
+            const brush = new fabric.PencilBrush(fabricCanvas);
+            brush.width = brushSize;
+
+            if (brushMode === 'mask') {
+                // Draw with SOLID red so the brush is clearly visible while drawing
+                brush.color = 'rgba(255, 0, 0, 1.0)';
+            } else if (brushMode === 'eraser') {
+                // Color is irrelevant for destination-out; full opacity ensures clean cut
+                brush.color = 'rgba(0, 0, 0, 1.0)';
                 brush.width = brushSize * 2;
             } else {
-                brush = new fabric.PencilBrush(fabricCanvas);
-                brush.width = brushSize;
-
-                if (brushMode === 'mask') {
-                    // Draw with SOLID red so the brush is clearly visible while drawing
-                    brush.color = 'rgba(255, 0, 0, 1.0)';
-                } else if (brushMode === 'eraser') {
-                    // To actually erase image pixels, we draw a stroke that acts as a mask
-                    // using destination-out. The color doesn't matter for the final merge, 
-                    // but setting it to white/black ensures maximum opacity for the cut.
-                    brush.color = 'white';
-                    brush.width = brushSize * 2;
-                } else {
-                    brush.color = brushColor;
-                }
+                brush.color = brushColor;
             }
             fabricCanvas.freeDrawingBrush = brush;
         }
@@ -281,23 +285,24 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
 
-                undoStackRef.current.push({ type: 'mask', object: e.path });
+                pushUndo({ type: 'mask', object: e.path });
             } else if (mode === 'eraser') {
-                // Set the path to use destination-out. This will make the stroke
-                // punch a hole through all underlying intersecting objects on the canvas layer,
-                // revealing the canvas background color (which we can export as transparent if needed).
+                // destination-out erases pixels under the stroke.
+                // objectCaching MUST be false — otherwise Fabric renders to a cache
+                // bitmap first and the composite operation doesn't affect the main canvas.
                 e.path.set({
                     isMask: false,
                     isEraser: true,
                     globalCompositeOperation: 'destination-out',
+                    objectCaching: false,
                     selectable: false,
                     evented: false
                 });
-                undoStackRef.current.push({ type: 'path', object: e.path });
+                pushUndo({ type: 'path', object: e.path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
             } else {
                 e.path.set({ isMask: false });
-                undoStackRef.current.push({ type: 'path', object: e.path });
+                pushUndo({ type: 'path', object: e.path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
             }
 
@@ -309,7 +314,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     }, [fabricCanvas, genFrame]); // Rely on genFrame to keep it on top
 
 
-    // --- Helper Logic ---
     // --- Helper Logic ---
     const discardCandidateHelper = () => {
         if (!candidate || !fabricCanvas) return;
@@ -344,11 +348,24 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         }
     };
 
+    // Keep a ref to always point to the latest performUndo (avoids stale closure in keydown listener)
+    const performUndoRef = useRef(performUndo);
+    useEffect(() => {
+        performUndoRef.current = performUndo;
+    });
+
     // CORE LOGIC: Merge Candidate via Utils
     const performAccept = () => {
         const acceptedObj = candidate;
-        mergeCanvasLayers(fabricCanvas, candidate, genFrame, () => {
-            undoStackRef.current.push({ type: 'accept', object: acceptedObj });
+        mergeCanvasLayers(fabricCanvas, candidate, genFrame, (removedErasers) => {
+            // Clean eraser entries from undo stack (they were removed from canvas)
+            if (removedErasers && removedErasers.length > 0) {
+                const removedSet = new Set(removedErasers);
+                undoStackRef.current = undoStackRef.current.filter(
+                    act => !removedSet.has(act.object)
+                );
+            }
+            pushUndo({ type: 'accept', object: acceptedObj });
             setCandidate(null);
             setCandidateUrl(null);
         });
@@ -452,7 +469,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
             if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
                 e.preventDefault();
-                performUndo();
+                performUndoRef.current();
             }
             // Spacebar Panning (Press to Pan)
             if (e.code === 'Space' && !e.repeat && brushModeRef.current !== 'hand') {
@@ -469,10 +486,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             // Delete key to remove active selection
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (fabricCanvas && fabricCanvas.getActiveObject()) {
-                    const activeString = fabricCanvas.getActiveObject();
-                    if (activeString !== genFrame) {
-                        fabricCanvas.remove(activeString);
-                        undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeString);
+                    const activeObj = fabricCanvas.getActiveObject();
+                    if (activeObj !== genFrame) {
+                        fabricCanvas.remove(activeObj);
+                        undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeObj);
                         fabricCanvas.discardActiveObject();
                         enforceCanvasLayerOrder(fabricCanvas, genFrame);
                     }

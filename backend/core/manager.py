@@ -203,16 +203,5 @@ class ModelManager:
         except Exception as e:
             self.logger.warning(f"Could not apply sampler {sampler_name}: {e}")
 
-    def load_lora_weights(self, lora_path: str, adapter_name: str = "default"):
-        """
-        Architecture hook for LoRA. Wrapper around diffusers load_lora_weights.
-        """
-        if self.current_pipeline:
-             self.logger.info(f"Loading LoRA from {lora_path}")
-             try:
-                 self.current_pipeline.load_lora_weights(lora_path, adapter_name=adapter_name)
-             except Exception as e:
-                 self.logger.error(f"Failed to load LoRA: {e}")
-
 # Singleton instance
 model_manager = ModelManager()

@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
-import { API_ENDPOINTS, AVAILABLE_MODELS, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from './constants';
+import { API_ENDPOINTS, AVAILABLE_MODELS_PLACEHOLDER, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from './constants';
 import './theme.css';
 import './App.css';
 
@@ -20,7 +20,7 @@ function App() {
     denoising_strength: 0.75,
     mask_blur: 4,
     mask_padding: 32,
-    model_id: AVAILABLE_MODELS[0].id,
+    model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
     sampler: AVAILABLE_SAMPLERS[0],
     frame_size_index: 0
   });
@@ -35,7 +35,7 @@ function App() {
           // Auto-select first model if none selected
           setParams(prev => ({
             ...prev,
-            model_id: prev.model_id === AVAILABLE_MODELS[0].id ? response.data.models[0].id : prev.model_id
+            model_id: prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id ? response.data.models[0].id : prev.model_id
           }));
         }
       } catch (err) {
@@ -48,7 +48,19 @@ function App() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [abortController, setAbortController] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('generation_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  // Persist history to localStorage
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('generation_history', JSON.stringify(history));
+    } catch { /* quota exceeded — silently ignore */ }
+  }, [history]);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(20);

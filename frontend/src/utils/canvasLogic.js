@@ -5,17 +5,20 @@ export const enforceCanvasLayerOrder = (canvas, genFrame) => {
 
     const objects = canvas.getObjects();
     const isFrame = (obj) => genFrame && obj === genFrame;
-    const isOverlay = (obj) => obj.id === 'maskGroup' || obj.isMask || obj.type === 'path';
+    const isMaskOverlay = (obj) => obj.id === 'maskGroup' || obj.isMask;
+    const isContentPath = (obj) => obj.type === 'path' && !obj.isMask; // sketches + erasers
     const isCandidate = (obj) => !!obj.isCandidate;
 
-    const baseObjects = objects.filter(obj => !isFrame(obj) && !isOverlay(obj) && !isCandidate(obj));
+    const baseObjects = objects.filter(obj => !isFrame(obj) && !isMaskOverlay(obj) && !isCandidate(obj) && !isContentPath(obj));
     const candidateObjects = objects.filter(obj => !isFrame(obj) && isCandidate(obj));
-    const overlayObjects = objects.filter(obj => !isFrame(obj) && isOverlay(obj));
+    const contentPaths = objects.filter(obj => !isFrame(obj) && isContentPath(obj));
+    const maskOverlays = objects.filter(obj => !isFrame(obj) && isMaskOverlay(obj));
 
-    // Desired order (bottom -> top): base -> candidates -> overlays -> generation frame.
+    // Desired order (bottom → top): base images → candidates → content paths → mask overlay → frame
     baseObjects.forEach(obj => obj.bringToFront());
     candidateObjects.forEach(obj => obj.bringToFront());
-    overlayObjects.forEach(obj => obj.bringToFront());
+    contentPaths.forEach(obj => obj.bringToFront());
+    maskOverlays.forEach(obj => obj.bringToFront());
     if (genFrame) genFrame.bringToFront();
 };
 
@@ -36,12 +39,17 @@ export const mergeCanvasLayers = (canvas, candidate, genFrame, onComplete) => {
         hasControls: false,
         hoverCursor: 'default'
     });
+
+    // Remove eraser paths — they created the transparent area that was just
+    // filled by generation.  Keeping them would punch holes in the new image.
+    const eraserPaths = canvas.getObjects().filter(obj => obj.isEraser);
+    eraserPaths.forEach(obj => canvas.remove(obj));
     
     enforceCanvasLayerOrder(canvas, genFrame);
 
     canvas.requestRenderAll();
     
-    if (onComplete) onComplete();
+    if (onComplete) onComplete(eraserPaths);
 };
 
 /**

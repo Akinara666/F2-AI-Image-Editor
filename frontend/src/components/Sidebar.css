@@ -1,0 +1,178 @@
+/* ===== Sidebar Layout ===== */
+.sidebar {
+    width: 20rem;
+    min-width: 250px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    animation: slideInLeft 0.3s ease;
+    height: 100%;
+    overflow: hidden;
+}
+
+.sidebar__content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.sidebar__title {
+    margin: 0;
+    color: var(--primary);
+}
+
+/* ===== Grid Layouts ===== */
+.sidebar__grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-sm);
+}
+
+/* ===== Form Elements ===== */
+.sidebar select.input-field {
+    padding: 8px;
+}
+
+.sidebar__prompt-field {
+    height: 80px;
+}
+
+.sidebar__neg-prompt-field {
+    height: 60px;
+}
+
+.sidebar__range {
+    width: 100%;
+}
+
+.sidebar__range--primary {
+    accent-color: var(--primary);
+}
+
+.sidebar__range--accent {
+    accent-color: var(--accent);
+}
+
+.sidebar__range--neutral {
+    accent-color: var(--text-main);
+}
+
+.sidebar__hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+}
+
+.sidebar__divider {
+    border-color: var(--border);
+    width: 100%;
+    margin: var(--spacing-sm) 0;
+}
+
+/* ===== Brush Tools ===== */
+.sidebar__section-title {
+    font-size: 1rem;
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__tool-bar {
+    display: flex;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-md);
+    flex-wrap: wrap;
+}
+
+.sidebar__tool-btn {
+    flex: 1;
+    min-width: 60px;
+    padding: 6px;
+    font-size: 0.85rem;
+}
+
+.sidebar__brush-options {
+    animation: fadeIn 0.2s;
+}
+
+.sidebar__brush-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.sidebar__brush-label {
+    margin-bottom: 0;
+    width: 60px;
+}
+
+.sidebar__color-picker {
+    width: 30px;
+    height: 30px;
+    border: none;
+    padding: 0;
+    background: transparent;
+}
+
+/* ===== Mask Panel ===== */
+.sidebar__mask-panel {
+    animation: fadeIn 0.2s;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm);
+    background: rgba(42, 42, 42, 0.35);
+}
+
+.sidebar__mask-title {
+    margin: 0 0 var(--spacing-sm) 0;
+    font-size: 0.9rem;
+    color: var(--danger);
+}
+
+.sidebar__mask-group {
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__mask-hint {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+}
+
+/* ===== Action Buttons ===== */
+.sidebar__actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+.sidebar__action-btn {
+    flex: 1;
+}
+
+.sidebar__action-btn--danger {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+/* ===== Footer ===== */
+.sidebar__footer {
+    padding: var(--spacing-md);
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
+}
+
+.sidebar__generate-btn {
+    width: 100%;
+    padding: var(--spacing-md);
+    font-size: 1.1rem;
+    cursor: pointer;
+}
+
+.sidebar__cancel-btn {
+    width: 100%;
+    padding: var(--spacing-md);
+    font-size: 1.1rem;
+    background-color: var(--danger);
+    border-color: var(--danger);
+    cursor: pointer;
+}

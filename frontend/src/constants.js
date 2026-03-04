@@ -16,8 +16,8 @@ export const API_ENDPOINTS = {
     MODELS: '/models'
 };
 
-// Now populated dynamically from backend
-export const AVAILABLE_MODELS = [
+// Initial placeholder shown while fetching the real list from the backend
+export const AVAILABLE_MODELS_PLACEHOLDER = [
     { id: "runwayml/stable-diffusion-v1-5", label: "Loading models..." }
 ];
 
