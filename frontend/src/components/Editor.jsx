@@ -3,6 +3,8 @@ import { fabric } from 'fabric';
 import { mergeCanvasLayers, exportCanvasState, enforceCanvasLayerOrder } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS } from '../constants';
 
+const MAX_UNDO_STEPS = 50;
+
 /**
  * Editor Component for AI Image Generation
  */
@@ -13,8 +15,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [genFrame, setGenFrame] = useState(null);
     const brushModeRef = useRef(brushMode);
 
-    // History Stack for robust undo
+    // History Stack for robust undo (capped at MAX_UNDO_STEPS)
     const undoStackRef = useRef([]);
+    const pushUndo = (action) => {
+        undoStackRef.current.push(action);
+        if (undoStackRef.current.length > MAX_UNDO_STEPS) {
+            undoStackRef.current.splice(0, undoStackRef.current.length - MAX_UNDO_STEPS);
+        }
+    };
 
     // Staging / Candidates
     const [candidate, setCandidate] = useState(null); // The Fabric Object
@@ -281,7 +289,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
 
-                undoStackRef.current.push({ type: 'mask', object: e.path });
+                pushUndo({ type: 'mask', object: e.path });
             } else if (mode === 'eraser') {
                 // Set the path to use destination-out. This will make the stroke
                 // punch a hole through all underlying intersecting objects on the canvas layer,
@@ -293,11 +301,11 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     selectable: false,
                     evented: false
                 });
-                undoStackRef.current.push({ type: 'path', object: e.path });
+                pushUndo({ type: 'path', object: e.path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
             } else {
                 e.path.set({ isMask: false });
-                undoStackRef.current.push({ type: 'path', object: e.path });
+                pushUndo({ type: 'path', object: e.path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
             }
 
@@ -348,7 +356,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const performAccept = () => {
         const acceptedObj = candidate;
         mergeCanvasLayers(fabricCanvas, candidate, genFrame, () => {
-            undoStackRef.current.push({ type: 'accept', object: acceptedObj });
+            pushUndo({ type: 'accept', object: acceptedObj });
             setCandidate(null);
             setCandidateUrl(null);
         });
