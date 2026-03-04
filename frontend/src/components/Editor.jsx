@@ -182,14 +182,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             }
         });
 
-        window.addEventListener('resize', () => {
+        const handleResize = () => {
             if (wrapperRef.current) {
                 canvas.setWidth(wrapperRef.current.clientWidth);
                 canvas.setHeight(wrapperRef.current.clientHeight);
             }
-        });
+        };
+        window.addEventListener('resize', handleResize);
 
-        return () => canvas.dispose();
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            canvas.dispose();
+        };
     }, []);
 
     // --- Brush Handling ---
