@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 import io
+import asyncio
 from PIL import Image
 import torch
 
@@ -219,7 +220,8 @@ async def generate_image(
 
         # 4. Generate
         if actual_mode == "text2img":
-            result = pipe(
+            result = await asyncio.to_thread(
+                pipe,
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 width=width,
@@ -237,7 +239,8 @@ async def generate_image(
             if image_input.mode == "RGBA":
                 image_input = image_input.convert("RGB")
             
-            result = pipe(
+            result = await asyncio.to_thread(
+                pipe,
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 image=image_input,
@@ -269,7 +272,8 @@ async def generate_image(
             if hard_mask_input is None:
                 raise HTTPException(status_code=400, detail="Inpainting requires mask_image or transparent init_image")
                 
-            result = pipe(
+            result = await asyncio.to_thread(
+                pipe,
                 prompt=final_prompt,
                 negative_prompt=negative_prompt,
                 image=image_input,
