@@ -48,7 +48,19 @@ function App() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [abortController, setAbortController] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = localStorage.getItem('generation_history');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+
+  // Persist history to localStorage
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('generation_history', JSON.stringify(history));
+    } catch { /* quota exceeded — silently ignore */ }
+  }, [history]);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(20);
