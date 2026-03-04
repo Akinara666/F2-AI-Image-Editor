@@ -62,8 +62,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         // --- Default Content & Events (Zoom/Pan) ---
         // Add a draggable Generation Frame (512x512)
         const frame = new fabric.Rect({
-            left: 100,
-            top: 100,
+            left: CANVAS_DEFAULTS.GRID_SIZE * 2,
+            top: CANVAS_DEFAULTS.GRID_SIZE * 2,
             width: CANVAS_DEFAULTS.DEFAULT_WIDTH,
             height: CANVAS_DEFAULTS.DEFAULT_HEIGHT,
             fill: 'rgba(0, 0, 0, 0)', // Transparent
