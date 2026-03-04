@@ -352,6 +352,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         }
     };
 
+    // Keep a ref to always point to the latest performUndo (avoids stale closure in keydown listener)
+    const performUndoRef = useRef(performUndo);
+    useEffect(() => {
+        performUndoRef.current = performUndo;
+    });
+
     // CORE LOGIC: Merge Candidate via Utils
     const performAccept = () => {
         const acceptedObj = candidate;
@@ -460,7 +466,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
             if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
                 e.preventDefault();
-                performUndo();
+                performUndoRef.current();
             }
             // Spacebar Panning (Press to Pan)
             if (e.code === 'Space' && !e.repeat && brushModeRef.current !== 'hand') {
