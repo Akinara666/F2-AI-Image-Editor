@@ -2,11 +2,12 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import os
-from pydantic import BaseModel
+import random
 from typing import Optional
 import uvicorn
 import io
 import asyncio
+import traceback
 from PIL import Image
 import torch
 
@@ -42,20 +43,12 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": str(exc), "type": type(exc).__name__}
     )
 
-# --- Schemas ---
-class GenerationRequest(BaseModel):
-    prompt: str
-    negative_prompt: Optional[str] = None
-    seed: int = -1
-    steps: int = 20
-    cfg: float = 7.0
-    width: int = 512
-    height: int = 512
-    model_id: str = settings.DEFAULT_MODEL_ID
-    type: str = "text2img" # text2img, img2img, inpainting
-
 # --- Presets & configuration ---
 # Imports from core.config
+
+def clamp_int(value: int, low: int, high: int) -> int:
+    """Clamp an integer value to [low, high]."""
+    return max(low, min(high, int(value)))
 
 # --- Global State ---
 generation_state = {
@@ -149,9 +142,6 @@ async def generate_image(
             alpha = image_input.getchannel("A")
             has_transparency = alpha.getextrema()[0] < 255
             
-        def clamp_int(value: int, low: int, high: int) -> int:
-            return max(low, min(high, int(value)))
-
         eff_mask_blur = clamp_int(mask_blur, 0, 64)
         eff_mask_padding = clamp_int(mask_padding, 0, 128)
 
@@ -203,7 +193,6 @@ async def generate_image(
         )
 
         if seed == -1:
-            import random
             seed = random.randint(0, 2**32 - 1)
         
         generator = torch.Generator(device=model_manager.device).manual_seed(seed)
@@ -328,7 +317,6 @@ async def generate_image(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
         logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

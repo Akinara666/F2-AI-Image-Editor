@@ -322,7 +322,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
 
     // --- Helper Logic ---
-    // --- Helper Logic ---
     const discardCandidateHelper = () => {
         if (!candidate || !fabricCanvas) return;
         fabricCanvas.remove(candidate);
@@ -487,10 +486,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             // Delete key to remove active selection
             if (e.key === 'Delete' || e.key === 'Backspace') {
                 if (fabricCanvas && fabricCanvas.getActiveObject()) {
-                    const activeString = fabricCanvas.getActiveObject();
-                    if (activeString !== genFrame) {
-                        fabricCanvas.remove(activeString);
-                        undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeString);
+                    const activeObj = fabricCanvas.getActiveObject();
+                    if (activeObj !== genFrame) {
+                        fabricCanvas.remove(activeObj);
+                        undoStackRef.current = undoStackRef.current.filter(act => act.object !== activeObj);
                         fabricCanvas.discardActiveObject();
                         enforceCanvasLayerOrder(fabricCanvas, genFrame);
                     }
