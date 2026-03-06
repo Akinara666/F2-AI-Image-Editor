@@ -3,42 +3,89 @@
 }
 
 :root {
-    /* Colors */
+    /* ===== Typography ===== */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --font-xs: 0.7rem;
+    --font-sm: 0.8rem;
+    --font-md: 0.875rem;
+    --font-lg: 1rem;
+    --font-xl: 1.25rem;
+    --font-2xl: 1.5rem;
+
+    /* ===== Colors ===== */
     --bg-dark: #121212;
     --bg-panel: #1e1e1e;
     --bg-hover: #2a2a2a;
     --bg-input: #252525;
+    --bg-elevated: #2e2e2e;
+    --bg-overlay: rgba(0, 0, 0, 0.7);
     
     --primary: #00d4ff;
     --primary-hover: #00b8e6;
+    --primary-dim: rgba(0, 212, 255, 0.15);
     --accent: #2a9d8f;
+    --accent-dim: rgba(42, 157, 143, 0.15);
     --danger: #e63946;
+    --danger-dim: rgba(230, 57, 70, 0.15);
+    --success: #2a9d8f;
+    --warning: #f4a261;
+    --info: #457b9d;
     --text-main: #e0e0e0;
     --text-muted: #a0a0a0;
+    --text-dim: #666;
     --border: #333;
+    --border-light: #444;
 
-    /* Spacing */
+    /* ===== Spacing ===== */
     --spacing-xs: 0.25rem;
     --spacing-sm: 0.5rem;
     --spacing-md: 1rem;
     --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
 
-    /* Radius */
+    /* ===== Radius ===== */
     --radius-sm: 4px;
     --radius-md: 8px;
     --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-full: 9999px;
 
-    /* Shadows */
+    /* ===== Shadows ===== */
     --shadow-sm: 0 2px 4px rgba(0,0,0,0.2);
     --shadow-md: 0 4px 6px rgba(0,0,0,0.3);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
     --shadow-glow: 0 0 10px rgba(0, 212, 255, 0.2);
+    --shadow-glow-strong: 0 0 20px rgba(0, 212, 255, 0.35);
 
-    /* Transitions */
+    /* ===== Z-Index Scale ===== */
+    --z-base: 1;
+    --z-dropdown: 100;
+    --z-sticky: 200;
+    --z-overlay: 500;
+    --z-modal: 1000;
+    --z-toast: 9999;
+
+    /* ===== Glassmorphism ===== */
+    --glass-bg: rgba(30, 30, 30, 0.85);
+    --glass-blur: blur(12px);
+    --glass-border: 1px solid rgba(255, 255, 255, 0.06);
+
+    /* ===== Transitions ===== */
     --trans-fast: 0.1s ease;
     --trans-normal: 0.2s ease;
+    --trans-smooth: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Animations */
+/* ===== Base Styles ===== */
+body {
+    font-family: var(--font-family);
+    font-size: var(--font-md);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== Animations ===== */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }
     to { opacity: 1; transform: translateY(0); }
@@ -54,7 +101,17 @@
     to { opacity: 1; transform: translateX(0); }
 }
 
-/* Utility Classes */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* ===== Panel ===== */
 .panel {
     background-color: var(--bg-panel);
     border-right: 1px solid var(--border);
@@ -65,12 +122,15 @@
     transition: width var(--trans-normal);
 }
 
+/* ===== Buttons ===== */
 .btn {
     border: none;
     border-radius: var(--radius-md);
     padding: var(--spacing-sm) var(--spacing-md);
     cursor: pointer;
+    font-family: var(--font-family);
     font-weight: 600;
+    font-size: var(--font-md);
     transition: all var(--trans-normal);
     display: flex;
     align-items: center;
@@ -79,7 +139,7 @@
 }
 
 .btn:active {
-    transform: scale(0.98);
+    transform: scale(0.97);
 }
 
 .btn-primary {
@@ -90,7 +150,7 @@
 
 .btn-primary:hover {
     filter: brightness(1.1);
-    box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+    box-shadow: var(--shadow-glow-strong);
 }
 
 .btn-secondary {
@@ -100,10 +160,11 @@
 }
 
 .btn-secondary:hover {
-    background: #333;
-    border-color: #555;
+    background: var(--bg-elevated);
+    border-color: var(--border-light);
 }
 
+/* ===== Form Elements ===== */
 .input-group {
     margin-bottom: var(--spacing-md);
 }
@@ -111,9 +172,10 @@
 .input-label {
     display: block;
     margin-bottom: var(--spacing-xs);
-    font-size: 0.85rem;
+    font-size: var(--font-sm);
     color: var(--text-muted);
     font-weight: 500;
+    letter-spacing: 0.02em;
 }
 
 .input-field {
@@ -123,21 +185,64 @@
     border-radius: var(--radius-md);
     padding: var(--spacing-sm);
     color: var(--text-main);
-    transition: border-color var(--trans-fast);
+    font-family: var(--font-family);
+    font-size: var(--font-md);
+    transition: border-color var(--trans-fast), box-shadow var(--trans-fast);
 }
 
 .input-field:focus {
     outline: none;
     border-color: var(--primary);
-    box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.1);
+    box-shadow: 0 0 0 2px var(--primary-dim);
 }
 
 textarea.input-field {
     resize: vertical;
     min-height: 60px;
+    line-height: 1.5;
 }
 
-/* Scrollbar styling */
+/* ===== Custom Range Slider ===== */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-full);
+    outline: none;
+    cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: 2px solid var(--bg-panel);
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+    transition: transform var(--trans-fast), box-shadow var(--trans-fast);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary);
+    cursor: pointer;
+    border: 2px solid var(--bg-panel);
+    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+}
+
+/* ===== Scrollbar ===== */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -146,9 +251,15 @@ textarea.input-field {
     background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-    background: #444;
+    background: var(--border-light);
     border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-    background: #666;
+    background: var(--text-dim);
+}
+
+/* ===== Selection ===== */
+::selection {
+    background: var(--primary-dim);
+    color: var(--text-main);
 }

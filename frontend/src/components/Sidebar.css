@@ -73,7 +73,7 @@
 
 /* ===== Brush Tools ===== */
 .sidebar__section-title {
-    font-size: 1rem;
+    font-size: var(--font-lg);
     margin-bottom: var(--spacing-sm);
 }
 
@@ -88,7 +88,7 @@
     flex: 1;
     min-width: 60px;
     padding: 6px;
-    font-size: 0.85rem;
+    font-size: var(--font-sm);
 }
 
 .sidebar__brush-options {
@@ -120,12 +120,12 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
     padding: var(--spacing-sm);
-    background: rgba(42, 42, 42, 0.35);
+    background: rgba(46, 46, 46, 0.35);
 }
 
 .sidebar__mask-title {
     margin: 0 0 var(--spacing-sm) 0;
-    font-size: 0.9rem;
+    font-size: var(--font-md);
     color: var(--danger);
 }
 
@@ -135,7 +135,7 @@
 
 .sidebar__mask-hint {
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--font-xs);
 }
 
 /* ===== Action Buttons ===== */
@@ -164,14 +164,14 @@
 .sidebar__generate-btn {
     width: 100%;
     padding: var(--spacing-md);
-    font-size: 1.1rem;
+    font-size: var(--font-xl);
     cursor: pointer;
 }
 
 .sidebar__cancel-btn {
     width: 100%;
     padding: var(--spacing-md);
-    font-size: 1.1rem;
+    font-size: var(--font-xl);
     background-color: var(--danger);
     border-color: var(--danger);
     cursor: pointer;

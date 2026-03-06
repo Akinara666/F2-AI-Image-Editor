@@ -3,7 +3,7 @@
     position: fixed;
     bottom: 20px;
     right: 20px;
-    z-index: 9999;
+    z-index: var(--z-toast);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -15,7 +15,7 @@
     color: white;
     padding: 12px 20px;
     border-radius: var(--radius-md);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-lg);
     min-width: 280px;
     display: flex;
     justify-content: space-between;
@@ -26,15 +26,15 @@
 }
 
 .toast--success {
-    background: linear-gradient(135deg, #2a9d8f, #21867a);
+    background: linear-gradient(135deg, var(--success), #21867a);
 }
 
 .toast--error {
-    background: linear-gradient(135deg, #e63946, #c52d39);
+    background: linear-gradient(135deg, var(--danger), #c52d39);
 }
 
 .toast--info {
-    background: linear-gradient(135deg, #457b9d, #3a6a88);
+    background: linear-gradient(135deg, var(--info), #3a6a88);
 }
 
 .toast__message {
