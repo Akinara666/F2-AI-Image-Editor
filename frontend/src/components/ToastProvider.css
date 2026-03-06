@@ -12,6 +12,7 @@
 
 /* ===== Toast Item ===== */
 .toast {
+    position: relative;
     color: white;
     padding: 12px 20px;
     border-radius: var(--radius-md);
@@ -56,6 +57,22 @@
 
 .toast__close:hover {
     color: white;
+}
+
+/* ===== Auto-close Progress Bar ===== */
+.toast__progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.35);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    animation: toastProgress 5s linear forwards;
+}
+
+@keyframes toastProgress {
+    from { width: 100%; }
+    to { width: 0%; }
 }
 
 /* ===== Animations ===== */

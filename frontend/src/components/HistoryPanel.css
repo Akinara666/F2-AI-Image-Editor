@@ -100,6 +100,16 @@
     margin-bottom: 4px;
 }
 
+.history-panel__prompt {
+    font-size: var(--font-xs);
+    color: var(--text-main);
+    opacity: 0.6;
+    font-style: italic;
+    margin-bottom: 4px;
+    line-height: 1.3;
+    word-break: break-word;
+}
+
 .history-panel__time {
     font-size: var(--font-xs);
     color: var(--text-main);

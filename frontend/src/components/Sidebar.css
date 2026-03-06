@@ -89,6 +89,21 @@
     min-width: 60px;
     padding: 6px;
     font-size: var(--font-sm);
+    flex-direction: column;
+    gap: 2px;
+}
+
+.sidebar__tool-btn svg {
+    flex-shrink: 0;
+}
+
+.sidebar__tool-label {
+    font-size: var(--font-xs);
+    line-height: 1;
+}
+
+.sidebar__tool-btn--active {
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
 .sidebar__brush-options {

@@ -40,6 +40,11 @@ const HistoryPanel = ({ history, onSelect }) => {
                             <div className="history-panel__seed">
                                 Seed: {item.meta.seed}
                             </div>
+                            {item.meta.prompt && (
+                                <div className="history-panel__prompt">
+                                    {item.meta.prompt.length > 40 ? item.meta.prompt.slice(0, 40) + '…' : item.meta.prompt}
+                                </div>
+                            )}
                             <div className="history-panel__time">
                                 {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>

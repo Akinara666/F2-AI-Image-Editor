@@ -45,6 +45,7 @@ export const ToastProvider = ({ children }) => {
                         >
                             ✕
                         </button>
+                        <div className="toast__progress" />
                     </div>
                 ))}
             </div>
