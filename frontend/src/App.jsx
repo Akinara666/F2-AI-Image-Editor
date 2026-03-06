@@ -187,7 +187,7 @@ function App() {
         onClear={() => editorRef.current?.clearAll()}
         editorRef={editorRef}
       />
-      <div className="editor-wrapper" style={{ flex: 1, position: 'relative' }}>
+      <div className="editor-wrapper">
         <Editor
           ref={editorRef}
           brushMode={brushMode}

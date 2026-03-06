@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } f
 import { fabric } from 'fabric';
 import { mergeCanvasLayers, exportCanvasState, enforceCanvasLayerOrder } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS } from '../constants';
+import './Editor.css';
 
 const MAX_UNDO_STEPS = 50;
 
@@ -520,62 +521,26 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     }, [fabricCanvas, genFrame]);
 
     return (
-        <div ref={wrapperRef} style={{
-            width: '100%',
-            height: '100%',
-            position: 'relative',
-            backgroundColor: CANVAS_DEFAULTS.BG_COLOR,
-            // A subtle CSS checkerboard pattern to indicate transparency
-            backgroundImage: `linear-gradient(45deg, #252525 25%, transparent 25%), linear-gradient(-45deg, #252525 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #252525 75%), linear-gradient(-45deg, transparent 75%, #252525 75%)`,
-            backgroundSize: `20px 20px`,
-            backgroundPosition: `0 0, 0 10px, 10px -10px, -10px 0px`
-        }}>
+        <div ref={wrapperRef} className="editor-canvas-wrapper">
             <canvas ref={canvasRef} />
 
             {/* Resolution Display Badge */}
-            <div style={{
-                position: 'absolute',
-                top: '10px',
-                left: '10px',
-                background: 'rgba(0, 0, 0, 0.6)',
-                color: CANVAS_DEFAULTS.FRAME_COLOR, // Cyan to match frame
-                padding: '5px 10px',
-                borderRadius: '4px',
-                pointerEvents: 'none',
-                fontWeight: 'bold',
-                fontSize: '14px',
-                backdropFilter: 'blur(4px)',
-                border: `1px solid ${CANVAS_DEFAULTS.FRAME_COLOR}4D`
-            }}>
+            <div className="editor-resolution-badge">
                 {genDimensions.width} x {genDimensions.height}
             </div>
 
             {/* Staging UI Overlay */}
             {candidateUrl && (
-                <div style={{
-                    position: 'absolute',
-                    bottom: '20px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    display: 'flex',
-                    gap: '10px',
-                    backgroundColor: 'rgba(0,0,0,0.8)',
-                    padding: '10px',
-                    borderRadius: '8px',
-                    zIndex: 1000
-                }}>
+                <div className="editor-staging-bar">
                     <button
-                        onClick={() => {
-                            performAccept();
-                        }}
-                        style={{ background: '#2a9d8f', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+                        className="editor-staging-btn editor-staging-btn--accept"
+                        onClick={() => performAccept()}
                     >
                         ✓ ACCEPT
                     </button>
-
                     <button
+                        className="editor-staging-btn editor-staging-btn--discard"
                         onClick={discardCandidateHelper}
-                        style={{ background: '#e63946', color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
                     >
                         ✕ DISCARD
                     </button>

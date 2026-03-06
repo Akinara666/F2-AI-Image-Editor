@@ -1,0 +1,107 @@
+/* ===== History Panel Layout ===== */
+.history-panel {
+    width: 18rem;
+    min-width: 200px;
+    border-left: 1px solid var(--border);
+    border-right: none;
+    animation: slideInRight 0.3s ease;
+}
+
+/* ===== Header ===== */
+.history-panel__header {
+    padding: var(--spacing-md);
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.history-panel__title {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--primary);
+}
+
+.history-panel__count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: var(--bg-dark);
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+/* ===== Scrollable List ===== */
+.history-panel__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+/* ===== Empty State ===== */
+.history-panel__empty {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    text-align: center;
+    margin-top: 2rem;
+    opacity: 0.7;
+}
+
+/* ===== Card ===== */
+.history-panel__card {
+    cursor: pointer;
+    background: var(--bg-dark);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    transition: all var(--trans-fast);
+    flex-shrink: 0;
+}
+
+.history-panel__card:hover {
+    border-color: var(--primary);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+/* ===== Thumbnail ===== */
+.history-panel__thumb {
+    position: relative;
+    width: 100%;
+    padding-top: 100%; /* 1:1 aspect ratio */
+}
+
+.history-panel__thumb img {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.5s ease;
+}
+
+.history-panel__card:hover .history-panel__thumb img {
+    transform: scale(1.05);
+}
+
+/* ===== Meta Info ===== */
+.history-panel__meta {
+    padding: var(--spacing-sm);
+}
+
+.history-panel__seed {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+}
+
+.history-panel__time {
+    font-size: 0.7rem;
+    color: var(--text-main);
+    opacity: 0.8;
+}
