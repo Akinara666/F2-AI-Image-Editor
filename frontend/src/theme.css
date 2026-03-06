@@ -23,14 +23,18 @@
     
     --primary: #00d4ff;
     --primary-hover: #00b8e6;
+    --primary-dark: #007acc;
     --primary-dim: rgba(0, 212, 255, 0.15);
     --accent: #2a9d8f;
     --accent-dim: rgba(42, 157, 143, 0.15);
     --danger: #e63946;
+    --danger-dark: #c52d39;
     --danger-dim: rgba(230, 57, 70, 0.15);
     --success: #2a9d8f;
+    --success-dark: #21867a;
     --warning: #f4a261;
     --info: #457b9d;
+    --info-dark: #3a6a88;
     --text-main: #e0e0e0;
     --text-muted: #a0a0a0;
     --text-dim: #666;
@@ -143,8 +147,8 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--primary), #007acc);
-    color: #fff;
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    color: white;
     box-shadow: var(--shadow-glow);
 }
 

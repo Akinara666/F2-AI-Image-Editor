@@ -3,13 +3,13 @@
     width: 100%;
     height: 100%;
     position: relative;
-    background-color: #1e1e1e;
+    background-color: var(--bg-panel);
     /* Checkerboard transparency pattern */
     background-image:
-        linear-gradient(45deg, #252525 25%, transparent 25%),
-        linear-gradient(-45deg, #252525 25%, transparent 25%),
-        linear-gradient(45deg, transparent 75%, #252525 75%),
-        linear-gradient(-45deg, transparent 75%, #252525 75%);
+        linear-gradient(45deg, var(--bg-input) 25%, transparent 25%),
+        linear-gradient(-45deg, var(--bg-input) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, var(--bg-input) 75%),
+        linear-gradient(-45deg, transparent 75%, var(--bg-input) 75%);
     background-size: 20px 20px;
     background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
 }
@@ -52,7 +52,7 @@
     border-radius: var(--radius-sm);
     cursor: pointer;
     font-weight: bold;
-    color: #fff;
+    color: white;
     transition: all var(--trans-fast);
 }
 

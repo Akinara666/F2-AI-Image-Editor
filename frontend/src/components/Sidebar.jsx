@@ -197,7 +197,7 @@ const Sidebar = ({
                                 onClick={() => setBrushMode(tool.id)}
                                 style={{
                                     background: brushMode === tool.id ? tool.color : 'var(--bg-hover)',
-                                    color: brushMode === tool.id ? '#fff' : 'var(--text-muted)'
+                                    color: brushMode === tool.id ? 'white' : 'var(--text-muted)'
                                 }}
                                 title={tool.label}
                             >
