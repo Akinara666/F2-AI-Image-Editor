@@ -211,39 +211,70 @@ input[type="range"] {
     -webkit-appearance: none;
     appearance: none;
     width: 100%;
-    height: 4px;
-    background: var(--bg-elevated);
-    border-radius: var(--radius-full);
+    height: 28px;      /* tall hit-zone for easy grabbing */
+    background: transparent;
     outline: none;
     cursor: pointer;
+    margin: 0;
 }
 
+/* --- Track (Chrome/Edge/Safari) --- */
+input[type="range"]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-full);
+    border: none;
+}
+
+/* --- Track (Firefox) --- */
+input[type="range"]::-moz-range-track {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-full);
+    border: none;
+}
+
+/* --- Thumb (Chrome/Edge/Safari) --- */
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 14px;
-    height: 14px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--primary);
-    cursor: pointer;
     border: 2px solid var(--bg-panel);
-    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 6px rgba(0, 212, 255, 0.35);
+    cursor: grab;
+    margin-top: -6px;  /* center on track: -(thumbH - trackH) / 2 */
     transition: transform var(--trans-fast), box-shadow var(--trans-fast);
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
     transform: scale(1.2);
-    box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.5);
 }
 
+input[type="range"]::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.1);
+    box-shadow: 0 0 14px rgba(0, 212, 255, 0.6);
+}
+
+/* --- Thumb (Firefox) --- */
 input[type="range"]::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     background: var(--primary);
-    cursor: pointer;
     border: 2px solid var(--bg-panel);
-    box-shadow: 0 0 4px rgba(0, 212, 255, 0.3);
+    box-shadow: 0 0 6px rgba(0, 212, 255, 0.35);
+    cursor: grab;
+}
+
+input[type="range"]::-moz-range-thumb:active {
+    cursor: grabbing;
 }
 
 /* ===== Scrollbar ===== */
