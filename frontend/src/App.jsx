@@ -9,7 +9,7 @@ import './theme.css';
 import './App.css';
 
 function App() {
-  const { showSuccess, showError } = useToast();
+  const { showSuccess, showError, showInfo } = useToast();
   const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState({
     prompt: "A futuristic city",
@@ -20,6 +20,7 @@ function App() {
     denoising_strength: 0.75,
     mask_blur: 4,
     mask_padding: 32,
+    use_prompt_transform: true,
     model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
     sampler: AVAILABLE_SAMPLERS[0],
     frame_size_index: 0
@@ -82,6 +83,8 @@ function App() {
       // 2. Prepare FormData
       const formData = new FormData();
       formData.append('prompt', params.prompt);
+      formData.append('raw_prompt', params.prompt);
+      formData.append('use_prompt_transform', String(params.use_prompt_transform));
       formData.append('negative_prompt', params.negative_prompt);
       formData.append('seed', params.seed);
       formData.append('steps', params.steps);
@@ -115,6 +118,9 @@ function App() {
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
         showSuccess("Image generated successfully!");
+        if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
+          showInfo(`Prompt transformer: ${response.data.meta.prompt_transform_status}`);
+        }
         // 4. Add to Canvas
         editorRef.current.addGeneratedImage(response.data.url);
 

@@ -10,6 +10,7 @@ import asyncio
 import traceback
 from PIL import Image
 import torch
+from pydantic import BaseModel
 
 # Import core modules
 from core.manager import model_manager
@@ -21,6 +22,7 @@ from core.utils import (
     merge_generation_masks,
 )
 from core.config import STYLE_PRESETS, settings
+from core.prompt_transformer import prompt_transformer
 import logging
 
 # Setup Logging
@@ -94,9 +96,34 @@ def list_models():
     return {"models": models}
 
 
+#_____________апдейт_______ Prompt transformer preview contract
+class PromptTransformPreviewRequest(BaseModel):
+    prompt: str
+    use_prompt_transform: Optional[bool] = None
+
+
+#_____________апдейт_______ Prompt transformer preview endpoint
+@app.post("/prompt/transform")
+async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
+    result = await prompt_transformer.transform_prompt(
+        raw_prompt=payload.prompt,
+        use_prompt_transform=payload.use_prompt_transform,
+    )
+    #_____________апдейт_______ Strict validation for preview endpoint
+    transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
+    if transform_required and result.transform_status != "success":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Prompt was not transformed. status={result.transform_status}",
+        )
+    return {"status": "success", "data": result.to_dict()}
+
+
 @app.post("/generate")
 async def generate_image(
     prompt: str = Form(...),
+    raw_prompt: Optional[str] = Form(default=None),
+    use_prompt_transform: Optional[bool] = Form(default=None),
     negative_prompt: str = Form(default="low quality, bad anatomy, ugly"),
     width: int = Form(default=512),
     height: int = Form(default=512),
@@ -117,10 +144,34 @@ async def generate_image(
         # Reset cancel state for new generation
         generation_state["cancel_requested"] = False
 
+        #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
+        source_prompt = raw_prompt.strip() if raw_prompt and raw_prompt.strip() else prompt
+        transform_result = await prompt_transformer.transform_prompt(
+            raw_prompt=source_prompt,
+            use_prompt_transform=use_prompt_transform,
+            context={
+                "mode": mode,
+                "model_id": model_id,
+            },
+        )
+        final_prompt = transform_result.transformed_prompt
+        logger.info(
+            "Prompt transform status=%s provider=%s latency_ms=%s",
+            transform_result.transform_status,
+            transform_result.provider,
+            transform_result.latency_ms,
+        )
+        #_____________апдейт_______ Strict transform gate (no SD run on failed transform)
+        transform_required = settings.PROMPT_TRANSFORM_ENABLED if use_prompt_transform is None else use_prompt_transform
+        if transform_required and transform_result.transform_status != "success":
+            detail = f"Prompt was not transformed. status={transform_result.transform_status}"
+            if transform_result.error:
+                detail = f"{detail}. error={transform_result.error}"
+            raise HTTPException(status_code=422, detail=detail)
+
         # 0. Apply Preset
-        final_prompt = prompt
         if style_preset and style_preset in STYLE_PRESETS:
-             final_prompt = f"{prompt}, {STYLE_PRESETS[style_preset]}"
+             final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
              
         # Detect Mode & Process Inputs Early
         
@@ -304,8 +355,17 @@ async def generate_image(
                 "steps": steps,
                 "cfg": cfg,
                 "model_id": model_id,
-                "mode": actual_mode 
+                "mode": actual_mode,
+                #_____________апдейт_______ Prompt transformation trace
+                "raw_prompt": transform_result.raw_prompt,
+                "transformed_prompt": transform_result.transformed_prompt,
+                "prompt_transform_status": transform_result.transform_status,
+                "prompt_transform_provider": transform_result.provider,
+                "prompt_transform_latency_ms": transform_result.latency_ms,
             }
+            #_____________апдейт_______ Keep error details only when fallback happened
+            if transform_result.error:
+                meta["prompt_transform_error"] = transform_result.error
             
             filename = save_image_with_metadata(result_image, meta, str(settings.OUTPUT_DIR))
             return {

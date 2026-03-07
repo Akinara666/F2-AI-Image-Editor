@@ -11,6 +11,7 @@ export const CANVAS_DEFAULTS = {
 
 export const API_ENDPOINTS = {
     GENERATE: '/generate',
+    PROMPT_TRANSFORM: '/prompt/transform',
     HEALTH: '/health',
     CANCEL: '/cancel',
     MODELS: '/models'

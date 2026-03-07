@@ -95,6 +95,18 @@ const Sidebar = ({
                     />
                 </div>
 
+                <div className="input-group">
+                    <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                            type="checkbox"
+                            checked={!!params.use_prompt_transform}
+                            onChange={(e) => setParams(prev => ({ ...prev, use_prompt_transform: e.target.checked }))}
+                        />
+                        Use Prompt Transformer
+                    </label>
+                    <small className="sidebar__hint">Преобразует естественный язык в SD-стиль перед генерацией.</small>
+                </div>
+
                 {/* Negative Prompt */}
                 <div className="input-group">
                     <label className="input-label">Negative Prompt</label>

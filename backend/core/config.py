@@ -22,6 +22,11 @@ class Settings:
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
+
+    #_____________апдейт_______ Prompt transformer config
+    PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
+    PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
+    PROMPT_TRANSFORM_PROVIDER: str = os.getenv("PROMPT_TRANSFORM_PROVIDER", "stub")
     
     # Generation Defaults
     DEFAULT_STEPS: int = 20
