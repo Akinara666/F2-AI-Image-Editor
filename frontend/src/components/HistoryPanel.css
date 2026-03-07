@@ -2,7 +2,7 @@
 .history-panel {
     width: 18rem;
     min-width: 200px;
-    border-left: 1px solid var(--border);
+    border-left: var(--glass-border);
     border-right: none;
     animation: slideInRight 0.3s ease;
 }
@@ -10,8 +10,10 @@
 /* ===== Header ===== */
 .history-panel__header {
     padding: var(--spacing-md);
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-panel);
+    border-bottom: var(--glass-border);
+    background: rgba(18, 18, 26, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     z-index: 10;
     display: flex;
     align-items: center;
@@ -54,18 +56,19 @@
 /* ===== Card ===== */
 .history-panel__card {
     cursor: pointer;
-    background: var(--bg-dark);
-    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    border: 1px solid var(--border);
-    transition: all var(--trans-fast);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    transition: all var(--trans-normal);
     flex-shrink: 0;
+    box-shadow: var(--shadow-inset);
 }
 
 .history-panel__card:hover {
-    border-color: var(--primary);
+    border-color: var(--border-glow);
     transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-md), 0 0 12px rgba(0, 212, 255, 0.1);
 }
 
 /* ===== Thumbnail ===== */

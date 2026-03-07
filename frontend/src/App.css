@@ -4,7 +4,7 @@ html, body, #root {
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background-color: var(--bg-panel);
+    background-color: var(--bg-dark);
 }
 .app-container {
     display: flex;
@@ -21,16 +21,15 @@ html, body, #root {
 
 /* Custom Scrollbar (component-specific override) */
 .custom-scrollbar::-webkit-scrollbar {
-    width: 8px;
+    width: 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-    background: var(--bg-hover);
+    background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: var(--border-light);
-    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: var(--text-dim);
+    background: rgba(255, 255, 255, 0.18);
 }
-

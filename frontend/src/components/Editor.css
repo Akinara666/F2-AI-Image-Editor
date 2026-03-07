@@ -3,13 +3,13 @@
     width: 100%;
     height: 100%;
     position: relative;
-    background-color: var(--bg-panel);
+    background-color: #0c0c12;
     /* Checkerboard transparency pattern */
     background-image:
-        linear-gradient(45deg, var(--bg-input) 25%, transparent 25%),
-        linear-gradient(-45deg, var(--bg-input) 25%, transparent 25%),
-        linear-gradient(45deg, transparent 75%, var(--bg-input) 75%),
-        linear-gradient(-45deg, transparent 75%, var(--bg-input) 75%);
+        linear-gradient(45deg, #14141c 25%, transparent 25%),
+        linear-gradient(-45deg, #14141c 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #14141c 75%),
+        linear-gradient(-45deg, transparent 75%, #14141c 75%);
     background-size: 20px 20px;
     background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
 }
@@ -17,17 +17,20 @@
 /* ===== Resolution Badge ===== */
 .editor-resolution-badge {
     position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0, 0, 0, 0.6);
+    top: 12px;
+    left: 12px;
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     color: var(--primary);
-    padding: 5px 10px;
-    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
     pointer-events: none;
-    font-weight: bold;
-    font-size: 14px;
-    backdrop-filter: blur(4px);
-    border: 1px solid rgba(0, 212, 255, 0.3);
+    font-weight: 600;
+    font-size: var(--font-sm);
+    letter-spacing: 0.05em;
+    border: var(--glass-border);
+    box-shadow: var(--shadow-inset);
 }
 
 /* ===== Staging Overlay ===== */
@@ -38,10 +41,13 @@
     transform: translateX(-50%);
     display: flex;
     gap: 10px;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(8px);
-    padding: 10px;
-    border-radius: var(--radius-md);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    padding: 12px;
+    border-radius: var(--radius-lg);
+    border: var(--glass-border);
+    box-shadow: var(--shadow-lg), var(--shadow-inset);
     z-index: 1000;
     animation: fadeIn 0.2s ease;
 }

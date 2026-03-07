@@ -15,7 +15,7 @@
     position: relative;
     color: white;
     padding: 12px 20px;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     min-width: 280px;
     display: flex;
@@ -23,19 +23,21 @@
     align-items: center;
     pointer-events: auto;
     animation: toastSlideIn 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
-    backdrop-filter: blur(6px);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: var(--glass-border);
 }
 
 .toast--success {
-    background: linear-gradient(135deg, var(--success), var(--success-dark));
+    background: linear-gradient(135deg, rgba(42, 157, 143, 0.85), rgba(33, 134, 122, 0.85));
 }
 
 .toast--error {
-    background: linear-gradient(135deg, var(--danger), var(--danger-dark));
+    background: linear-gradient(135deg, rgba(230, 57, 70, 0.85), rgba(197, 45, 57, 0.85));
 }
 
 .toast--info {
-    background: linear-gradient(135deg, var(--info), var(--info-dark));
+    background: linear-gradient(135deg, rgba(69, 123, 157, 0.85), rgba(58, 106, 136, 0.85));
 }
 
 .toast__message {
