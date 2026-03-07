@@ -27,6 +27,26 @@ class Settings:
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
     PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
     PROMPT_TRANSFORM_PROVIDER: str = os.getenv("PROMPT_TRANSFORM_PROVIDER", "stub")
+    #_____________апдейт_______ Strict mode and merge policy
+    PROMPT_TRANSFORM_STRICT: bool = os.getenv("PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
+    PROMPT_NEGATIVE_MERGE_POLICY: str = os.getenv("PROMPT_NEGATIVE_MERGE_POLICY", "append")
+
+    #_____________апдейт_______ GGUF + LoRA LLM runtime config
+    LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", "")
+    LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", "")
+    LLM_LORA_SCALE: float = float(os.getenv("LLM_LORA_SCALE", "1.0"))
+    LLM_CTX_SIZE: int = int(os.getenv("LLM_CTX_SIZE", "4096"))
+    LLM_THREADS: int = int(os.getenv("LLM_THREADS", "6"))
+    LLM_GPU_LAYERS: int = int(os.getenv("LLM_GPU_LAYERS", "0"))
+    LLM_MAX_NEW_TOKENS: int = int(os.getenv("LLM_MAX_NEW_TOKENS", "220"))
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
+    LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    LLM_SYSTEM_PROMPT: str = os.getenv(
+        "LLM_SYSTEM_PROMPT",
+        "You are a Stable Diffusion prompt transformer. "
+        "Return ONLY strict JSON with keys: "
+        "positive_prompt (string), negative_prompt_extra (string), style_tags (array of strings).",
+    )
     
     # Generation Defaults
     DEFAULT_STEPS: int = 20

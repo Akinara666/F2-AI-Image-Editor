@@ -69,12 +69,33 @@ npm run dev
 export PROMPT_TRANSFORM_ENABLED=true
 export PROMPT_TRANSFORM_TIMEOUT_MS=1500
 export PROMPT_TRANSFORM_PROVIDER=stub
+export PROMPT_TRANSFORM_STRICT=true
+export PROMPT_NEGATIVE_MERGE_POLICY=append
 ```
 
 Полезные endpoint-ы:
 - `POST /prompt/transform` — превью трансформации промпта без запуска SD.
+- `GET /prompt/health` — статус загрузки prompt-transformer и LLM-адаптера.
 - `POST /generate` — поддерживает поля `raw_prompt` и `use_prompt_transform`.
 - Если трансформация включена и не удалась, backend вернет `422` и не запустит SD.
+
+### 4. Qwen GGUF + LoRA (runtime)
+Для провайдера `qwen_gguf` подготовлены env-параметры:
+
+```bash
+export PROMPT_TRANSFORM_PROVIDER=qwen_gguf
+export LLM_MODEL_PATH=/abs/path/to/qwen3-1.7b.gguf
+export LLM_LORA_PATH=/abs/path/to/your_adapter.gguf
+export LLM_LORA_SCALE=1.0
+export LLM_CTX_SIZE=4096
+export LLM_THREADS=6
+export LLM_GPU_LAYERS=0
+export LLM_MAX_NEW_TOKENS=220
+export LLM_TEMPERATURE=0.2
+export LLM_TOP_P=0.9
+```
+
+Примечание: для `qwen_gguf` нужен установленный `llama-cpp-python`.
 
 ## 🎮 Как пользоваться
 1.  **Навигация**: Зажмите `Пробел` и тяните мышкой для перемещения. Колесико — зум.
@@ -93,6 +114,7 @@ export PROMPT_TRANSFORM_PROVIDER=stub
 ├── backend/
 │   ├── core/
 │   │   ├── manager.py   # Model Manager (VRAM logic)
+│   │   ├── llm_adapter.py # GGUF/LoRA adapter layer
 │   │   ├── prompt_transformer.py # Prompt -> SD prompt service (LLM hook)
 │   │   └── utils.py     # Image processing helpers
 │   └── main.py          # FastAPI Endpoints

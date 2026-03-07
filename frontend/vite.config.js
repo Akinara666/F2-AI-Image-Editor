@@ -8,8 +8,10 @@ export default defineConfig({
     proxy: {
       '/generate': 'http://localhost:8000',
       '/prompt/transform': 'http://localhost:8000',
+      '/prompt/health': 'http://localhost:8000',
       '/outputs': 'http://localhost:8000',
       '/models': 'http://localhost:8000',
+      '/cancel': 'http://localhost:8000',
     }
   }
 })

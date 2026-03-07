@@ -99,6 +99,7 @@ def list_models():
 #_____________апдейт_______ Prompt transformer preview contract
 class PromptTransformPreviewRequest(BaseModel):
     prompt: str
+    negative_prompt: Optional[str] = None
     use_prompt_transform: Optional[bool] = None
 
 
@@ -108,15 +109,22 @@ async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
     result = await prompt_transformer.transform_prompt(
         raw_prompt=payload.prompt,
         use_prompt_transform=payload.use_prompt_transform,
+        context={"user_negative_prompt": payload.negative_prompt or ""},
     )
     #_____________апдейт_______ Strict validation for preview endpoint
     transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
-    if transform_required and result.transform_status != "success":
+    if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status != "success":
         raise HTTPException(
             status_code=422,
             detail=f"Prompt was not transformed. status={result.transform_status}",
         )
     return {"status": "success", "data": result.to_dict()}
+
+
+#_____________апдейт_______ Prompt transformer health endpoint
+@app.get("/prompt/health")
+def prompt_transform_health():
+    return {"status": "success", "data": prompt_transformer.health()}
 
 
 @app.post("/generate")
@@ -152,9 +160,11 @@ async def generate_image(
             context={
                 "mode": mode,
                 "model_id": model_id,
+                "user_negative_prompt": negative_prompt,
             },
         )
         final_prompt = transform_result.transformed_prompt
+        final_negative_prompt = transform_result.transformed_negative_prompt
         logger.info(
             "Prompt transform status=%s provider=%s latency_ms=%s",
             transform_result.transform_status,
@@ -163,11 +173,15 @@ async def generate_image(
         )
         #_____________апдейт_______ Strict transform gate (no SD run on failed transform)
         transform_required = settings.PROMPT_TRANSFORM_ENABLED if use_prompt_transform is None else use_prompt_transform
-        if transform_required and transform_result.transform_status != "success":
+        if transform_required and settings.PROMPT_TRANSFORM_STRICT and transform_result.transform_status != "success":
             detail = f"Prompt was not transformed. status={transform_result.transform_status}"
             if transform_result.error:
                 detail = f"{detail}. error={transform_result.error}"
             raise HTTPException(status_code=422, detail=detail)
+        #_____________апдейт_______ Non-strict fallback still preserves SD run
+        if transform_result.transform_status != "success":
+            final_prompt = source_prompt
+            final_negative_prompt = negative_prompt
 
         # 0. Apply Preset
         if style_preset and style_preset in STYLE_PRESETS:
@@ -263,7 +277,7 @@ async def generate_image(
             result = await asyncio.to_thread(
                 pipe,
                 prompt=final_prompt,
-                negative_prompt=negative_prompt,
+                negative_prompt=final_negative_prompt,
                 width=width,
                 height=height,
                 num_inference_steps=steps,
@@ -282,7 +296,7 @@ async def generate_image(
             result = await asyncio.to_thread(
                 pipe,
                 prompt=final_prompt,
-                negative_prompt=negative_prompt,
+                negative_prompt=final_negative_prompt,
                 image=image_input,
                 num_inference_steps=steps,
                 guidance_scale=cfg,
@@ -315,7 +329,7 @@ async def generate_image(
             result = await asyncio.to_thread(
                 pipe,
                 prompt=final_prompt,
-                negative_prompt=negative_prompt,
+                negative_prompt=final_negative_prompt,
                 image=image_input,
                 mask_image=hard_mask_input,
                 width=width,
@@ -350,7 +364,8 @@ async def generate_image(
             # Metadata dict
             meta = {
                 "prompt": final_prompt,
-                "negative_prompt": negative_prompt,
+                "negative_prompt": final_negative_prompt,
+                "raw_negative_prompt": negative_prompt,
                 "seed": seed,
                 "steps": steps,
                 "cfg": cfg,
@@ -359,9 +374,11 @@ async def generate_image(
                 #_____________апдейт_______ Prompt transformation trace
                 "raw_prompt": transform_result.raw_prompt,
                 "transformed_prompt": transform_result.transformed_prompt,
+                "transformed_negative_prompt": transform_result.transformed_negative_prompt,
                 "prompt_transform_status": transform_result.transform_status,
                 "prompt_transform_provider": transform_result.provider,
                 "prompt_transform_latency_ms": transform_result.latency_ms,
+                "prompt_transform_strict": settings.PROMPT_TRANSFORM_STRICT,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
