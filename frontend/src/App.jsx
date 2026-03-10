@@ -186,6 +186,9 @@ function App() {
         onUndo={() => editorRef.current?.undo()}
         onClear={() => editorRef.current?.clearAll()}
         editorRef={editorRef}
+        showToastError={showError}
+        showToastSuccess={showSuccess}
+        showToastInfo={showInfo}
       />
       <div className="editor-wrapper">
         <Editor
