@@ -20,7 +20,6 @@ function App() {
     denoising_strength: 0.75,
     mask_blur: 4,
     mask_padding: 32,
-    use_prompt_transform: true,
     model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
     sampler: AVAILABLE_SAMPLERS[0],
     frame_size_index: 0
@@ -84,7 +83,7 @@ function App() {
       const formData = new FormData();
       formData.append('prompt', params.prompt);
       formData.append('raw_prompt', params.prompt);
-      formData.append('use_prompt_transform', String(params.use_prompt_transform));
+      formData.append('use_prompt_transform', 'false');
       formData.append('negative_prompt', params.negative_prompt);
       formData.append('seed', params.seed);
       formData.append('steps', params.steps);
