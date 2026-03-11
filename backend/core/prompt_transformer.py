@@ -180,6 +180,11 @@ class PromptTransformer:
                 latency_ms=latency_ms,
                 error=str(exc),
             )
+        finally:
+            try:
+                self.adapter.unload()
+            except Exception as e:
+                self.logger.warning("Failed to unload adapter: %s", e)
 
     #_____________апдейт_______ Health for operational checks
     def health(self) -> dict[str, Any]:

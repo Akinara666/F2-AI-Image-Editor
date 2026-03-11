@@ -14,6 +14,9 @@ class BasePromptLLMAdapter:
     def health(self) -> dict[str, Any]:
         return {"status": "ok", "adapter": self.__class__.__name__}
 
+    def unload(self) -> None:
+        pass
+
 
 #_____________апдейт_______ Safe deterministic adapter used by default
 class StubPromptLLMAdapter(BasePromptLLMAdapter):
@@ -157,6 +160,15 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             "n_ctx": self.n_ctx,
             "n_gpu_layers": self.n_gpu_layers,
         }
+
+    def unload(self) -> None:
+        with self._load_lock:
+            if self._llm is not None:
+                self.logger.info("Unloading Qwen GGUF model from memory.")
+                del self._llm
+                self._llm = None
+        import gc
+        gc.collect()
 
 
 #_____________апдейт_______ Provider factory

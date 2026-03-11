@@ -1,5 +1,6 @@
-import React from 'react';
-import { AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from '../constants';
+import React, { useState } from 'react';
+import axios from 'axios';
+import { AVAILABLE_SAMPLERS, AVAILABLE_SIZES, API_ENDPOINTS } from '../constants';
 import './Sidebar.css';
 
 const Sidebar = ({
@@ -9,8 +10,10 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
-    onUndo, onClear, editorRef
+    onUndo, onClear, editorRef,
+    showToastError, showToastSuccess, showToastInfo
 }) => {
+    const [isTransformingPrompt, setIsTransformingPrompt] = useState(false);
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
@@ -30,6 +33,38 @@ const Sidebar = ({
                 ...prev,
                 [name]: type === 'number' ? parseFloat(value) : value
             }));
+        }
+    };
+
+    const handleTransformPrompt = async () => {
+        if (!params.prompt.trim()) return;
+
+        setIsTransformingPrompt(true);
+        try {
+            const response = await axios.post(API_ENDPOINTS.PROMPT_TRANSFORM, {
+                prompt: params.prompt,
+                negative_prompt: params.negative_prompt,
+                use_prompt_transform: true
+            });
+
+            if (response.data.status === 'success') {
+                const result = response.data.data;
+                setParams(prev => ({
+                    ...prev,
+                    prompt: result.transformed_prompt || prev.prompt,
+                    negative_prompt: result.transformed_negative_prompt || prev.negative_prompt
+                }));
+                showToastSuccess("Prompt improved successfully!");
+                if (result.transform_status && result.transform_status !== 'disabled') {
+                    showToastInfo(`Transformer: ${result.provider} (${result.latency_ms}ms)`);
+                }
+            }
+        } catch (e) {
+            console.error("Prompt transform failed", e);
+            const errorMsg = e.response?.data?.detail || e.message;
+            showToastError(`Transform failed: ${errorMsg}`);
+        } finally {
+            setIsTransformingPrompt(false);
         }
     };
 
@@ -86,7 +121,17 @@ const Sidebar = ({
 
                 {/* Prompt */}
                 <div className="input-group">
-                    <label className="input-label">Prompt</label>
+                    <div className="sidebar__prompt-header">
+                        <label className="input-label">Prompt</label>
+                        <button
+                            className="btn sidebar__sparkle-btn"
+                            onClick={handleTransformPrompt}
+                            disabled={isTransformingPrompt || !params.prompt.trim()}
+                            title="Improve with AI"
+                        >
+                            {isTransformingPrompt ? '⌛' : '✨'}
+                        </button>
+                    </div>
                     <textarea
                         name="prompt"
                         className="input-field sidebar__prompt-field"
@@ -95,17 +140,6 @@ const Sidebar = ({
                     />
                 </div>
 
-                <div className="input-group">
-                    <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <input
-                            type="checkbox"
-                            checked={!!params.use_prompt_transform}
-                            onChange={(e) => setParams(prev => ({ ...prev, use_prompt_transform: e.target.checked }))}
-                        />
-                        Use Prompt Transformer
-                    </label>
-                    <small className="sidebar__hint">Преобразует естественный язык в SD-стиль перед генерацией.</small>
-                </div>
 
                 {/* Negative Prompt */}
                 <div className="input-group">
