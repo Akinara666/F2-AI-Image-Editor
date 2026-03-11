@@ -396,7 +396,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             const left = genFrame.left;
             const top = genFrame.top;
 
-            fabric.Image.fromURL(url, (img) => {
+            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+            fabric.Image.fromURL(`${API_BASE_URL}${url}`, (img) => {
                 // Calculate scale to fit the frame exactly
                 const displayWidth = genFrame.width * genFrame.scaleX;
                 const displayHeight = genFrame.height * genFrame.scaleY;

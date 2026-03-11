@@ -31,7 +31,7 @@ const HistoryPanel = ({ history, onSelect }) => {
                     >
                         <div className="history-panel__thumb">
                             <img
-                                src={item.url}
+                                src={`${import.meta.env.VITE_API_BASE_URL || ""}${item.url}`}
                                 alt={item.meta.prompt}
                                 loading="lazy"
                             />

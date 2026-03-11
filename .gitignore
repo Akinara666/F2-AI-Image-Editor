@@ -12,3 +12,5 @@ backend/static/outputs/
 
 # Models (large files)
 backend/models/
+
+.env

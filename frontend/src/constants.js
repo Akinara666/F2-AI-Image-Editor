@@ -9,13 +9,15 @@ export const CANVAS_DEFAULTS = {
     DEFAULT_HEIGHT: 512
 };
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+
 export const API_ENDPOINTS = {
-    GENERATE: '/generate',
-    PROMPT_TRANSFORM: '/prompt/transform',
-    PROMPT_HEALTH: '/prompt/health',
-    HEALTH: '/health',
-    CANCEL: '/cancel',
-    MODELS: '/models'
+    GENERATE: `${API_BASE_URL}/generate`,
+    PROMPT_TRANSFORM: `${API_BASE_URL}/prompt/transform`,
+    PROMPT_HEALTH: `${API_BASE_URL}/prompt/health`,
+    HEALTH: `${API_BASE_URL}/health`,
+    CANCEL: `${API_BASE_URL}/cancel`,
+    MODELS: `${API_BASE_URL}/models`
 };
 
 // Initial placeholder shown while fetching the real list from the backend
