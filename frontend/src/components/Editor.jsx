@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
 import { fabric } from 'fabric';
 import { mergeCanvasLayers, exportCanvasState, enforceCanvasLayerOrder } from '../utils/canvasLogic';
-import { CANVAS_DEFAULTS } from '../constants';
+import { CANVAS_DEFAULTS, resolveApiUrl } from '../constants';
 import './Editor.css';
 
 const MAX_UNDO_STEPS = 50;
@@ -383,7 +383,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         },
 
         // Add Result (Staging Phase)
-        addGeneratedImage: (url) => {
+        addGeneratedImage: async (url) => {
             if (!fabricCanvas || !genFrame) return;
 
             // If there is already a candidate, remove it (replace mode)
@@ -395,37 +395,55 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             // Get frame position
             const left = genFrame.left;
             const top = genFrame.top;
+            const imageUrl = resolveApiUrl(url);
+            const response = await fetch(imageUrl, { mode: 'cors' });
+            if (!response.ok) {
+                throw new Error(`Failed to load generated image: ${response.status}`);
+            }
+            const imageBlob = await response.blob();
+            const objectUrl = URL.createObjectURL(imageBlob);
 
-            const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
-            fabric.Image.fromURL(`${API_BASE_URL}${url}`, (img) => {
-                // Calculate scale to fit the frame exactly
-                const displayWidth = genFrame.width * genFrame.scaleX;
-                const displayHeight = genFrame.height * genFrame.scaleY;
+            try {
+                await new Promise((resolve, reject) => {
+                    fabric.Image.fromURL(objectUrl, (img) => {
+                        if (!img) {
+                            reject(new Error('Failed to decode generated image.'));
+                            return;
+                        }
 
-                const scaleX = displayWidth / img.width;
-                const scaleY = displayHeight / img.height;
+                        // Calculate scale to fit the frame exactly
+                        const displayWidth = genFrame.width * genFrame.scaleX;
+                        const displayHeight = genFrame.height * genFrame.scaleY;
 
-                img.set({
-                    left: left,
-                    top: top,
-                    scaleX: scaleX, // Computed to fit exactly
-                    scaleY: scaleY,
-                    selectable: false, // Not selectable yet
-                    evented: false,
-                    isCandidate: true, // Tag as candidate
-                    stroke: CANVAS_DEFAULTS.CANDIDATE_BORDER_COLOR, // Green border to indicate "Pending"
-                    strokeWidth: 4,
+                        const scaleX = displayWidth / img.width;
+                        const scaleY = displayHeight / img.height;
+
+                        img.set({
+                            left: left,
+                            top: top,
+                            scaleX: scaleX, // Computed to fit exactly
+                            scaleY: scaleY,
+                            selectable: false, // Not selectable yet
+                            evented: false,
+                            isCandidate: true, // Tag as candidate
+                            stroke: CANVAS_DEFAULTS.CANDIDATE_BORDER_COLOR, // Green border to indicate "Pending"
+                            strokeWidth: 4,
+                        });
+
+                        fabricCanvas.add(img);
+                        enforceCanvasLayerOrder(fabricCanvas, genFrame);
+
+                        fabricCanvas.requestRenderAll();
+
+                        // Set State to trigger UI
+                        setCandidate(img);
+                        setCandidateUrl(url);
+                        resolve();
+                    }, { crossOrigin: 'anonymous' });
                 });
-
-                fabricCanvas.add(img);
-                enforceCanvasLayerOrder(fabricCanvas, genFrame);
-
-                fabricCanvas.requestRenderAll();
-
-                // Set State to trigger UI
-                setCandidate(img);
-                setCandidateUrl(url);
-            });
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
         },
 
         // Staging Actions

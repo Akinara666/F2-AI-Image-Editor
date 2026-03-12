@@ -14,3 +14,4 @@ backend/static/outputs/
 backend/models/
 
 .env
+.vite

@@ -61,6 +61,20 @@ class Settings:
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
     MAX_CACHED_MODELS: int = 2    # Max pipelines kept in RAM (LRU eviction)
 
+    # CORS
+    CORS_ALLOW_ORIGINS: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ALLOW_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ]
+    CORS_ALLOW_ORIGIN_REGEX: str = os.getenv(
+        "CORS_ALLOW_ORIGIN_REGEX",
+        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    )
+
     def __init__(self):
         # Ensure output directory exists
         self.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

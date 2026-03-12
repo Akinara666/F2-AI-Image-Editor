@@ -121,7 +121,7 @@ function App() {
           showInfo(`Prompt transformer: ${response.data.meta.prompt_transform_status}`);
         }
         // 4. Add to Canvas
-        editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.addGeneratedImage(response.data.url);
 
         // 5. Add to History
         const newHistoryItem = {

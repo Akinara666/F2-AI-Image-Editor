@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import os
@@ -33,6 +34,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Local AI Gen Service", version="0.1.0")
+
+allow_all_origins = "*" in settings.CORS_ALLOW_ORIGINS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if allow_all_origins else settings.CORS_ALLOW_ORIGINS,
+    allow_origin_regex=None if allow_all_origins else settings.CORS_ALLOW_ORIGIN_REGEX,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount static folder for outputs
 app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")

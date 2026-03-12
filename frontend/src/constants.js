@@ -11,6 +11,16 @@ export const CANVAS_DEFAULTS = {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
+export const resolveApiUrl = (path = "") => {
+    if (!path) {
+        return API_BASE_URL;
+    }
+    if (/^https?:\/\//i.test(path)) {
+        return path;
+    }
+    return `${API_BASE_URL}${path}`;
+};
+
 export const API_ENDPOINTS = {
     GENERATE: `${API_BASE_URL}/generate`,
     PROMPT_TRANSFORM: `${API_BASE_URL}/prompt/transform`,

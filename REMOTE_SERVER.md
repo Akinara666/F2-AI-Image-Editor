@@ -1,114 +1,206 @@
-# Инструкция: Запуск Backend (API) на удаленном сервере с GPU
+# Инструкция: Backend на удаленном сервере
 
-Эта инструкция описывает, как арендовать сервер с мощной видеокартой (например, RTX 4090), запустить на нем генерацию Stable Diffusion и LLM, а **пользоваться интерфейсом (React Frontend) со своего личного компьютера или ноутбука**.
+Этот документ описывает два рабочих сценария:
 
-Для этого мы используем безопасный **SSH-туннель**. Вам не придется открывать порты наружу или менять код фронтенда — ваш локальный компьютер будет думать, что видеокарта стоит прямо в нем!
+1. `SSH`-туннель между вашим ПК и удалённым backend.
+2. Публичный `https://` URL через `cloudflared` или `ngrok`.
 
----
+Если используете `SSH`-туннель, CORS обычно не нужен: браузер видит `localhost:8000`.
+Если используете публичный URL (`trycloudflare.com`, `ngrok-free.app`), CORS обязателен.
 
-## Шаг 1: Подготовка удаленного сервера (GPU)
+## Где лежат env-переменные
 
-### Вариант А: Обычный Linux-сервер (VPS)
-1. **Арендуйте сервер** (Ubuntu/Linux) с установленными драйверами NVIDIA и CUDA.
-2. Подключитесь к серверу по SSH:
-   ```bash
-   ssh root@<IP_АДРЕС_СЕРВЕРА>
-   ```
+- `backend/.env`
+  Backend читает его через `python-dotenv`.
+- `frontend/.env`
+  Vite читает его при запуске фронтенда.
 
-### Вариант Б: Аренда на Vast.ai (самый дешевый GPU)
-1. Зарегистрируйтесь на **[vast.ai](https://vast.ai/)** и пополните баланс.
-2. Перейдите в **Templates** и выберите базовый образ Pytorch (например, `pytorch/pytorch:latest`).
-3. В настройках инстанса (Edit Image & Config) укажите минимальный размер диска **40-50 ГБ**.
-4. Запустите подходящую машину с RTX 3090/4090 и перейдите во вкладку **Instances**.
-5. Нажмите кнопку **>_ Connect**. Скопируйте данные для подключения (там будет указан нестандартный порт, например `-p 12345`). Подключитесь по SSH:
-   ```bash
-   ssh -p <PORT_С_VAST> root@<IP_С_VAST> 
-   ```
+Новые переменные для удалённого сценария:
 
-### Дальнейшая настройка (общая)
-1. **Скопируйте код проекта** на сервер (папку `backend` и нужные модели).
-4. Настройте окружение и установите зависимости:
-   ```bash
-   cd path/to/working-title-psd2/backend
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-5. **Настройте переменные окружения** (особенно если используете локальную LLM):
-   Скопируйте шаблон настроек:
-   ```bash
-   cp .env.example .env
-   ```
-   *Отредактируйте `.env` при необходимости (например, включите реальную модель Qwen).*
+- `backend/.env`: `CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGIN_REGEX`
+- `frontend/.env`: `VITE_API_BASE_URL`
 
-6. **Запустите Backend**:
-   ```bash
-   python -m uvicorn main:app --port 8000
-   ```
-   *Важно: Сервер запустится на `127.0.0.1:8000` (localhost). Это безопасно, так как никто из интернета к нему не подключится напрямую.*
+Их можно задать и через `export`, но для постоянной конфигурации лучше хранить в `.env`.
 
 ---
 
-## Шаг 2: Проброс порта (SSH Туннель) на вашем ПК
+## Шаг 1: Подготовка удаленного сервера
 
-Теперь нужно связать порт 8000 на вашем домашнем компьютере с портом 8000 на арендованном сервере.
+### Вариант А: обычный Linux/VPS
 
-1. **Откройте новый терминал на ВАШЕМ компьютере** (не на сервере!).
-2. Выполните команду проброса:
-   ```bash
-   ssh -N -f -L 8000:localhost:8000 root@<IP_АДРЕС_СЕРВЕРА>
-   ```
-   *(Флаги `-N -f` заставят туннель тихо работать в фоне).*
-
-Если вы используете **Vast.ai** (где всегда выдается нестандартный порт), ваша команда будет выглядеть так:
 ```bash
-ssh -N -f -L 8000:localhost:8000 -p <ПОРТ_С_VAST> root@<IP_С_VAST>
+ssh root@<IP_АДРЕС_СЕРВЕРА>
 ```
 
+### Вариант Б: Vast.ai
+
+```bash
+ssh -p <PORT_С_VAST> root@<IP_С_VAST>
+```
+
+### Настройка backend на сервере
+
+```bash
+cd path/to/working-title-psd2/backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+После этого отредактируйте `backend/.env`.
+
+Минимум для обычного запуска:
+
+```env
+USE_CUDA=true
+DEFAULT_MODEL_ID=runwayml/stable-diffusion-v1-5
+```
+
+Если backend будет доступен через публичный URL, добавьте CORS:
+
+```env
+CORS_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
+```
+
+Запуск:
+
+```bash
+venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Важно: backend должен слушать `127.0.0.1:8000`, а не внешний интерфейс.
+
 ---
 
-## Шаг 3: Запуск Frontend на вашем ПК
+## Сценарий A: SSH-туннель
 
-Теперь ваш интерфейс может работать так же, как обычно.
+Это предпочтительный вариант.
 
-1. **В терминале на ВАШЕМ компьютере** перейдите в папку фронтенда:
-   ```bash
-   cd path/to/working-title-psd2/frontend
-   ```
-2. Установите зависимости (если еще не сделали этого) и запустите:
-   ```bash
-   npm install
-   npm run dev
-   ```
-3. Откройте в браузере `http://localhost:5173`.
+### На вашем ПК
 
-**🎉 Готово!** 
-Когда вы нажимаете кнопку **"GENERATE"** или **"✨ Improve Prompt"**, ваш браузер отправляет запрос на `localhost:8000`. Этот запрос по зашифрованному SSH-туннелю моментально улетает на арендованный сервер, обрабатывается там на RTX 4090, и результат прилетает обратно на ваш экран.
+```bash
+ssh -N -f -L 8000:127.0.0.1:8000 root@<IP_АДРЕС_СЕРВЕРА>
+```
 
-### Альтернатива: Публичный URL (без SSH-туннеля)
+Для Vast.ai:
 
-Если вариант с туннелем вам не подходит, либо вы находитесь в **корпоративной/университетской сети** со строгими правилами и закрытым SSH (порт 22), используйте сервисы туннелирования. Они создают публичную `https://` ссылку, пробивающую любые firewall-ы.
+```bash
+ssh -N -f -L 8000:127.0.0.1:8000 -p <PORT_С_VAST> root@<IP_С_VAST>
+```
 
-#### Вариант А: Ngrok (Самый быстрый)
-1. На арендованном сервере установите Ngrok и запустите:
-   ```bash
-   ngrok http 8000
-   ```
-2. Ngrok выдаст вам временный URL, например: `https://a1b2c3d4.ngrok-free.app`
+### Настройка frontend
 
-#### Вариант Б: Cloudflare Tunnels (Бесплатно, надежно, без лимитов)
-1. На арендованном сервере установите `cloudflared`.
-2. Запустите временный туннель:
-   ```bash
-   cloudflared tunnel --url http://127.0.0.1:8000
-   ```
-3. Cloudflare выдаст ссылку вида `https://random-words.trycloudflare.com`.
+В `frontend/.env`:
 
-#### Настройка Frontend
-После получения временной `https://` ссылки от Ngrok или Cloudflare:
+```env
+VITE_API_BASE_URL=http://localhost:8000
+```
 
-1. **На вашем ПК (в папке frontend)**: Откройте (или создайте) файл `.env` и впишите туда вашу ссылку:
-   ```env
-   VITE_API_BASE_URL=https://random-words.trycloudflare.com
-   ```
-2. Запустите `npm run dev` на своем компьютере.
+Дальше:
+
+```bash
+cd path/to/working-title-psd2/frontend
+npm install
+npm run dev
+```
+
+Откройте `http://localhost:5173`.
+
+В этом сценарии CORS обычно не нужен.
+
+---
+
+## Сценарий B: публичный URL через туннель
+
+Используйте этот вариант, если `SSH` недоступен или неудобен.
+
+### Cloudflare Tunnel
+
+На сервере:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+
+Вы получите URL вида:
+
+```text
+https://random-words.trycloudflare.com
+```
+
+### Ngrok
+
+На сервере:
+
+```bash
+ngrok http 8000
+```
+
+Вы получите URL вида:
+
+```text
+https://a1b2c3d4.ngrok-free.app
+```
+
+### Настройка frontend
+
+На вашем ПК в `frontend/.env`:
+
+```env
+VITE_API_BASE_URL=https://random-words.trycloudflare.com
+```
+
+Потом:
+
+```bash
+cd path/to/working-title-psd2/frontend
+npm run dev
+```
+
+### Настройка backend
+
+На сервере в `backend/.env`:
+
+```env
+CORS_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
+```
+
+Затем перезапустите backend.
+
+Без этих переменных браузер будет блокировать:
+
+- `POST /generate`
+- `GET /models`
+- `POST /prompt/transform`
+- загрузку картинок из `/outputs/...`
+
+---
+
+## Почему раньше ломалось
+
+Проблема была из двух частей:
+
+1. Backend не отдавал CORS-заголовки, когда фронтенд на `http://localhost:5173` ходил на `https://...trycloudflare.com`.
+2. После первой генерации Fabric загружал картинку с другого origin, и canvas становился `tainted`, из-за чего второй `GENERATE` падал на чтении пикселей.
+
+Сейчас код учитывает оба случая:
+
+- backend умеет CORS для `localhost`
+- frontend загружает результат генерации CORS-safe способом
+
+---
+
+## Краткая схема
+
+`SSH`-туннель:
+
+- `backend/.env`: без обязательного CORS
+- `frontend/.env`: `VITE_API_BASE_URL=http://localhost:8000`
+
+Публичный URL:
+
+- `backend/.env`: добавить `CORS_ALLOW_ORIGINS` и `CORS_ALLOW_ORIGIN_REGEX`
+- `frontend/.env`: `VITE_API_BASE_URL=https://...`

@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveApiUrl } from '../constants';
 import './HistoryPanel.css';
 
 const HistoryPanel = ({ history, onSelect }) => {
@@ -31,9 +32,10 @@ const HistoryPanel = ({ history, onSelect }) => {
                     >
                         <div className="history-panel__thumb">
                             <img
-                                src={`${import.meta.env.VITE_API_BASE_URL || ""}${item.url}`}
+                                src={resolveApiUrl(item.url)}
                                 alt={item.meta.prompt}
                                 loading="lazy"
+                                crossOrigin="anonymous"
                             />
                         </div>
                         <div className="history-panel__meta">

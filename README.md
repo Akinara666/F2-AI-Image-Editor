@@ -108,6 +108,9 @@ export LLM_TOP_P=0.9
     *   Нажмите **GENERATE** еще раз, чтобы заменить вариант, или **ACCEPT**, чтобы вклеить его в холст.
     *   Нажмите **DISCARD**, чтобы удалить.
 
+## Удаленный сервер
+Сценарии с `SSH`-туннелем, `trycloudflare.com`, `ngrok` и настройкой `CORS_ALLOW_ORIGINS` / `VITE_API_BASE_URL` описаны в `REMOTE_SERVER.md`.
+
 ## 📂 Структура проекта
 ```
 .
