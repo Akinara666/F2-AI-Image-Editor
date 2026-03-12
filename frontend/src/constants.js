@@ -9,6 +9,15 @@ export const CANVAS_DEFAULTS = {
     DEFAULT_HEIGHT: 512
 };
 
+export const CANVAS_OBJECT_ROLES = {
+    FRAME_HIT_AREA: 'frame-hit-area',
+    BASE: 'base',
+    CANDIDATE: 'candidate',
+    SKETCH: 'sketch',
+    MASK: 'mask',
+    FRAME: 'frame'
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 export const resolveApiUrl = (path = "") => {
