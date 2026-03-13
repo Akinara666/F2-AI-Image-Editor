@@ -35,8 +35,8 @@ class Settings:
     PROMPT_NEGATIVE_MERGE_POLICY: str = os.getenv("PROMPT_NEGATIVE_MERGE_POLICY", "append")
 
     #_____________апдейт_______ GGUF + LoRA LLM runtime config
-    LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", "")
-    LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", "")
+    LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", str(BASE_DIR / "models" / "llm" / "model.gguf"))
+    LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", str(BASE_DIR / "models" / "llm" / "adapter.gguf"))
     LLM_LORA_SCALE: float = float(os.getenv("LLM_LORA_SCALE", "1.0"))
     LLM_CTX_SIZE: int = int(os.getenv("LLM_CTX_SIZE", "4096"))
     LLM_THREADS: int = int(os.getenv("LLM_THREADS", "6"))

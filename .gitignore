@@ -10,8 +10,5 @@ __pycache__/
 # Generated outputs
 backend/static/outputs/
 
-# Models (large files)
-backend/models/
-
 .env
 .vite

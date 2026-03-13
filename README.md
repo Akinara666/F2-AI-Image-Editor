@@ -84,8 +84,8 @@ export PROMPT_NEGATIVE_MERGE_POLICY=append
 
 ```bash
 export PROMPT_TRANSFORM_PROVIDER=qwen_gguf
-export LLM_MODEL_PATH=/abs/path/to/qwen3-1.7b.gguf
-export LLM_LORA_PATH=/abs/path/to/your_adapter.gguf
+export LLM_MODEL_PATH=./backend/models/llm/model.gguf
+export LLM_LORA_PATH=./backend/models/llm/adapter.gguf
 export LLM_LORA_SCALE=1.0
 export LLM_CTX_SIZE=4096
 export LLM_THREADS=6
