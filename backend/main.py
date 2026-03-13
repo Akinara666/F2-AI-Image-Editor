@@ -2,9 +2,10 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-import os
 import random
 from typing import Optional
+from pathlib import Path
+import math
 import uvicorn
 import io
 import asyncio
@@ -60,9 +61,160 @@ async def global_exception_handler(request: Request, exc: Exception):
 # --- Presets & configuration ---
 # Imports from core.config
 
-def clamp_int(value: int, low: int, high: int) -> int:
-    """Clamp an integer value to [low, high]."""
-    return max(low, min(high, int(value)))
+ALLOWED_CLOUD_MODELS = [
+    {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)"},
+    {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)"},
+    {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)"},
+]
+ALLOWED_SAMPLERS = {
+    "Euler a",
+    "Euler",
+    "DPM++ 2M Karras",
+    "DPM++ 2S a Karras",
+    "DPM++ SDE Karras",
+    "DPM2 a Karras",
+    "DDIM",
+    "DDPM",
+    "Heun",
+    "UniPC",
+    "LMS",
+}
+ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
+LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
+MIN_DIMENSION = 64
+MAX_DIMENSION = 2048
+MAX_GENERATION_PIXELS = 1024 * 1024
+DIMENSION_MULTIPLE = 8
+MIN_STEPS = 1
+MAX_STEPS = 150
+MIN_CFG = 1.0
+MAX_CFG = 20.0
+MIN_DENOISING_STRENGTH = 0.0
+MAX_DENOISING_STRENGTH = 1.0
+MIN_SEED = -1
+MAX_SEED = (2**32) - 1
+MIN_MASK_BLUR = 0
+MAX_MASK_BLUR = 64
+MIN_MASK_PADDING = 0
+MAX_MASK_PADDING = 128
+
+
+def _validation_error(detail: str) -> HTTPException:
+    return HTTPException(status_code=422, detail=detail)
+
+
+def _get_local_model_entries() -> list[dict[str, str]]:
+    models_dir = settings.MODELS_DIR
+    if not models_dir.exists():
+        return []
+
+    resolved_models_dir = models_dir.resolve()
+    entries: list[dict[str, str]] = []
+    try:
+        for file in sorted(models_dir.iterdir()):
+            if not file.is_file() or file.suffix.lower() not in LOCAL_MODEL_SUFFIXES:
+                continue
+
+            resolved_file = file.resolve()
+            if resolved_file.parent != resolved_models_dir:
+                logger.warning("Skipping local model outside MODELS_DIR: %s", resolved_file)
+                continue
+
+            entries.append({"id": str(resolved_file), "label": f"{resolved_file.name} (Local)"})
+    except Exception as e:
+        logger.error(f"Failed to scan models directory: {e}")
+
+    return entries
+
+
+def _get_allowed_model_map() -> dict[str, str]:
+    entries = ALLOWED_CLOUD_MODELS + _get_local_model_entries()
+    return {entry["id"]: entry["label"] for entry in entries}
+
+
+def _validate_int_field(name: str, value: int, low: int, high: int) -> int:
+    if value < low or value > high:
+        raise _validation_error(f"{name} must be between {low} and {high}.")
+    return value
+
+
+def _validate_float_field(name: str, value: float, low: float, high: float) -> float:
+    if not math.isfinite(value):
+        raise _validation_error(f"{name} must be a finite number.")
+    if value < low or value > high:
+        raise _validation_error(f"{name} must be between {low} and {high}.")
+    return value
+
+
+def _validate_dimension(name: str, value: int) -> int:
+    _validate_int_field(name, value, MIN_DIMENSION, MAX_DIMENSION)
+    if value % DIMENSION_MULTIPLE != 0:
+        raise _validation_error(f"{name} must be a multiple of {DIMENSION_MULTIPLE}.")
+    return value
+
+
+def _validate_generation_inputs(
+    *,
+    width: int,
+    height: int,
+    steps: int,
+    cfg: float,
+    seed: int,
+    model_id: str,
+    sampler: str,
+    mode: str,
+    style_preset: Optional[str],
+    denoising_strength: float,
+    mask_blur: int,
+    mask_padding: int,
+) -> dict[str, object]:
+    width = _validate_dimension("width", width)
+    height = _validate_dimension("height", height)
+    if width * height > MAX_GENERATION_PIXELS:
+        raise _validation_error(
+            f"Requested image area {width}x{height} exceeds limit of {MAX_GENERATION_PIXELS} pixels."
+        )
+
+    steps = _validate_int_field("steps", steps, MIN_STEPS, MAX_STEPS)
+    seed = _validate_int_field("seed", seed, MIN_SEED, MAX_SEED)
+    cfg = _validate_float_field("cfg", cfg, MIN_CFG, MAX_CFG)
+    denoising_strength = _validate_float_field(
+        "denoising_strength",
+        denoising_strength,
+        MIN_DENOISING_STRENGTH,
+        MAX_DENOISING_STRENGTH,
+    )
+    mask_blur = _validate_int_field("mask_blur", mask_blur, MIN_MASK_BLUR, MAX_MASK_BLUR)
+    mask_padding = _validate_int_field("mask_padding", mask_padding, MIN_MASK_PADDING, MAX_MASK_PADDING)
+
+    if sampler not in ALLOWED_SAMPLERS:
+        raise _validation_error(f"Unsupported sampler: {sampler}")
+
+    if mode not in ALLOWED_GENERATION_MODES:
+        raise _validation_error(f"Unsupported mode: {mode}")
+
+    if style_preset and style_preset not in STYLE_PRESETS:
+        raise _validation_error(f"Unsupported style_preset: {style_preset}")
+
+    allowed_models = _get_allowed_model_map()
+    normalized_model_id = str(Path(model_id).resolve()) if model_id not in allowed_models and Path(model_id).is_absolute() else model_id
+    if normalized_model_id not in allowed_models:
+        raise _validation_error("Unsupported model_id.")
+
+    return {
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg": cfg,
+        "seed": seed,
+        "model_id": normalized_model_id,
+        "sampler": sampler,
+        "mode": mode,
+        "style_preset": style_preset,
+        "denoising_strength": denoising_strength,
+        "mask_blur": mask_blur,
+        "mask_padding": mask_padding,
+    }
 
 # --- Endpoints ---
 
@@ -87,25 +239,7 @@ def read_root():
 
 @app.get("/models")
 def list_models():
-    # Base cloud models
-    models = [
-        {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)"},
-        {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)"},
-        {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)"}
-    ]
-    
-    # Scan local directory
-    models_dir = settings.MODELS_DIR
-    if models_dir.exists():
-        try:
-            for file in os.listdir(models_dir):
-                if file.endswith(".safetensors") or file.endswith(".ckpt"):
-                    abs_path = str(models_dir / file)
-                    models.append({"id": abs_path, "label": f"{file} (Local)"})
-        except Exception as e:
-            logger.error(f"Failed to scan models directory: {e}")
-                
-    return {"models": models}
+    return {"models": ALLOWED_CLOUD_MODELS + _get_local_model_entries()}
 
 
 #_____________апдейт_______ Prompt transformer preview contract
@@ -163,6 +297,32 @@ async def generate_image(
 ):
     try:
         request_id = (request_id or "").strip() or uuid.uuid4().hex
+        validated = _validate_generation_inputs(
+            width=width,
+            height=height,
+            steps=steps,
+            cfg=cfg,
+            seed=seed,
+            model_id=model_id,
+            sampler=sampler,
+            mode=mode,
+            style_preset=style_preset,
+            denoising_strength=denoising_strength,
+            mask_blur=mask_blur,
+            mask_padding=mask_padding,
+        )
+        width = validated["width"]
+        height = validated["height"]
+        steps = validated["steps"]
+        cfg = validated["cfg"]
+        seed = validated["seed"]
+        model_id = validated["model_id"]
+        sampler = validated["sampler"]
+        mode = validated["mode"]
+        style_preset = validated["style_preset"]
+        denoising_strength = validated["denoising_strength"]
+        mask_blur = validated["mask_blur"]
+        mask_padding = validated["mask_padding"]
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
         source_prompt = raw_prompt.strip() if raw_prompt and raw_prompt.strip() else prompt
@@ -196,8 +356,8 @@ async def generate_image(
             final_negative_prompt = negative_prompt
 
         # 0. Apply Preset
-        if style_preset and style_preset in STYLE_PRESETS:
-             final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
+        if style_preset:
+            final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
              
         # Detect Mode & Process Inputs Early
         
@@ -219,9 +379,6 @@ async def generate_image(
             alpha = image_input.getchannel("A")
             has_transparency = alpha.getextrema()[0] < 255
             
-        eff_mask_blur = clamp_int(mask_blur, 0, 64)
-        eff_mask_padding = clamp_int(mask_padding, 0, 128)
-
         # Load Mask Image (Manual)
         if mask_image:
             mask_bytes = await mask_image.read()
@@ -229,8 +386,8 @@ async def generate_image(
             # WebUI/Invoke style inpaint mask controls.
             hard_mask, soft_mask = process_mask_for_inpainting(
                 raw_mask,
-                mask_padding=eff_mask_padding,
-                mask_blur=eff_mask_blur
+                mask_padding=mask_padding,
+                mask_blur=mask_blur
             )
             hard_mask_input = hard_mask.resize((width, height))
             soft_mask_input = soft_mask.resize((width, height))
@@ -239,8 +396,8 @@ async def generate_image(
         if image_input and has_transparency:
             outpaint_ready_image, outpaint_hard_mask, outpaint_soft_mask = prepare_image_for_outpainting(
                 image_input,
-                mask_padding=eff_mask_padding,
-                mask_blur=eff_mask_blur
+                mask_padding=mask_padding,
+                mask_blur=mask_blur
             )
 
         # 1. Determine Actual Mode & Prepare for Outpainting
