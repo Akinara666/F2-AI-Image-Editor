@@ -239,6 +239,18 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         const gridSize = CANVAS_DEFAULTS.GRID_SIZE;
         const SNAP_DEADZONE = 2;
+        const isTransformableObject = (target) => (
+            !!target && (target === frame || isCandidateObject(target, frame) || isBaseRasterObject(target, frame))
+        );
+        const normalizeTransformAction = (action) => {
+            if (action === 'drag') {
+                return 'moving';
+            }
+            if (typeof action === 'string' && action.startsWith('scale')) {
+                return 'scaling';
+            }
+            return null;
+        };
         const snapPositionToGrid = (value) => Math.round(value / gridSize) * gridSize;
         const getDisplayBoundsFromTransform = (transform) => {
             const left = transform?.left ?? 0;
@@ -343,9 +355,25 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         let lastPosX = 0;
         let lastPosY = 0;
 
+        canvas.on('before:transform', (event) => {
+            const target = event.transform?.target;
+            const action = normalizeTransformAction(event.transform?.action);
+
+            if (!isTransformableObject(target) || !action) {
+                transformStartRef.current = null;
+                return;
+            }
+
+            transformStartRef.current = {
+                object: target,
+                previous: snapshotObjectTransform(target),
+                action,
+                corner: event.transform?.corner || ''
+            };
+        });
+
         canvas.on('mouse:down', (opt) => {
             const evt = opt.e;
-            const target = opt.target;
 
             if (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning) {
                 isDragging = true;
@@ -354,17 +382,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 lastPosY = evt.clientY;
                 canvas.defaultCursor = 'grabbing';
                 return;
-            }
-
-            if (target && (target === frame || isCandidateObject(target, frame) || isBaseRasterObject(target, frame))) {
-                transformStartRef.current = {
-                    object: target,
-                    previous: snapshotObjectTransform(target),
-                    action: null,
-                    corner: ''
-                };
-            } else {
-                transformStartRef.current = null;
             }
         });
 
@@ -384,17 +401,15 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 canvas.setViewportTransform(canvas.viewportTransform);
             }
             isDragging = false;
+            transformStartRef.current = null;
             canvas.defaultCursor = brushModeRef.current === 'hand' ? 'grab' : 'default';
         });
 
         canvas.on('object:moving', (event) => {
             const target = event.target;
             if (!target) return;
-            if (target !== frame && !isCandidateObject(target, frame) && !isBaseRasterObject(target, frame)) {
+            if (!isTransformableObject(target)) {
                 return;
-            }
-            if (transformStartRef.current?.object === target) {
-                transformStartRef.current.action = 'moving';
             }
             target.set({
                 left: snapPositionToGrid(target.left),
@@ -409,21 +424,19 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         canvas.on('object:scaling', (event) => {
             const target = event.target;
             if (!target) return;
-            if (target !== frame && !isCandidateObject(target, frame) && !isBaseRasterObject(target, frame)) {
+            if (!isTransformableObject(target)) {
                 return;
             }
 
-            const corner = event.transform ? event.transform.corner : '';
-            if (transformStartRef.current?.object === target) {
-                transformStartRef.current.action = 'scaling';
-                transformStartRef.current.corner = corner;
-            }
             const baseBounds = getDisplayBoundsFromTransform(
                 transformStartRef.current?.object === target
                     ? transformStartRef.current.previous
                     : snapshotObjectTransform(target)
             );
             const currentBounds = getDisplayBoundsFromObject(target);
+            const corner = transformStartRef.current?.object === target
+                ? transformStartRef.current.corner
+                : (event.transform?.corner || '');
             const snappedBounds = applyDisplayBoundsToObject(
                 target,
                 getSnappedResizeBounds(baseBounds, currentBounds, corner)
