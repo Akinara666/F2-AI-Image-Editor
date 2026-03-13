@@ -10,6 +10,18 @@ const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.FRAME]: 4
 };
 
+const cloneFabricObject = (object) => (
+    new Promise((resolve, reject) => {
+        object.clone((cloned) => {
+            if (!cloned) {
+                reject(new Error('Failed to clone Fabric object.'));
+                return;
+            }
+            resolve(cloned);
+        });
+    })
+);
+
 const rectsIntersect = (a, b) => (
     a.left < (b.left + b.width)
     && (a.left + a.width) > b.left
@@ -170,6 +182,39 @@ const rasterizeObjects = (entries, bounds) => {
     return canvasEl;
 };
 
+const renderEntriesToCanvas = (entries, bounds, backgroundColor = null) => {
+    const canvasEl = fabric.util.createCanvasElement();
+    canvasEl.width = bounds.width;
+    canvasEl.height = bounds.height;
+    const ctx = canvasEl.getContext('2d');
+    if (!ctx) {
+        throw new Error('Failed to create export canvas context.');
+    }
+
+    if (backgroundColor) {
+        ctx.fillStyle = backgroundColor;
+        ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+    }
+
+    entries.forEach(({ object, temporaryProps }) => {
+        renderObjectIntoCanvas(ctx, object, bounds, temporaryProps);
+    });
+
+    return canvasEl;
+};
+
+const canvasElementToBlob = (canvasEl, type, quality) => (
+    new Promise((resolve, reject) => {
+        canvasEl.toBlob((blob) => {
+            if (!blob) {
+                reject(new Error('Failed to build export blob.'));
+                return;
+            }
+            resolve(blob);
+        }, type, quality);
+    })
+);
+
 const createRasterObject = (source, bounds, role) => {
     const image = new fabric.Image(source, {
         left: bounds.left,
@@ -322,145 +367,80 @@ export const applyEraserPathToCanvas = async (canvas, eraserPath, genFrame) => {
 export const exportCanvasState = async (canvas, frame) => {
     if (!canvas || !frame) throw new Error('Canvas invalid');
 
-    const left = frame.left;
-    const top = frame.top;
-    const width = Math.round(frame.width * frame.scaleX);
-    const height = Math.round(frame.height * frame.scaleY);
-
-    const dataToBlob = async (dataURL) => {
-        const res = await fetch(dataURL);
-        return await res.blob();
+    const bounds = {
+        left: frame.left,
+        top: frame.top,
+        width: Math.round(frame.width * frame.scaleX),
+        height: Math.round(frame.height * frame.scaleY)
     };
 
-    const originalVpt = [...canvas.viewportTransform];
-    const originalBg = canvas.backgroundColor;
+    const objects = canvas.getObjects();
+    const maskGroup = objects.find((object) => object.id === 'maskGroup');
+    const hasExplicitMasks = !!(maskGroup && maskGroup.getObjects().length > 0);
+    const sketchObjects = objects.filter((object) => (
+        object.visible !== false && isSketchObject(object, frame)
+    ));
+    const hasSketches = sketchObjects.length > 0;
+    const useOpaqueBackground = !hasExplicitMasks && hasSketches;
 
-    const objectStates = canvas.getObjects().map((object) => ({
-        object,
-        visible: object.visible,
-        stroke: object.stroke,
-        fill: object.fill,
-        opacity: object.opacity
-    }));
+    const initObjects = objects.filter((object) => (
+        object.visible !== false
+        && object !== frame
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && !isMaskObject(object, frame)
+        && !isCandidateObject(object, frame)
+    ));
+    const initCanvas = renderEntriesToCanvas(
+        initObjects.map((object) => ({ object })),
+        bounds,
+        useOpaqueBackground ? '#808080' : null
+    );
+    const initBlob = await canvasElementToBlob(
+        initCanvas,
+        useOpaqueBackground ? 'image/jpeg' : 'image/png',
+        0.95
+    );
 
-    let initDataURL = null;
-    let maskDataURL = null;
-
-    try {
-        canvas.viewportTransform = [1, 0, 0, 1, 0, 0];
-
-        const maskGroup = canvas.getObjects().find((object) => object.id === 'maskGroup');
-        const hasExplicitMasks = !!(maskGroup && maskGroup.getObjects().length > 0);
-        const hasSketches = objectStates.some(({ object }) => isSketchObject(object, frame));
-
-        let useOpaqueBackground = false;
-        if (hasExplicitMasks) {
-            canvas.backgroundColor = null;
-        } else if (hasSketches) {
-            canvas.backgroundColor = '#808080';
-            useOpaqueBackground = true;
-        } else {
-            canvas.backgroundColor = null;
-        }
-
-        canvas.getObjects().forEach((object) => {
-            if (
-                object === frame
-                || object.editorRole === CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
-                || object.editorRole === CANVAS_OBJECT_ROLES.FRAME
-                || isMaskObject(object, frame)
-                || isCandidateObject(object, frame)
-            ) {
-                object.visible = false;
-            }
+    let maskBlob = null;
+    if (hasExplicitMasks) {
+        const maskClone = await cloneFabricObject(maskGroup);
+        maskClone.set({
+            visible: true,
+            opacity: 1.0
         });
-
-        initDataURL = canvas.toDataURL({
-            format: useOpaqueBackground ? 'jpeg' : 'png',
-            quality: 0.95,
-            left,
-            top,
-            width,
-            height,
-            multiplier: 1
-        });
-
-        if (hasExplicitMasks) {
-            canvas.backgroundColor = 'black';
-            canvas.getObjects().forEach((object) => {
-                if (object === frame) {
-                    object.visible = false;
-                    return;
-                }
-
-                if (object.id === 'maskGroup') {
-                    object.visible = true;
-                    object._originalOpacity = object.opacity;
-                    object.opacity = 1.0;
-
-                    object.getObjects().forEach((child) => {
-                        child._originalOpacity = child.opacity;
-                        child.opacity = 1.0;
-                        if (child.stroke !== 'white') {
-                            child._originalStroke = child.stroke;
-                            child.stroke = 'white';
-                        }
-                    });
-                } else {
-                    object.visible = false;
-                }
-            });
-
-            maskDataURL = canvas.toDataURL({
-                format: 'png',
-                left,
-                top,
-                width,
-                height,
-                multiplier: 1
-            });
-
-            canvas.getObjects().forEach((object) => {
-                if (object.id === 'maskGroup') {
-                    if (object._originalOpacity !== undefined) {
-                        object.opacity = object._originalOpacity;
-                        delete object._originalOpacity;
-                    }
-                    object.getObjects().forEach((child) => {
-                        if (child._originalStroke) {
-                            child.stroke = child._originalStroke;
-                            delete child._originalStroke;
-                        }
-                        if (child._originalOpacity !== undefined) {
-                            child.opacity = child._originalOpacity;
-                            delete child._originalOpacity;
-                        }
-                    });
-                }
-            });
-        }
-    } finally {
-        canvas.setViewportTransform(originalVpt);
-        canvas.backgroundColor = originalBg;
-        objectStates.forEach((state) => {
-            state.object.set({
-                visible: state.visible,
-                stroke: state.stroke,
-                fill: state.fill,
-                opacity: state.opacity
+        maskClone.getObjects().forEach((child) => {
+            child.set({
+                visible: true,
+                opacity: 1.0,
+                stroke: 'white'
             });
         });
-        frame.visible = true;
-        canvas.requestRenderAll();
+        const maskCanvas = renderEntriesToCanvas([{ object: maskClone }], bounds, 'black');
+        maskBlob = await canvasElementToBlob(maskCanvas, 'image/png');
+    } else if (hasSketches) {
+        const sketchClones = await Promise.all(sketchObjects.map(async (object) => {
+            const clone = await cloneFabricObject(object);
+            clone.set({
+                visible: true,
+                fill: 'white',
+                stroke: 'white',
+                opacity: 1.0
+            });
+            return clone;
+        }));
+        const maskCanvas = renderEntriesToCanvas(
+            sketchClones.map((object) => ({ object })),
+            bounds,
+            'black'
+        );
+        maskBlob = await canvasElementToBlob(maskCanvas, 'image/png');
     }
-
-    const initBlob = await dataToBlob(initDataURL);
-    const maskBlob = maskDataURL ? await dataToBlob(maskDataURL) : null;
 
     return {
         image: initBlob,
         mask: maskBlob,
-        width,
-        height
+        width: bounds.width,
+        height: bounds.height
     };
 };
