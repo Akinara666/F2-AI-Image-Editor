@@ -33,6 +33,24 @@
     box-shadow: var(--shadow-inset);
 }
 
+.editor-object-resolution-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(10, 16, 24, 0.82);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    color: var(--text-primary);
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    pointer-events: none;
+    font-weight: 600;
+    font-size: var(--font-sm);
+    letter-spacing: 0.05em;
+    border: var(--glass-border);
+    box-shadow: var(--shadow-inset);
+}
+
 /* ===== Staging Overlay ===== */
 .editor-staging-bar {
     position: absolute;

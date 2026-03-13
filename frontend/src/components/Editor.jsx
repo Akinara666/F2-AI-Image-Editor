@@ -43,6 +43,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [isMutatingCanvas, setIsMutatingCanvas] = useState(false);
+    const [activeImageResolution, setActiveImageResolution] = useState(null);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -242,9 +243,58 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         return setMaskOverlayVisibility(visible, canvas);
     };
 
+    const syncActiveImageResolution = (target = fabricCanvas?.getActiveObject()) => {
+        if (!target) {
+            setActiveImageResolution(null);
+            return;
+        }
+
+        const isImageObject = isCandidateObject(target, genFrame) || isBaseRasterObject(target, genFrame);
+        if (!isImageObject) {
+            setActiveImageResolution(null);
+            return;
+        }
+
+        const width = Math.max(1, Math.round((target.width ?? 0) * (target.scaleX ?? 1)));
+        const height = Math.max(1, Math.round((target.height ?? 0) * (target.scaleY ?? 1)));
+        setActiveImageResolution({ width, height });
+    };
+
     useEffect(() => {
         syncCanvasInteractionMode();
     }, [brushMode, brushColor, brushSize, fabricCanvas, genFrame, candidate]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) return undefined;
+
+        const handleSelectionChange = (event) => {
+            syncActiveImageResolution(event.selected?.[0] || fabricCanvas.getActiveObject());
+        };
+        const handleSelectionClear = () => {
+            setActiveImageResolution(null);
+        };
+        const handleObjectScaling = (event) => {
+            syncActiveImageResolution(event.target);
+        };
+        const handleObjectModified = (event) => {
+            syncActiveImageResolution(event.target);
+        };
+
+        fabricCanvas.on('selection:created', handleSelectionChange);
+        fabricCanvas.on('selection:updated', handleSelectionChange);
+        fabricCanvas.on('selection:cleared', handleSelectionClear);
+        fabricCanvas.on('object:scaling', handleObjectScaling);
+        fabricCanvas.on('object:modified', handleObjectModified);
+        syncActiveImageResolution();
+
+        return () => {
+            fabricCanvas.off('selection:created', handleSelectionChange);
+            fabricCanvas.off('selection:updated', handleSelectionChange);
+            fabricCanvas.off('selection:cleared', handleSelectionClear);
+            fabricCanvas.off('object:scaling', handleObjectScaling);
+            fabricCanvas.off('object:modified', handleObjectModified);
+        };
+    }, [fabricCanvas, genFrame, candidate]);
 
     useEffect(() => {
         if (!fabricCanvas || !genFrame) return;
@@ -403,6 +453,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             <div className="editor-resolution-badge">
                 {genDimensions.width} x {genDimensions.height}
             </div>
+
+            {activeImageResolution && (
+                <div className="editor-object-resolution-badge">
+                    {activeImageResolution.width} x {activeImageResolution.height}
+                </div>
+            )}
 
             {candidateUrl && (
                 <div className="editor-staging-bar">
