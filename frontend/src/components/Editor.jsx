@@ -47,6 +47,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const [genFrame, setGenFrame] = useState(null);
     const [candidate, setCandidate] = useState(null);
     const [candidateUrl, setCandidateUrl] = useState(null);
+    const [hasMaskOverlay, setHasMaskOverlay] = useState(false);
+    const [isMaskOverlayVisible, setIsMaskOverlayVisible] = useState(false);
     const [genDimensions, setGenDimensions] = useState({
         width: CANVAS_DEFAULTS.DEFAULT_WIDTH,
         height: CANVAS_DEFAULTS.DEFAULT_HEIGHT
@@ -57,6 +59,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const brushColorRef = useRef(brushColor);
     const brushSizeRef = useRef(brushSize);
     const candidateRef = useRef(null);
+    const maskOverlayVisibleRef = useRef(false);
     const genFrameVisualRef = useRef(null);
     const mutationQueueRef = useRef(Promise.resolve());
     const transformStartRef = useRef(null);
@@ -79,6 +82,36 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         const nextCandidate = canvas?.getObjects().find((object) => isCandidateObject(object, genFrame)) || null;
         setCandidateState(nextCandidate, nextCandidate?.candidateSourceUrl || null);
         return nextCandidate;
+    };
+
+    const getMaskGroupFromCanvas = (canvas) => (
+        canvas?.getObjects().find((object) => object.id === 'maskGroup') || null
+    );
+
+    const syncMaskStateFromCanvas = (canvas = fabricCanvas) => {
+        const maskGroup = getMaskGroupFromCanvas(canvas);
+        const nextHasMask = !!(maskGroup && maskGroup.getObjects().length > 0);
+        const nextMaskVisible = nextHasMask ? maskGroup.visible !== false : false;
+
+        maskOverlayVisibleRef.current = nextMaskVisible;
+        setHasMaskOverlay(nextHasMask);
+        setIsMaskOverlayVisible(nextMaskVisible);
+        return maskGroup;
+    };
+
+    const setMaskOverlayVisibility = (visible, canvas = fabricCanvas) => {
+        const maskGroup = getMaskGroupFromCanvas(canvas);
+        if (!maskGroup) {
+            maskOverlayVisibleRef.current = false;
+            setHasMaskOverlay(false);
+            setIsMaskOverlayVisible(false);
+            return null;
+        }
+
+        maskGroup.set({ visible });
+        canvas?.requestRenderAll();
+        syncMaskStateFromCanvas(canvas);
+        return maskGroup;
     };
 
     const syncFrameVisualState = (frameObject = genFrame, frameVisualObject = genFrameVisualRef.current) => {
@@ -436,8 +469,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
                 maskGroup.addWithUpdate(path);
                 fabricCanvas.remove(path);
+                if (candidateRef.current && !maskOverlayVisibleRef.current) {
+                    maskGroup.set({ visible: false });
+                }
                 pushUndo({ type: 'maskPath', object: path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
+                syncMaskStateFromCanvas(fabricCanvas);
                 fabricCanvas.requestRenderAll();
                 return;
             }
@@ -489,6 +526,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         fabricCanvas.remove(candidateRef.current);
         fabricCanvas.discardActiveObject();
         setCandidateState(null, null);
+        setMaskOverlayVisibility(true, fabricCanvas);
         syncCanvasInteractionMode();
     };
 
@@ -497,12 +535,17 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         await enqueueCanvasMutation(async () => {
             const result = await bakeCandidateIntoCanvas(fabricCanvas, candidateRef.current, genFrame);
+            const maskGroup = getMaskGroupFromCanvas(fabricCanvas);
+            if (maskGroup) {
+                fabricCanvas.remove(maskGroup);
+            }
             pushUndo({
                 type: 'replaceObjects',
-                removedObjects: result.removedObjects,
+                removedObjects: maskGroup ? [...result.removedObjects, maskGroup] : result.removedObjects,
                 addedObjects: result.addedObjects
             });
             setCandidateState(null, null);
+            syncMaskStateFromCanvas(fabricCanvas);
             syncCanvasInteractionMode();
         });
     };
@@ -550,6 +593,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
             enforceCanvasLayerOrder(fabricCanvas, genFrame);
             syncCandidateFromCanvas(fabricCanvas);
+            syncMaskStateFromCanvas(fabricCanvas);
             syncCanvasInteractionMode();
         });
     };
@@ -630,8 +674,13 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     image.setCoords();
                     fabricCanvas.add(image);
                     fabricCanvas.setActiveObject(image);
+                    const maskGroup = getMaskGroupFromCanvas(fabricCanvas);
+                    if (maskGroup) {
+                        maskGroup.set({ visible: false });
+                    }
                     enforceCanvasLayerOrder(fabricCanvas, genFrame);
                     setCandidateState(image, url);
+                    syncMaskStateFromCanvas(fabricCanvas);
                     syncCanvasInteractionMode();
                     resolve();
                 }, { crossOrigin: 'anonymous' });
@@ -671,6 +720,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             fabricCanvas.discardActiveObject();
             enforceCanvasLayerOrder(fabricCanvas, genFrame);
             syncCandidateFromCanvas(fabricCanvas);
+            syncMaskStateFromCanvas(fabricCanvas);
             syncCanvasInteractionMode();
         }
     }));
@@ -679,6 +729,11 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     useEffect(() => {
         performUndoRef.current = performUndo;
     });
+
+    const toggleMaskOverlayPreview = () => {
+        if (!fabricCanvas || !hasMaskOverlay) return;
+        setMaskOverlayVisibility(!isMaskOverlayVisible, fabricCanvas);
+    };
 
     useEffect(() => {
         if (!fabricCanvas || !genFrame) return;
@@ -747,6 +802,15 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     >
                         ✕ DISCARD
                     </button>
+                    {hasMaskOverlay && (
+                        <button
+                            className={`editor-staging-btn editor-staging-btn--mask ${isMaskOverlayVisible ? 'editor-staging-btn--mask-active' : ''}`}
+                            onClick={toggleMaskOverlayPreview}
+                            disabled={isMutatingCanvas}
+                        >
+                            {isMaskOverlayVisible ? 'Hide Mask' : 'Show Mask'}
+                        </button>
+                    )}
                 </div>
             )}
         </div>

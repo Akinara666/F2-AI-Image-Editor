@@ -78,3 +78,13 @@
 .editor-staging-btn--discard {
     background: var(--danger);
 }
+
+.editor-staging-btn--mask {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--text-primary);
+}
+
+.editor-staging-btn--mask-active {
+    background: rgba(255, 96, 96, 0.88);
+    color: white;
+}
