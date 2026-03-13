@@ -141,6 +141,7 @@ export const setupCanvasViewportAndTransform = ({
     updateFrameViewportStyle,
     syncFrameVisualState,
     setGenDimensions,
+    markUndoDirty,
     commitUndoSnapshot,
     getUndoSnapshotParams,
     isCandidateObject,
@@ -307,6 +308,10 @@ export const setupCanvasViewportAndTransform = ({
 
         const nextTransform = snapshotObjectTransform(target);
         if (!areTransformsEqual(transformStart.previous, nextTransform)) {
+            markUndoDirty(target);
+            if (target === frame) {
+                markUndoDirty(frameVisual);
+            }
             commitUndoSnapshot(getUndoSnapshotParams(canvas, frame, frameVisual));
         }
         if (target === frame) {

@@ -10,21 +10,8 @@ const UNDO_SERIALIZED_PROPS = [
     'isCandidate',
     'candidateSourceUrl',
     'assetId',
-    'selectable',
-    'evented',
-    'hasControls',
-    'hasBorders',
-    'lockMovementX',
-    'lockMovementY',
-    'lockScalingX',
-    'lockScalingY',
-    'lockRotation',
-    'hoverCursor',
     'objectCaching',
-    'noScaleCache',
-    'perPixelTargetFind',
-    'transparentCorners',
-    'cornerSize'
+    'noScaleCache'
 ];
 
 const UNDO_IMAGE_PROPS = [
@@ -48,16 +35,6 @@ const UNDO_IMAGE_PROPS = [
     'stroke',
     'strokeWidth',
     'strokeDashArray',
-    'selectable',
-    'evented',
-    'hasControls',
-    'hasBorders',
-    'lockMovementX',
-    'lockMovementY',
-    'lockScalingX',
-    'lockScalingY',
-    'lockRotation',
-    'hoverCursor',
     'objectCaching',
     'noScaleCache',
     'cropX',
@@ -75,9 +52,58 @@ const pickObjectProps = (object, propertyNames) => (
 export const useEditorUndo = () => {
     const undoAssetRegistryRef = useRef(new Map());
     const undoStackRef = useRef([]);
+    const undoObjectCacheRef = useRef(new WeakMap());
+    const undoFrameCacheRef = useRef(new WeakMap());
+    const undoFrameVisualCacheRef = useRef(new WeakMap());
+
+    const getUndoVersion = (object) => object?.undoVersion || 0;
+
+    const markUndoDirty = (object) => {
+        if (!object) {
+            return;
+        }
+
+        object.undoVersion = getUndoVersion(object) + 1;
+    };
+
+    const serializeWithCache = (object, cacheRef, serializer) => {
+        if (!object) {
+            return null;
+        }
+
+        const version = getUndoVersion(object);
+        const cached = cacheRef.current.get(object);
+        if (cached && cached.version === version) {
+            return cached.value;
+        }
+
+        const value = serializer(object);
+        cacheRef.current.set(object, { version, value });
+        return value;
+    };
+
+    const areObjectEntryListsEqual = (left, right) => (
+        left.length === right.length && left.every((entry, index) => entry === right[index])
+    );
+
+    const areSnapshotsEquivalent = (left, right) => {
+        if (!left || !right) {
+            return false;
+        }
+
+        return left.frame === right.frame
+            && left.frameVisual === right.frameVisual
+            && areObjectEntryListsEqual(left.objects || [], right.objects || []);
+    };
 
     const pushUndoSnapshot = (snapshot) => {
         if (!snapshot) return;
+
+        const previousSnapshot = undoStackRef.current[undoStackRef.current.length - 1];
+        if (areSnapshotsEquivalent(previousSnapshot, snapshot)) {
+            return;
+        }
+
         undoStackRef.current.push(snapshot);
         if (undoStackRef.current.length > MAX_UNDO_STEPS) {
             undoStackRef.current.splice(0, undoStackRef.current.length - MAX_UNDO_STEPS);
@@ -105,26 +131,28 @@ export const useEditorUndo = () => {
     };
 
     const serializeUndoObject = (object) => {
-        if (object.type === 'image') {
-            const assetId = registerUndoAsset(object);
-            if (!assetId) {
+        return serializeWithCache(object, undoObjectCacheRef, (target) => {
+            if (target.type === 'image') {
+                const assetId = registerUndoAsset(target);
+                if (!assetId) {
+                    return {
+                        kind: 'object',
+                        object: target.toObject(UNDO_SERIALIZED_PROPS)
+                    };
+                }
+
                 return {
-                    kind: 'object',
-                    object: object.toObject(UNDO_SERIALIZED_PROPS)
+                    kind: 'image',
+                    assetId,
+                    props: pickObjectProps(target, UNDO_IMAGE_PROPS)
                 };
             }
 
             return {
-                kind: 'image',
-                assetId,
-                props: pickObjectProps(object, UNDO_IMAGE_PROPS)
+                kind: 'object',
+                object: target.toObject(UNDO_SERIALIZED_PROPS)
             };
-        }
-
-        return {
-            kind: 'object',
-            object: object.toObject(UNDO_SERIALIZED_PROPS)
-        };
+        });
     };
 
     const pruneUndoAssets = (canvas) => {
@@ -164,8 +192,8 @@ export const useEditorUndo = () => {
         }
 
         return {
-            frame: serializeFrameState(frameObject),
-            frameVisual: serializeFrameVisualState(frameVisualObject),
+            frame: serializeWithCache(frameObject, undoFrameCacheRef, serializeFrameState),
+            frameVisual: serializeWithCache(frameVisualObject, undoFrameVisualCacheRef, serializeFrameVisualState),
             objects: canvas
                 .getObjects()
                 .filter((object) => object !== frameObject && object !== frameVisualObject)
@@ -235,6 +263,8 @@ export const useEditorUndo = () => {
         frameObject.setCoords();
         frameVisualObject.set(snapshot.frameVisual);
         frameVisualObject.setCoords();
+        markUndoDirty(frameObject);
+        markUndoDirty(frameVisualObject);
         genFrameVisualRef.current = frameVisualObject;
 
         enlivenedObjects.forEach((object) => {
@@ -259,6 +289,7 @@ export const useEditorUndo = () => {
     return {
         createUndoSnapshot,
         commitUndoSnapshot,
+        markUndoDirty,
         popUndoSnapshot,
         pushUndoSnapshot,
         restoreUndoSnapshot

@@ -95,11 +95,13 @@ export const setGenerationFrameSize = ({
     width,
     height,
     genFrame,
+    genFrameVisual,
     fabricCanvas,
     syncFrameVisualState,
     setGenDimensions,
     enforceCanvasLayerOrder,
     syncCanvasInteractionMode,
+    markUndoDirty,
     commitUndoSnapshot,
     getUndoSnapshotParams
 }) => {
@@ -108,6 +110,8 @@ export const setGenerationFrameSize = ({
     genFrame.set({ width, height, scaleX: 1, scaleY: 1 });
     genFrame.setCoords();
     syncFrameVisualState(genFrame);
+    markUndoDirty(genFrame);
+    markUndoDirty(genFrameVisual);
     setGenDimensions({ width, height });
     enforceCanvasLayerOrder(fabricCanvas, genFrame);
     syncCanvasInteractionMode();
@@ -124,6 +128,7 @@ export const addGeneratedImage = async ({
     enforceCanvasLayerOrder,
     syncMaskStateFromCanvas,
     syncCanvasInteractionMode,
+    markUndoDirty,
     commitUndoSnapshot,
     getUndoSnapshotParams
 }) => {
@@ -178,6 +183,7 @@ export const addGeneratedImage = async ({
             fabricCanvas.setActiveObject(image);
             const maskGroup = getMaskGroupFromCanvas(fabricCanvas);
             if (maskGroup) {
+                markUndoDirty(maskGroup);
                 maskGroup.set({ visible: false });
             }
             enforceCanvasLayerOrder(fabricCanvas, genFrame);

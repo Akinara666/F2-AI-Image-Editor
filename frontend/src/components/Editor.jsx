@@ -72,6 +72,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const {
         createUndoSnapshot,
         commitUndoSnapshot,
+        markUndoDirty,
         popUndoSnapshot,
         pushUndoSnapshot,
         restoreUndoSnapshot
@@ -204,6 +205,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             updateFrameViewportStyle,
             syncFrameVisualState,
             setGenDimensions,
+            markUndoDirty,
             commitUndoSnapshot,
             getUndoSnapshotParams,
             isCandidateObject,
@@ -231,6 +233,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         enforceCanvasLayerOrder
     });
 
+    const setTrackedMaskOverlayVisibility = (visible, canvas = fabricCanvas) => {
+        const maskGroup = getMaskGroupFromCanvas(canvas);
+        if (maskGroup && maskGroup.visible !== visible) {
+            markUndoDirty(maskGroup);
+        }
+        return setMaskOverlayVisibility(visible, canvas);
+    };
+
     useEffect(() => {
         syncCanvasInteractionMode();
     }, [brushMode, brushColor, brushSize, fabricCanvas, genFrame, candidate]);
@@ -248,6 +258,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             syncMaskStateFromCanvas,
             syncCandidateFromCanvas,
             syncCanvasInteractionMode,
+            markUndoDirty,
             commitUndoSnapshot,
             getUndoSnapshotParams,
             getMaskGroupFromCanvas,
@@ -260,7 +271,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         fabricCanvas,
         candidateRef,
         setCandidateState,
-        setMaskOverlayVisibility,
+        setMaskOverlayVisibility: setTrackedMaskOverlayVisibility,
         syncCanvasInteractionMode,
         commitUndoSnapshot,
         getUndoSnapshotParams,
@@ -305,11 +316,13 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             width,
             height,
             genFrame,
+            genFrameVisual: genFrameVisualRef.current,
             fabricCanvas,
             syncFrameVisualState,
             setGenDimensions,
             enforceCanvasLayerOrder,
             syncCanvasInteractionMode,
+            markUndoDirty,
             commitUndoSnapshot,
             getUndoSnapshotParams
         }),
@@ -324,6 +337,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             enforceCanvasLayerOrder,
             syncMaskStateFromCanvas,
             syncCanvasInteractionMode,
+            markUndoDirty,
             commitUndoSnapshot,
             getUndoSnapshotParams
         }),
@@ -365,7 +379,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
     const toggleMaskOverlayPreview = () => {
         if (!fabricCanvas || !hasMaskOverlay) return;
-        setMaskOverlayVisibility(!isMaskOverlayVisible, fabricCanvas);
+        setTrackedMaskOverlayVisibility(!isMaskOverlayVisible, fabricCanvas);
     };
 
     useEffect(() => {

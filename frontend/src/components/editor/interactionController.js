@@ -76,6 +76,7 @@ export const setupPathCreationHandling = ({
     syncMaskStateFromCanvas,
     syncCandidateFromCanvas,
     syncCanvasInteractionMode,
+    markUndoDirty,
     commitUndoSnapshot,
     getUndoSnapshotParams,
     getMaskGroupFromCanvas,
@@ -114,8 +115,10 @@ export const setupPathCreationHandling = ({
             }
 
             maskGroup.addWithUpdate(path);
+            markUndoDirty(maskGroup);
             canvas.remove(path);
             if (candidateRef.current && !maskOverlayVisibleRef.current) {
+                markUndoDirty(maskGroup);
                 maskGroup.set({ visible: false });
             }
             enforceCanvasLayerOrder(canvas, frameObject);
