@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+import time
 from typing import Any, Optional
 
 from core.config import settings
@@ -16,9 +17,19 @@ class BasePromptLLMAdapter:
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         raise NotImplementedError
 
+    def _get_logger(self) -> logging.Logger:
+        return getattr(self, "logger", logging.getLogger(self.__class__.__name__))
+
     def run_transform(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         with self._state_lock:
             self._active_calls += 1
+            active_calls = self._active_calls
+
+        self._get_logger().info(
+            "LLM transform call started: active_calls=%s prompt_len=%s",
+            active_calls,
+            len(prompt or ""),
+        )
 
         try:
             return self.transform_to_sd(prompt, context)
@@ -26,9 +37,15 @@ class BasePromptLLMAdapter:
             should_unload = False
             with self._state_lock:
                 self._active_calls = max(0, self._active_calls - 1)
+                active_calls = self._active_calls
                 if self._active_calls == 0 and self._unload_requested:
                     self._unload_requested = False
                     should_unload = True
+            self._get_logger().info(
+                "LLM transform call finished: active_calls=%s deferred_unload=%s",
+                active_calls,
+                should_unload,
+            )
             if should_unload:
                 self._unload_now()
 
@@ -39,8 +56,13 @@ class BasePromptLLMAdapter:
         with self._state_lock:
             if self._active_calls > 0:
                 self._unload_requested = True
+                self._get_logger().info(
+                    "LLM unload deferred because calls are still active: active_calls=%s",
+                    self._active_calls,
+                )
                 return
 
+        self._get_logger().info("LLM unload requested immediately.")
         self._unload_now()
 
     def _unload_now(self) -> None:
@@ -96,10 +118,20 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
 
     def _ensure_model_loaded(self):
         if self._llm is not None:
+            self.logger.info(
+                "Reusing loaded Qwen GGUF model from memory. n_ctx=%s n_gpu_layers=%s",
+                self.n_ctx,
+                self.n_gpu_layers,
+            )
             return
 
         with self._load_lock:
             if self._llm is not None:
+                self.logger.info(
+                    "Reusing loaded Qwen GGUF model from memory after load lock. n_ctx=%s n_gpu_layers=%s",
+                    self.n_ctx,
+                    self.n_gpu_layers,
+                )
                 return
 
             if not self.model_path:
@@ -125,6 +157,7 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 init_args["lora_path"] = self.lora_path
                 init_args["lora_scale"] = self.lora_scale
 
+            started = time.perf_counter()
             self.logger.info(
                 "Loading Qwen GGUF model. model_path=%s lora_path=%s n_ctx=%s n_gpu_layers=%s",
                 self.model_path,
@@ -133,6 +166,10 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self.n_gpu_layers,
             )
             self._llm = Llama(**init_args)
+            self.logger.info(
+                "Qwen GGUF model loaded in %s ms.",
+                int((time.perf_counter() - started) * 1000),
+            )
 
     @staticmethod
     def _extract_json_object(text: str) -> dict[str, Any]:
@@ -152,11 +189,14 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         return json.loads(text[start : end + 1])
 
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        started = time.perf_counter()
         self._ensure_model_loaded()
         assert self._llm is not None
 
         ctx = context or {}
         user_negative = (ctx.get("user_negative_prompt") or "").strip()
+        mode = ctx.get("mode") or "<unknown>"
+        model_id = ctx.get("model_id") or "<unknown>"
 
         user_prompt = (
             "Transform user request into Stable Diffusion syntax.\n"
@@ -168,6 +208,17 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         )
 
         try:
+            self.logger.info(
+                "Starting Qwen inference: prompt_len=%s negative_len=%s mode=%s model_id=%s max_tokens=%s n_ctx=%s n_gpu_layers=%s loaded=%s",
+                len(prompt or ""),
+                len(user_negative),
+                mode,
+                model_id,
+                self.max_tokens,
+                self.n_ctx,
+                self.n_gpu_layers,
+                self._llm is not None,
+            )
             response = self._llm.create_chat_completion(
                 messages=[
                     {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
@@ -178,10 +229,21 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 max_tokens=self.max_tokens,
             )
             content = response["choices"][0]["message"]["content"]
+            self.logger.info(
+                "Qwen inference finished in %s ms. response_len=%s",
+                int((time.perf_counter() - started) * 1000),
+                len(content or ""),
+            )
         except Exception as exc:
             raise RuntimeError(f"Qwen inference failed: {exc}") from exc
 
         parsed = self._extract_json_object(content)
+        self.logger.info(
+            "Qwen response parsed successfully: positive_len=%s negative_extra_len=%s style_tags=%s",
+            len(str(parsed.get("positive_prompt") or "")),
+            len(str(parsed.get("negative_prompt_extra") or "")),
+            len(parsed.get("style_tags") or []),
+        )
         return parsed
 
     def health(self) -> dict[str, Any]:

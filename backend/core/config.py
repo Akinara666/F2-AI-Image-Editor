@@ -33,6 +33,10 @@ class Settings:
     #_____________апдейт_______ Strict mode and merge policy
     PROMPT_TRANSFORM_STRICT: bool = os.getenv("PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
     PROMPT_NEGATIVE_MERGE_POLICY: str = os.getenv("PROMPT_NEGATIVE_MERGE_POLICY", "append")
+    PROMPT_TRANSFORM_UNLOAD_AFTER_CALL: bool = os.getenv(
+        "PROMPT_TRANSFORM_UNLOAD_AFTER_CALL",
+        "true",
+    ).lower() == "true"
 
     #_____________апдейт_______ GGUF + LoRA LLM runtime config
     LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", str(BASE_DIR / "models" / "llm" / "model.gguf"))

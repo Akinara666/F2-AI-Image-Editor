@@ -252,6 +252,12 @@ class PromptTransformPreviewRequest(BaseModel):
 #_____________апдейт_______ Prompt transformer preview endpoint
 @app.post("/prompt/transform")
 async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
+    logger.info(
+        "Preview prompt transform requested: prompt_len=%s negative_len=%s use_prompt_transform=%s",
+        len((payload.prompt or "").strip()),
+        len((payload.negative_prompt or "").strip()),
+        payload.use_prompt_transform,
+    )
     result = await prompt_transformer.transform_prompt(
         raw_prompt=payload.prompt,
         use_prompt_transform=payload.use_prompt_transform,
@@ -260,10 +266,24 @@ async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
     #_____________апдейт_______ Strict validation for preview endpoint
     transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
     if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status != "success":
+        detail = f"Prompt was not transformed. status={result.transform_status}"
+        if result.error:
+            detail = f"{detail}. error={result.error}"
+        logger.warning(
+            "Preview prompt transform failed in strict mode: status=%s error=%s",
+            result.transform_status,
+            result.error,
+        )
         raise HTTPException(
             status_code=422,
-            detail=f"Prompt was not transformed. status={result.transform_status}",
+            detail=detail,
         )
+    logger.info(
+        "Preview prompt transform completed: status=%s provider=%s latency_ms=%s",
+        result.transform_status,
+        result.provider,
+        result.latency_ms,
+    )
     return {"status": "success", "data": result.to_dict()}
 
 
