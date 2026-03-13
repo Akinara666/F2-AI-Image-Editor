@@ -6,6 +6,7 @@ import random
 from typing import Optional
 from pathlib import Path
 import math
+import re
 import uvicorn
 import io
 import asyncio
@@ -83,6 +84,28 @@ ALLOWED_SAMPLERS = {
 ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
 LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
 ALLOWED_MODEL_FAMILIES = {"sd", "sdxl"}
+NSFW_BLOCKLIST_PATTERNS = (
+    (re.compile(r"\bnsfw\b", re.IGNORECASE), "nsfw"),
+    (re.compile(r"\bnude\b", re.IGNORECASE), "nude"),
+    (re.compile(r"\bnaked\b", re.IGNORECASE), "naked"),
+    (re.compile(r"\berotic\b", re.IGNORECASE), "erotic"),
+    (re.compile(r"\bporn(?:ography)?\b", re.IGNORECASE), "porn"),
+    (re.compile(r"\bsex(?:ual|y)?\b", re.IGNORECASE), "sex"),
+    (re.compile(r"\bhentai\b", re.IGNORECASE), "hentai"),
+    (re.compile(r"\bbreasts?\b", re.IGNORECASE), "breast"),
+    (re.compile(r"\bnipples?\b", re.IGNORECASE), "nipple"),
+    (re.compile(r"\bpenis\b", re.IGNORECASE), "penis"),
+    (re.compile(r"\bvagina\b", re.IGNORECASE), "vagina"),
+    (re.compile(r"\bvulva\b", re.IGNORECASE), "vulva"),
+    (re.compile(r"\bpussy\b", re.IGNORECASE), "pussy"),
+    (re.compile(r"\bblow\s?job\b", re.IGNORECASE), "blowjob"),
+    (re.compile(r"\boral sex\b", re.IGNORECASE), "oral sex"),
+    (re.compile(r"\bintercourse\b", re.IGNORECASE), "intercourse"),
+    (re.compile(r"\bmasturbat(?:e|ion)\b", re.IGNORECASE), "masturbation"),
+    (re.compile(r"\bej(?:aculat|aculation)\b", re.IGNORECASE), "ejaculation"),
+    (re.compile(r"\bcum\b", re.IGNORECASE), "cum"),
+    (re.compile(r"\banal\b", re.IGNORECASE), "anal"),
+)
 MIN_DIMENSION = 64
 MAX_DIMENSION = 2048
 MAX_GENERATION_PIXELS = 1024 * 1024
@@ -103,6 +126,26 @@ MAX_MASK_PADDING = 128
 
 def _validation_error(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
+
+
+def _detect_nsfw_term(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    for pattern, label in NSFW_BLOCKLIST_PATTERNS:
+        if pattern.search(text):
+            return label
+    return None
+
+
+def _enforce_nsfw_prompt_guard(*texts: tuple[str, Optional[str]]) -> None:
+    for field_name, text in texts:
+        matched_term = _detect_nsfw_term(text)
+        if matched_term is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"NSFW content is blocked by server policy. Matched term '{matched_term}' in {field_name}.",
+            )
 
 
 def _get_local_model_entries() -> list[dict[str, str]]:
@@ -353,6 +396,7 @@ async def generate_image(
 ):
     try:
         request_id = (request_id or "").strip() or uuid.uuid4().hex
+
         validated = _validate_generation_inputs(
             width=width,
             height=height,
@@ -417,6 +461,18 @@ async def generate_image(
         # 0. Apply Preset
         if style_preset:
             final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
+
+        nsfw_filter_active = settings.NSFW_FILTER_ENABLED
+        if nsfw_filter_active:
+            _enforce_nsfw_prompt_guard(
+                ("prompt", source_prompt),
+                ("transformed_prompt", final_prompt),
+            )
+        logger.info(
+            "NSFW request policy: request_id=%s filter_enabled=%s",
+            request_id,
+            nsfw_filter_active,
+        )
              
         # Detect Mode & Process Inputs Early
         
@@ -493,6 +549,7 @@ async def generate_image(
                 sampler_name=sampler
             )
             model_manager.bind_active_pipeline(request_id, pipe)
+            nsfw_checker_active = model_manager.set_pipeline_nsfw_filter(pipe, enabled=nsfw_filter_active)
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
@@ -502,15 +559,18 @@ async def generate_image(
             generator = torch.Generator(device=model_manager.device).manual_seed(seed)
 
             result_image = None
+            result_nsfw_detected = False
 
             logger.info(
-                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s",
+                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s nsfw_filter=%s checker_active=%s",
                 request_id,
                 model_family,
                 actual_mode,
                 width,
                 height,
                 seed,
+                nsfw_filter_active,
+                nsfw_checker_active,
             )
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
@@ -532,6 +592,7 @@ async def generate_image(
                     generator=generator,
                     callback_on_step_end=step_callback
                 )
+                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
             elif actual_mode == "img2img":
@@ -551,6 +612,7 @@ async def generate_image(
                     generator=generator,
                     callback_on_step_end=step_callback
                 )
+                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
             elif actual_mode == "inpainting":
@@ -587,6 +649,7 @@ async def generate_image(
                     generator=generator,
                     callback_on_step_end=step_callback
                 )
+                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
                 # COMPOSITING
@@ -601,6 +664,10 @@ async def generate_image(
                             soft_mask_input,
                             hard_mask=hard_mask_input
                         )
+
+            if nsfw_filter_active and result_nsfw_detected:
+                logger.warning("NSFW safety checker blocked generation: request_id=%s", request_id)
+                raise HTTPException(status_code=422, detail="NSFW content was detected and blocked.")
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
@@ -627,6 +694,9 @@ async def generate_image(
                 "prompt_transform_provider": transform_result.provider,
                 "prompt_transform_latency_ms": transform_result.latency_ms,
                 "prompt_transform_strict": settings.PROMPT_TRANSFORM_STRICT,
+                "nsfw_filter_active": nsfw_filter_active,
+                "nsfw_checker_active": nsfw_checker_active,
+                "nsfw_detected": result_nsfw_detected,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:

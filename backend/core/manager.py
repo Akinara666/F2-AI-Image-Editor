@@ -513,6 +513,41 @@ class ModelManager:
                 self.device,
             )
 
+    def set_pipeline_nsfw_filter(self, pipeline, enabled: bool) -> bool:
+        safety_checker_attr = "safety_checker"
+        if not hasattr(pipeline, safety_checker_attr):
+            self.logger.info(
+                "Pipeline %s does not expose a safety_checker component; NSFW runtime toggle skipped.",
+                type(pipeline).__name__,
+            )
+            return False
+
+        if not hasattr(pipeline, "_original_safety_checker"):
+            setattr(pipeline, "_original_safety_checker", getattr(pipeline, safety_checker_attr, None))
+        if hasattr(pipeline, "requires_safety_checker") and not hasattr(pipeline, "_original_requires_safety_checker"):
+            setattr(
+                pipeline,
+                "_original_requires_safety_checker",
+                bool(getattr(pipeline, "requires_safety_checker")),
+            )
+
+        original_safety_checker = getattr(pipeline, "_original_safety_checker", None)
+        checker_active = bool(enabled and original_safety_checker is not None)
+        setattr(pipeline, safety_checker_attr, original_safety_checker if checker_active else None)
+
+        if hasattr(pipeline, "requires_safety_checker"):
+            original_requires = bool(getattr(pipeline, "_original_requires_safety_checker", False))
+            pipeline.requires_safety_checker = bool(checker_active and original_requires)
+
+        self.logger.info(
+            "Configured NSFW runtime filter for %s: requested_enabled=%s checker_available=%s active=%s",
+            type(pipeline).__name__,
+            enabled,
+            original_safety_checker is not None,
+            checker_active,
+        )
+        return checker_active
+
     @asynccontextmanager
     async def generation_session(self, request_id: str):
         await self.generation_lock.acquire()

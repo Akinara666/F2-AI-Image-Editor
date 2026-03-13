@@ -26,6 +26,7 @@ class Settings:
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
     SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
+    NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
