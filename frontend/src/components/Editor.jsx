@@ -169,18 +169,6 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         setFabricCanvas(canvas);
 
-        fabric.Object.prototype.toObject = (function wrapToObject(toObject) {
-            return function toEditorObject() {
-                return fabric.util.object.extend(toObject.call(this), {
-                    editorRole: this.editorRole,
-                    isMask: this.isMask,
-                    isEraser: this.isEraser,
-                    isCandidate: this.isCandidate,
-                    candidateSourceUrl: this.candidateSourceUrl
-                });
-            };
-        })(fabric.Object.prototype.toObject);
-
         const updateFrameViewportStyle = (zoomLevel) => {
             const safeZoom = Math.max(zoomLevel || 1, 0.1);
             frameVisual.set({
