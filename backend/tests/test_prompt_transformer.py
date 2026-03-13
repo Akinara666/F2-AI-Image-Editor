@@ -188,6 +188,23 @@ class PromptTransformerTests(unittest.TestCase):
         self.assertEqual(adapter.unload_count, 1)
         self.assertFalse(adapter.unloaded_while_active)
 
+    def test_busy_transform_requests_are_rejected_while_slot_is_occupied(self):
+        transformer = PromptTransformer(
+            enabled=True,
+            timeout_ms=5000,
+            provider_name="stub",
+            adapter=StructuredAdapter(),
+        )
+        self.assertTrue(transformer._try_acquire_transform_slot())
+        try:
+            result = asyncio.run(transformer.transform_prompt("second", use_prompt_transform=True))
+        finally:
+            transformer._release_transform_slot()
+
+        self.assertEqual(result.transform_status, "busy")
+        self.assertEqual(result.transformed_prompt, "")
+        self.assertEqual(result.error, "Prompt transformer is busy with a previous request.")
+
 
 if __name__ == "__main__":
     unittest.main()

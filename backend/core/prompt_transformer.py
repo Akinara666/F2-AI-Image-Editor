@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -111,6 +112,23 @@ class PromptTransformer:
         self.negative_merge_policy = negative_merge_policy
         self.adapter = adapter or build_llm_adapter(provider_name)
         self.logger = logger or logging.getLogger("PromptTransformer")
+        self._transform_slot_lock = threading.Lock()
+        self._transform_inflight = False
+
+    def _try_acquire_transform_slot(self) -> bool:
+        with self._transform_slot_lock:
+            if self._transform_inflight:
+                return False
+            self._transform_inflight = True
+            return True
+
+    def _release_transform_slot(self) -> None:
+        with self._transform_slot_lock:
+            self._transform_inflight = False
+
+    def _is_transform_busy(self) -> bool:
+        with self._transform_slot_lock:
+            return self._transform_inflight
 
     async def transform_prompt(
         self,
@@ -142,10 +160,31 @@ class PromptTransformer:
                 latency_ms=0,
             )
 
+        if not self._try_acquire_transform_slot():
+            self.logger.info("Prompt transform rejected because previous request is still running.")
+            return PromptTransformResult(
+                raw_prompt=prompt_clean,
+                transformed_prompt="",
+                transformed_negative_prompt=user_negative_prompt,
+                transform_status="busy",
+                provider=self.provider_name,
+                latency_ms=0,
+                error="Prompt transformer is busy with a previous request.",
+            )
+
         started = time.perf_counter()
+        worker_started = threading.Event()
+
+        def run_transform_call() -> dict[str, Any]:
+            worker_started.set()
+            try:
+                return self.adapter.run_transform(prompt_clean, context or {})
+            finally:
+                self._release_transform_slot()
+
         try:
             raw_payload = await asyncio.wait_for(
-                asyncio.to_thread(self.adapter.run_transform, prompt_clean, context or {}),
+                asyncio.to_thread(run_transform_call),
                 timeout=max(0.1, self.timeout_ms / 1000.0),
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
@@ -169,6 +208,8 @@ class PromptTransformer:
                 latency_ms=latency_ms,
             )
         except Exception as exc:
+            if not worker_started.is_set():
+                self._release_transform_slot()
             latency_ms = int((time.perf_counter() - started) * 1000)
             self.logger.warning("Prompt transform fallback: %s", exc)
             return PromptTransformResult(
@@ -193,6 +234,7 @@ class PromptTransformer:
             "provider": self.provider_name,
             "timeout_ms": self.timeout_ms,
             "negative_merge_policy": self.negative_merge_policy,
+            "busy": self._is_transform_busy(),
         }
         try:
             data["adapter"] = self.adapter.health()
