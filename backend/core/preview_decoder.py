@@ -237,21 +237,21 @@ class PreviewDecoder:
         needs_upcast = bool(getattr(getattr(vae, "config", None), "force_upcast", False))
         preview_dtype = original_vae_dtype
 
-        if needs_upcast and hasattr(pipe, "upcast_vae"):
-            pipe.upcast_vae()
-            post_quant_param = next(vae.post_quant_conv.parameters(), None) if hasattr(vae, "post_quant_conv") else None
-            preview_dtype = post_quant_param.dtype if post_quant_param is not None else torch.float32
+        if needs_upcast:
+            vae.to(device=vae_device, dtype=torch.float32)
+            preview_dtype = torch.float32
 
-        if preview_dtype is not None:
-            preview_latents = preview_latents.to(device=vae_device, dtype=preview_dtype)
-        else:
-            preview_latents = preview_latents.to(device=vae_device)
+        try:
+            if preview_dtype is not None:
+                preview_latents = preview_latents.to(device=vae_device, dtype=preview_dtype)
+            else:
+                preview_latents = preview_latents.to(device=vae_device)
 
-        with torch.inference_mode():
-            image_tensor = vae.decode(preview_latents, return_dict=False)[0]
-
-        if needs_upcast and original_vae_dtype is not None:
-            vae.to(dtype=original_vae_dtype)
+            with torch.inference_mode():
+                image_tensor = vae.decode(preview_latents, return_dict=False)[0]
+        finally:
+            if needs_upcast and original_vae_dtype is not None:
+                vae.to(device=vae_device, dtype=original_vae_dtype)
 
         if hasattr(pipe, "image_processor") and pipe.image_processor is not None:
             images = pipe.image_processor.postprocess(image_tensor, output_type="pil")

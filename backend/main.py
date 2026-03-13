@@ -29,7 +29,6 @@ from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
 from core.generation_preview import generation_preview_store
 from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
-from core.weighted_prompt import build_weighted_prompt_kwargs, has_weighted_prompt_syntax
 import logging
 
 # Setup Logging
@@ -613,7 +612,6 @@ async def generate_image(
         resolved_preview_method = _resolve_preview_method(preview_method)
         preview_interval_steps = settings.LIVE_PREVIEW_INTERVAL_STEPS
         configured_clip_skip, diffusers_clip_skip = _resolve_clip_skip_for_diffusers()
-        weighted_prompt_active = has_weighted_prompt_syntax(final_prompt) or has_weighted_prompt_syntax(final_negative_prompt)
         nsfw_negative_prompt_applied = False
         if nsfw_filter_active and nsfw_negative_prompt_extra:
             merged_negative_prompt = _merge_negative_prompt_terms(
@@ -622,9 +620,8 @@ async def generate_image(
             )
             nsfw_negative_prompt_applied = merged_negative_prompt != (final_negative_prompt or "").strip()
             final_negative_prompt = merged_negative_prompt
-            weighted_prompt_active = weighted_prompt_active or has_weighted_prompt_syntax(final_negative_prompt)
         logger.info(
-            "Generation request policies: request_id=%s nsfw_enabled=%s nsfw_applied=%s nsfw_extra_len=%s preview_method=%s preview_interval=%s clip_skip=%s diffusers_clip_skip=%s weighted_prompt=%s",
+            "Generation request policies: request_id=%s nsfw_enabled=%s nsfw_applied=%s nsfw_extra_len=%s preview_method=%s preview_interval=%s clip_skip=%s diffusers_clip_skip=%s",
             request_id,
             nsfw_filter_active,
             nsfw_negative_prompt_applied,
@@ -633,7 +630,6 @@ async def generate_image(
             preview_interval_steps,
             configured_clip_skip,
             diffusers_clip_skip,
-            weighted_prompt_active,
         )
              
         # Detect Mode & Process Inputs Early
@@ -726,19 +722,10 @@ async def generate_image(
                 "negative_prompt": final_negative_prompt,
                 "clip_skip": diffusers_clip_skip,
             }
-            if weighted_prompt_active:
-                execution_device = getattr(pipe, "_execution_device", torch.device(model_manager.device))
-                prompt_call_kwargs = build_weighted_prompt_kwargs(
-                    pipe,
-                    prompt=final_prompt,
-                    negative_prompt=final_negative_prompt,
-                    device=execution_device,
-                    clip_skip=diffusers_clip_skip,
-                )
 
             result_image = None
             logger.info(
-                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s nsfw_filter=%s nsfw_negative_applied=%s weighted_prompt=%s",
+                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s nsfw_filter=%s nsfw_negative_applied=%s",
                 request_id,
                 model_family,
                 actual_mode,
@@ -747,7 +734,6 @@ async def generate_image(
                 seed,
                 nsfw_filter_active,
                 nsfw_negative_prompt_applied,
-                weighted_prompt_active,
             )
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
@@ -900,7 +886,6 @@ async def generate_image(
                 "nsfw_negative_prompt_extra": nsfw_negative_prompt_extra if nsfw_filter_active else "",
                 "clip_skip": configured_clip_skip,
                 "diffusers_clip_skip": diffusers_clip_skip,
-                "weighted_prompt_active": weighted_prompt_active,
                 "preview_method": resolved_preview_method,
                 "preview_interval_steps": preview_interval_steps,
             }
