@@ -62,9 +62,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Imports from core.config
 
 ALLOWED_CLOUD_MODELS = [
-    {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)"},
-    {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)"},
-    {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)"},
+    {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)", "family": "sd"},
+    {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)", "family": "sd"},
+    {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)", "family": "sd"},
+    {"id": "stabilityai/stable-diffusion-xl-base-1.0", "label": "SDXL Base 1.0 (Cloud)", "family": "sdxl"},
 ]
 ALLOWED_SAMPLERS = {
     "Euler a",
@@ -81,6 +82,7 @@ ALLOWED_SAMPLERS = {
 }
 ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
 LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
+ALLOWED_MODEL_FAMILIES = {"sd", "sdxl"}
 MIN_DIMENSION = 64
 MAX_DIMENSION = 2048
 MAX_GENERATION_PIXELS = 1024 * 1024
@@ -120,16 +122,34 @@ def _get_local_model_entries() -> list[dict[str, str]]:
                 logger.warning("Skipping local model outside MODELS_DIR: %s", resolved_file)
                 continue
 
-            entries.append({"id": str(resolved_file), "label": f"{resolved_file.name} (Local)"})
+            entries.append({
+                "id": str(resolved_file),
+                "label": f"{resolved_file.name} (Local)",
+                "family": model_manager.infer_model_family(str(resolved_file)),
+            })
     except Exception as e:
         logger.error(f"Failed to scan models directory: {e}")
 
     return entries
 
 
-def _get_allowed_model_map() -> dict[str, str]:
+def _get_allowed_model_map() -> dict[str, dict[str, str]]:
     entries = ALLOWED_CLOUD_MODELS + _get_local_model_entries()
-    return {entry["id"]: entry["label"] for entry in entries}
+    return {entry["id"]: entry for entry in entries}
+
+
+def _normalize_model_family(model_family: Optional[str]) -> Optional[str]:
+    if model_family is None:
+        return None
+
+    normalized_family = model_family.strip().lower()
+    if not normalized_family:
+        return None
+    if normalized_family not in ALLOWED_MODEL_FAMILIES:
+        raise _validation_error(
+            f"model_family must be one of: {', '.join(sorted(ALLOWED_MODEL_FAMILIES))}."
+        )
+    return normalized_family
 
 
 def _validate_int_field(name: str, value: int, low: int, high: int) -> int:
@@ -161,6 +181,7 @@ def _validate_generation_inputs(
     cfg: float,
     seed: int,
     model_id: str,
+    model_family: Optional[str],
     sampler: str,
     mode: str,
     style_preset: Optional[str],
@@ -198,8 +219,21 @@ def _validate_generation_inputs(
 
     allowed_models = _get_allowed_model_map()
     normalized_model_id = str(Path(model_id).resolve()) if model_id not in allowed_models and Path(model_id).is_absolute() else model_id
-    if normalized_model_id not in allowed_models:
+    allowed_model_entry = allowed_models.get(normalized_model_id)
+    if allowed_model_entry is None:
         raise _validation_error("Unsupported model_id.")
+
+    requested_model_family = _normalize_model_family(model_family)
+    allowed_model_family = allowed_model_entry.get("family")
+    if requested_model_family and allowed_model_family and requested_model_family != allowed_model_family:
+        raise _validation_error(
+            f"model_family={requested_model_family} does not match selected model family={allowed_model_family}."
+        )
+    resolved_model_family = (
+        requested_model_family
+        or allowed_model_family
+        or model_manager.infer_model_family(normalized_model_id)
+    )
 
     return {
         "width": width,
@@ -208,6 +242,7 @@ def _validate_generation_inputs(
         "cfg": cfg,
         "seed": seed,
         "model_id": normalized_model_id,
+        "model_family": resolved_model_family,
         "sampler": sampler,
         "mode": mode,
         "style_preset": style_preset,
@@ -306,6 +341,7 @@ async def generate_image(
     cfg: float = Form(default=7.5),
     seed: int = Form(default=-1),
     model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    model_family: Optional[str] = Form(default=None),
     sampler: str = Form(default="Euler a"),
     mode: str = Form(default="auto"), # auto, txt2img, img2img, inpainting
     style_preset: Optional[str] = Form(None),
@@ -324,6 +360,7 @@ async def generate_image(
             cfg=cfg,
             seed=seed,
             model_id=model_id,
+            model_family=model_family,
             sampler=sampler,
             mode=mode,
             style_preset=style_preset,
@@ -337,6 +374,7 @@ async def generate_image(
         cfg = validated["cfg"]
         seed = validated["seed"]
         model_id = validated["model_id"]
+        model_family = validated["model_family"]
         sampler = validated["sampler"]
         mode = validated["mode"]
         style_preset = validated["style_preset"]
@@ -352,6 +390,7 @@ async def generate_image(
             context={
                 "mode": mode,
                 "model_id": model_id,
+                "model_family": model_family,
                 "user_negative_prompt": negative_prompt,
             },
         )
@@ -449,6 +488,7 @@ async def generate_image(
 
             pipe = await model_manager.get_model(
                 model_id,
+                model_family=model_family,
                 pipeline_type=pipeline_type,
                 sampler_name=sampler
             )
@@ -464,8 +504,9 @@ async def generate_image(
             result_image = None
 
             logger.info(
-                "Starting Generation: request_id=%s Mode=%s Size=%sx%s Seed=%s",
+                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s",
                 request_id,
+                model_family,
                 actual_mode,
                 width,
                 height,
@@ -576,6 +617,7 @@ async def generate_image(
                 "steps": steps,
                 "cfg": cfg,
                 "model_id": model_id,
+                "model_family": model_family,
                 "mode": actual_mode,
                 #_____________апдейт_______ Prompt transformation trace
                 "raw_prompt": transform_result.raw_prompt,

@@ -2,12 +2,17 @@ import torch
 import gc
 import asyncio
 import logging
+import re
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from pathlib import Path
 from diffusers import (
     StableDiffusionPipeline, 
     StableDiffusionImg2ImgPipeline,
     StableDiffusionInpaintPipeline,
+    StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+    StableDiffusionXLInpaintPipeline,
     ControlNetModel,
     StableDiffusionControlNetPipeline,
     EulerAncestralDiscreteScheduler,
@@ -25,6 +30,8 @@ from typing import Optional, Literal
 
 from core.config import settings
 
+ModelFamily = Literal["sd", "sdxl"]
+
 class ModelManager:
     def __init__(self, device=settings.DEVICE, max_cache_size=settings.MAX_CACHED_MODELS):
         self.device = device
@@ -40,8 +47,76 @@ class ModelManager:
         self.cancelled_request_ids = set()
         self.logger = logging.getLogger("ModelManager")
 
-    def _generate_cache_key(self, model_id: str, pipeline_type: str) -> str:
-        return f"{model_id}::{pipeline_type}"
+    def _generate_cache_key(self, model_id: str, model_family: ModelFamily, pipeline_type: str) -> str:
+        return f"{model_family}::{model_id}::{pipeline_type}"
+
+    @staticmethod
+    def _normalize_model_family(model_family: Optional[str]) -> Optional[ModelFamily]:
+        if model_family is None:
+            return None
+
+        normalized_family = model_family.strip().lower()
+        if normalized_family in {"sd", "sdxl"}:
+            return normalized_family
+        return None
+
+    def infer_model_family(self, model_id: str, model_family: Optional[str] = None) -> ModelFamily:
+        normalized_family = self._normalize_model_family(model_family)
+        if normalized_family is not None:
+            return normalized_family
+
+        path_name = Path(model_id).name.lower()
+        lowered = model_id.lower()
+        sdxl_hints = (
+            "stable-diffusion-xl",
+            "sdxl",
+            "juggernautxl",
+            "realvisxl",
+            "xl-base",
+            "xl_inpaint",
+            "xl-turbo",
+            "pony",
+        )
+        if any(hint in lowered for hint in sdxl_hints):
+            return "sdxl"
+        if re.search(r"(^|[-_.\s])xl([-. _\s]|$)", path_name):
+            return "sdxl"
+        return "sd"
+
+    @staticmethod
+    def _get_pipeline_class(model_family: ModelFamily, pipeline_type: str):
+        if model_family == "sdxl":
+            if pipeline_type == "inpainting":
+                return StableDiffusionXLInpaintPipeline
+            if pipeline_type == "img2img":
+                return StableDiffusionXLImg2ImgPipeline
+            if pipeline_type == "controlnet":
+                raise NotImplementedError("SDXL ControlNet pipeline is not implemented yet.")
+            return StableDiffusionXLPipeline
+
+        if pipeline_type == "inpainting":
+            return StableDiffusionInpaintPipeline
+        if pipeline_type == "img2img":
+            return StableDiffusionImg2ImgPipeline
+        if pipeline_type == "controlnet":
+            return StableDiffusionControlNetPipeline
+        return StableDiffusionPipeline
+
+    def _build_load_arg_candidates(self, model_id: str) -> list[dict[str, object]]:
+        torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+        lower_model_id = model_id.lower()
+        base_args: dict[str, object] = {
+            "torch_dtype": torch_dtype,
+        }
+        if not lower_model_id.endswith(".ckpt"):
+            base_args["use_safetensors"] = True
+        if self.device == "cuda":
+            base_args["variant"] = "fp16"
+
+        candidates = [base_args]
+        if "variant" in base_args:
+            candidates.append({key: value for key, value in base_args.items() if key != "variant"})
+        return candidates
 
     def _unload_current_model(self):
         """No longer fully unloads by default. Models are managed by cpu_offload.
@@ -66,6 +141,7 @@ class ModelManager:
     async def get_model(
         self, 
         model_id: str, 
+        model_family: Optional[ModelFamily] = None,
         pipeline_type: Literal["text2img", "img2img", "inpainting", "controlnet"] = "text2img",
         sampler_name: str = "Euler a",
         **kwargs
@@ -75,7 +151,8 @@ class ModelManager:
         swaps them out to save VRAM.
         """
         async with self.model_lock:
-            cache_key = self._generate_cache_key(model_id, pipeline_type)
+            resolved_model_family = self.infer_model_family(model_id, model_family)
+            cache_key = self._generate_cache_key(model_id, resolved_model_family, pipeline_type)
             
             # Check if it is the EXACT same pipeline already active
             if self.current_cache_key == cache_key and self.current_pipeline is not None:
@@ -92,50 +169,73 @@ class ModelManager:
                 return self.current_pipeline
 
             # We need to load it fresh
-            self.logger.info(f"Loading model freshly: {model_id} ({pipeline_type})")
+            self.logger.info(
+                "Loading model freshly: model_id=%s family=%s pipeline_type=%s",
+                model_id,
+                resolved_model_family,
+                pipeline_type,
+            )
             
             try:
-                # Basic optimizations: fp16, safetensors
-                load_args = {
-                    "torch_dtype": torch.float16,
-                    "use_safetensors": True,
-                    "variant": "fp16", # Common for many huggingface models
-                }
-                
-                
-                # Helper to instantiate pipeline with specific args
-                def create_pipeline(args_override):
-                    final_args = {**load_args, **args_override}
-                    
-                    if model_id.endswith(".safetensors") or model_id.endswith(".ckpt"):
-                        # Use from_single_file for legacy/webui models
-                        if pipeline_type == "inpainting":
-                             return StableDiffusionInpaintPipeline.from_single_file(model_id, **final_args)
-                        elif pipeline_type == "img2img":
-                             return StableDiffusionImg2ImgPipeline.from_single_file(model_id, **final_args)
-                        else:
-                             return StableDiffusionPipeline.from_single_file(model_id, **final_args)
-                    else: 
-                         # Standard Diffusers loading
-                        if pipeline_type == "inpainting":
-                            return StableDiffusionInpaintPipeline.from_pretrained(model_id, **final_args)
-                        elif pipeline_type == "img2img":
-                            return StableDiffusionImg2ImgPipeline.from_pretrained(model_id, **final_args)
-                        elif pipeline_type == "controlnet":
-                            cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
-                            controlnet = ControlNetModel.from_pretrained(cnet_path, torch_dtype=torch.float16)
-                            return StableDiffusionControlNetPipeline.from_pretrained(model_id, controlnet=controlnet, **final_args)
-                        else:
-                            return StableDiffusionPipeline.from_pretrained(model_id, **final_args)
+                is_single_file = model_id.endswith(".safetensors") or model_id.endswith(".ckpt")
+                pipeline_class = self._get_pipeline_class(resolved_model_family, pipeline_type)
+                load_arg_candidates = self._build_load_arg_candidates(model_id)
 
-                # ATTEMPT 1: Load Offline
-                try:
-                    self.logger.info("Attempting to load model from local cache...")
-                    pipeline = create_pipeline({"local_files_only": True})
-                except Exception as e:
-                    self.logger.info(f"Local load failed ({e}). Attempting to download...")
-                    # ATTEMPT 2: Load Online
-                    pipeline = create_pipeline({"local_files_only": False})
+                # Helper to instantiate pipeline with specific args
+                def create_pipeline(load_args, *, local_files_only: bool):
+                    final_args = {**load_args}
+                    if not is_single_file:
+                        final_args["local_files_only"] = local_files_only
+                    
+                    if is_single_file:
+                        # Use from_single_file for legacy/webui models
+                        return pipeline_class.from_single_file(model_id, **final_args)
+                    else: 
+                        # Standard Diffusers loading
+                        if pipeline_type == "controlnet":
+                            cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
+                            controlnet = ControlNetModel.from_pretrained(
+                                cnet_path,
+                                torch_dtype=load_args["torch_dtype"],
+                            )
+                            return pipeline_class.from_pretrained(model_id, controlnet=controlnet, **final_args)
+                        return pipeline_class.from_pretrained(model_id, **final_args)
+
+                pipeline = None
+                load_errors = []
+                for local_files_only in ((True, False) if not is_single_file else (True,)):
+                    for load_args in load_arg_candidates:
+                        try:
+                            self.logger.info(
+                                "Attempting model load: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s dtype=%s",
+                                model_id,
+                                resolved_model_family,
+                                pipeline_type,
+                                local_files_only,
+                                load_args.get("variant", "<default>"),
+                                load_args["torch_dtype"],
+                            )
+                            pipeline = create_pipeline(load_args, local_files_only=local_files_only)
+                            break
+                        except Exception as e:
+                            load_errors.append(str(e))
+                            self.logger.info(
+                                "Model load attempt failed: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s error=%s",
+                                model_id,
+                                resolved_model_family,
+                                pipeline_type,
+                                local_files_only,
+                                load_args.get("variant", "<default>"),
+                                e,
+                            )
+                    if pipeline is not None:
+                        break
+
+                if pipeline is None:
+                    raise RuntimeError(
+                        "All model load attempts failed. Last errors: "
+                        + " | ".join(load_errors[-4:])
+                    )
 
                 # Optimize and handle VRAM
                 try:
@@ -144,11 +244,14 @@ class ModelManager:
                     self.logger.warning(f"Could not enable xformers: {e}")
 
                 # Enable CPU Offload to keep weights in RAM and move to VRAM dynamically
-                try:
-                    pipeline.enable_model_cpu_offload()
-                    self.logger.info("Enabled CPU offloading for model.")
-                except Exception as e:
-                    self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
+                if self.device == "cuda":
+                    try:
+                        pipeline.enable_model_cpu_offload()
+                        self.logger.info("Enabled CPU offloading for model.")
+                    except Exception as e:
+                        self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
+                        pipeline.to(self.device)
+                else:
                     pipeline.to(self.device)
                 
                 # Cache it (with LRU eviction)
