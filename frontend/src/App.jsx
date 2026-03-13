@@ -125,6 +125,7 @@ function App() {
   // Ref to Editor's export function
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
+  const currentGenerationRequestIdRef = React.useRef(null);
   const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
   const setGenerationLifecycleStatus = (nextStatus) => {
     generationStatusRef.current = nextStatus;
@@ -151,7 +152,9 @@ function App() {
     setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
 
     const controller = new AbortController();
+    const requestId = createClientId('generation');
     abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
 
     try {
       // 1. Get Crops from Editor
@@ -159,6 +162,7 @@ function App() {
 
       // 2. Prepare FormData
       const formData = new FormData();
+      formData.append('request_id', requestId);
       formData.append('prompt', normalizedParams.prompt);
       formData.append('raw_prompt', normalizedParams.prompt);
       formData.append('use_prompt_transform', 'false');
@@ -224,6 +228,9 @@ function App() {
       }
     } finally {
       abortControllerRef.current = null;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
       if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
         setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
       }
@@ -239,11 +246,15 @@ function App() {
     abortControllerRef.current?.abort();
 
     try {
-      await axios.post(API_ENDPOINTS.CANCEL);
+      const requestId = currentGenerationRequestIdRef.current;
+      if (requestId) {
+        await axios.post(API_ENDPOINTS.CANCEL, { request_id: requestId });
+      }
     } catch (e) {
       console.error("Failed to cleanly cancel on server", e);
     } finally {
       abortControllerRef.current = null;
+      currentGenerationRequestIdRef.current = null;
       setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
     }
   };

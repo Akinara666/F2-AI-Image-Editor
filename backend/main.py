@@ -9,6 +9,7 @@ import uvicorn
 import io
 import asyncio
 import traceback
+import uuid
 from PIL import Image
 import torch
 from pydantic import BaseModel
@@ -63,18 +64,18 @@ def clamp_int(value: int, low: int, high: int) -> int:
     """Clamp an integer value to [low, high]."""
     return max(low, min(high, int(value)))
 
-# --- Global State ---
-generation_state = {
-    "cancel_requested": False
-}
-
 # --- Endpoints ---
 
+class CancelGenerationRequest(BaseModel):
+    request_id: str
+
 @app.post("/cancel")
-def cancel_generation():
-    generation_state["cancel_requested"] = True
-    logger.info("Cancellation requested by user.")
-    return {"status": "cancelled"}
+def cancel_generation(payload: CancelGenerationRequest):
+    if not payload.request_id.strip():
+        raise HTTPException(status_code=400, detail="request_id is required")
+
+    model_manager.request_cancel(payload.request_id)
+    return {"status": "cancelling", "request_id": payload.request_id}
 
 @app.get("/health")
 def health_check():
@@ -141,6 +142,7 @@ def prompt_transform_health():
 @app.post("/generate")
 async def generate_image(
     prompt: str = Form(...),
+    request_id: Optional[str] = Form(default=None),
     raw_prompt: Optional[str] = Form(default=None),
     use_prompt_transform: Optional[bool] = Form(default=None),
     negative_prompt: str = Form(default="low quality, bad anatomy, ugly"),
@@ -160,8 +162,7 @@ async def generate_image(
     mask_image: UploadFile = File(None),
 ):
     try:
-        # Reset cancel state for new generation
-        generation_state["cancel_requested"] = False
+        request_id = (request_id or "").strip() or uuid.uuid4().hex
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
         source_prompt = raw_prompt.strip() if raw_prompt and raw_prompt.strip() else prompt
@@ -261,114 +262,131 @@ async def generate_image(
         pipeline_type = actual_mode
         if actual_mode not in ["text2img", "img2img", "inpainting", "controlnet"]:
             pipeline_type = "text2img" # fallback
-            
-        pipe = await model_manager.get_model(
-            model_id, 
-            pipeline_type=pipeline_type,
-            sampler_name=sampler
-        )
 
-        if seed == -1:
-            seed = random.randint(0, 2**32 - 1)
-        
-        generator = torch.Generator(device=model_manager.device).manual_seed(seed)
-        
-        result_image = None
-        
-        logger.info(f"Starting Generation: Mode={actual_mode}, Size={width}x{height}, Seed={seed}")
-
-        def step_callback(pipeline, step_index, timestep, callback_kwargs):
-            if generation_state.get("cancel_requested", False):
-                logger.info(f"Interrupting pipeline at step {step_index}...")
-                pipeline._interrupt = True
-            return callback_kwargs
-
-        # 4. Generate
-        if actual_mode == "text2img":
-            result = await asyncio.to_thread(
-                pipe,
-                prompt=final_prompt,
-                negative_prompt=final_negative_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                generator=generator,
-                callback_on_step_end=step_callback
-            )
-            result_image = result.images[0]
-            
-        elif actual_mode == "img2img":
-            if not image_input:
-                 raise HTTPException(status_code=400, detail="Img2Img requires init_image")
-            if image_input.mode == "RGBA":
-                image_input = image_input.convert("RGB")
-            
-            result = await asyncio.to_thread(
-                pipe,
-                prompt=final_prompt,
-                negative_prompt=final_negative_prompt,
-                image=image_input,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                strength=denoising_strength,
-                generator=generator,
-                callback_on_step_end=step_callback
-            )
-            result_image = result.images[0]
-
-        elif actual_mode == "inpainting":
-            if image_input is None:
-                image_input = Image.new("RGB", (width, height), (0, 0, 0))
-
-            if has_transparency and outpaint_ready_image is not None:
-                image_input = outpaint_ready_image
-                hard_mask_input, soft_mask_input = merge_generation_masks(
-                    hard_mask_input,
-                    soft_mask_input,
-                    outpaint_hard_mask,
-                    outpaint_soft_mask,
-                )
-                # Outpainting needs strong rewrite in transparent areas.
-                denoising_strength = max(denoising_strength, 0.95)
-            elif image_input.mode == "RGBA":
-                image_input = image_input.convert("RGB")
-
-            if hard_mask_input is None:
-                raise HTTPException(status_code=400, detail="Inpainting requires mask_image or transparent init_image")
-                
-            result = await asyncio.to_thread(
-                pipe,
-                prompt=final_prompt,
-                negative_prompt=final_negative_prompt,
-                image=image_input,
-                mask_image=hard_mask_input,
-                width=width,
-                height=height,
-                num_inference_steps=steps,
-                guidance_scale=cfg,
-                strength=denoising_strength,
-                generator=generator,
-                callback_on_step_end=step_callback
-            )
-            result_image = result.images[0]
-
-            # COMPOSITING
-            # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
-            # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-            if image_input and soft_mask_input:
-                if result_image.size == image_input.size == soft_mask_input.size:
-                    # Use new feather_blend logic for seamless edges
-                    result_image = feather_blend(
-                        image_input,
-                        result_image,
-                        soft_mask_input,
-                        hard_mask=hard_mask_input
-                    )
-
-        # 4.5 Check for cancellation
-        if generation_state.get("cancel_requested", False):
+        if model_manager.is_cancel_requested(request_id):
             raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+            
+        async with model_manager.generation_session(request_id):
+            if model_manager.is_cancel_requested(request_id):
+                raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+            pipe = await model_manager.get_model(
+                model_id,
+                pipeline_type=pipeline_type,
+                sampler_name=sampler
+            )
+            model_manager.bind_active_pipeline(request_id, pipe)
+            if model_manager.is_cancel_requested(request_id):
+                raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+            if seed == -1:
+                seed = random.randint(0, 2**32 - 1)
+
+            generator = torch.Generator(device=model_manager.device).manual_seed(seed)
+
+            result_image = None
+
+            logger.info(
+                "Starting Generation: request_id=%s Mode=%s Size=%sx%s Seed=%s",
+                request_id,
+                actual_mode,
+                width,
+                height,
+                seed,
+            )
+
+            def step_callback(pipeline, step_index, timestep, callback_kwargs):
+                if model_manager.is_cancel_requested(request_id):
+                    logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
+                    pipeline._interrupt = True
+                return callback_kwargs
+
+            # 4. Generate
+            if actual_mode == "text2img":
+                result = await asyncio.to_thread(
+                    pipe,
+                    prompt=final_prompt,
+                    negative_prompt=final_negative_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    generator=generator,
+                    callback_on_step_end=step_callback
+                )
+                result_image = result.images[0]
+
+            elif actual_mode == "img2img":
+                if not image_input:
+                    raise HTTPException(status_code=400, detail="Img2Img requires init_image")
+                if image_input.mode == "RGBA":
+                    image_input = image_input.convert("RGB")
+
+                result = await asyncio.to_thread(
+                    pipe,
+                    prompt=final_prompt,
+                    negative_prompt=final_negative_prompt,
+                    image=image_input,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    strength=denoising_strength,
+                    generator=generator,
+                    callback_on_step_end=step_callback
+                )
+                result_image = result.images[0]
+
+            elif actual_mode == "inpainting":
+                if image_input is None:
+                    image_input = Image.new("RGB", (width, height), (0, 0, 0))
+
+                if has_transparency and outpaint_ready_image is not None:
+                    image_input = outpaint_ready_image
+                    hard_mask_input, soft_mask_input = merge_generation_masks(
+                        hard_mask_input,
+                        soft_mask_input,
+                        outpaint_hard_mask,
+                        outpaint_soft_mask,
+                    )
+                    # Outpainting needs strong rewrite in transparent areas.
+                    denoising_strength = max(denoising_strength, 0.95)
+                elif image_input.mode == "RGBA":
+                    image_input = image_input.convert("RGB")
+
+                if hard_mask_input is None:
+                    raise HTTPException(status_code=400, detail="Inpainting requires mask_image or transparent init_image")
+
+                result = await asyncio.to_thread(
+                    pipe,
+                    prompt=final_prompt,
+                    negative_prompt=final_negative_prompt,
+                    image=image_input,
+                    mask_image=hard_mask_input,
+                    width=width,
+                    height=height,
+                    num_inference_steps=steps,
+                    guidance_scale=cfg,
+                    strength=denoising_strength,
+                    generator=generator,
+                    callback_on_step_end=step_callback
+                )
+                result_image = result.images[0]
+
+                # COMPOSITING
+                # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
+                # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
+                if image_input and soft_mask_input:
+                    if result_image.size == image_input.size == soft_mask_input.size:
+                        # Use new feather_blend logic for seamless edges
+                        result_image = feather_blend(
+                            image_input,
+                            result_image,
+                            soft_mask_input,
+                            hard_mask=hard_mask_input
+                        )
+
+            # 4.5 Check for cancellation
+            if model_manager.is_cancel_requested(request_id):
+                raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
         # 5. Save & Return
         if result_image:
@@ -399,6 +417,7 @@ async def generate_image(
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
+                "request_id": request_id,
                 "meta": meta
             }
             

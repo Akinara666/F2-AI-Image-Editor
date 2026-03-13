@@ -3,6 +3,7 @@ import gc
 import asyncio
 import logging
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from diffusers import (
     StableDiffusionPipeline, 
     StableDiffusionImg2ImgPipeline,
@@ -31,7 +32,12 @@ class ModelManager:
         self.max_cache_size = max_cache_size
         self.current_pipeline = None
         self.current_cache_key = None
-        self.lock = asyncio.Lock() # Async lock for sequential GPU access
+        self.model_lock = asyncio.Lock()
+        self.generation_lock = asyncio.Lock()
+        self.active_request_id: Optional[str] = None
+        self.cancel_requested = False
+        self.active_pipeline = None
+        self.cancelled_request_ids = set()
         self.logger = logging.getLogger("ModelManager")
 
     def _generate_cache_key(self, model_id: str, pipeline_type: str) -> str:
@@ -68,7 +74,7 @@ class ModelManager:
         Retrieves the requested model. If it's different from the loaded one,
         swaps them out to save VRAM.
         """
-        async with self.lock:
+        async with self.model_lock:
             cache_key = self._generate_cache_key(model_id, pipeline_type)
             
             # Check if it is the EXACT same pipeline already active
@@ -160,6 +166,57 @@ class ModelManager:
                 self.logger.error(f"Error loading model: {e}")
                 self._unload_current_model() # Cleanup on failure
                 raise e
+
+    @asynccontextmanager
+    async def generation_session(self, request_id: str):
+        await self.generation_lock.acquire()
+        self.active_request_id = request_id
+        self.cancel_requested = request_id in self.cancelled_request_ids
+        self.active_pipeline = None
+        self.logger.info("Generation session started: request_id=%s", request_id)
+        try:
+            yield
+        finally:
+            if self.active_pipeline is not None:
+                try:
+                    self.active_pipeline._interrupt = False
+                except Exception:
+                    pass
+            self.active_pipeline = None
+            self.cancel_requested = False
+            self.active_request_id = None
+            self.cancelled_request_ids.discard(request_id)
+            self.generation_lock.release()
+            self.logger.info("Generation session finished: request_id=%s", request_id)
+
+    def bind_active_pipeline(self, request_id: str, pipeline) -> None:
+        if self.active_request_id != request_id:
+            raise RuntimeError(f"Cannot bind pipeline for inactive request: {request_id}")
+
+        self.active_pipeline = pipeline
+        try:
+            pipeline._interrupt = self.cancel_requested
+        except Exception:
+            pass
+
+    def is_cancel_requested(self, request_id: str) -> bool:
+        if self.active_request_id == request_id:
+            return self.cancel_requested or request_id in self.cancelled_request_ids
+        return request_id in self.cancelled_request_ids
+
+    def request_cancel(self, request_id: str) -> bool:
+        self.cancelled_request_ids.add(request_id)
+        if self.active_request_id == request_id:
+            self.cancel_requested = True
+            if self.active_pipeline is not None:
+                try:
+                    self.active_pipeline._interrupt = True
+                except Exception:
+                    pass
+            self.logger.info("Cancellation requested for active request_id=%s", request_id)
+        else:
+            self.logger.info("Cancellation queued for request_id=%s", request_id)
+        return True
 
     def _evict_if_needed(self):
         """Evict least-recently-used pipelines when cache exceeds max size."""
