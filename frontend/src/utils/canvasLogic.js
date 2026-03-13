@@ -10,18 +10,6 @@ const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.FRAME]: 4
 };
 
-const cloneFabricObject = (object) => (
-    new Promise((resolve, reject) => {
-        object.clone((cloned) => {
-            if (!cloned) {
-                reject(new Error('Failed to clone Fabric object.'));
-                return;
-            }
-            resolve(cloned);
-        });
-    })
-);
-
 const rectsIntersect = (a, b) => (
     a.left < (b.left + b.width)
     && (a.left + a.width) > b.left
@@ -137,76 +125,76 @@ const canvasHasVisiblePixels = (canvasEl) => {
     return false;
 };
 
-const rasterizeObjects = async (objects, bounds) => {
-    const canvasEl = fabric.util.createCanvasElement();
-    canvasEl.width = bounds.width;
-    canvasEl.height = bounds.height;
-
-    const staticCanvas = new fabric.StaticCanvas(canvasEl, {
-        width: bounds.width,
-        height: bounds.height,
-        backgroundColor: null,
-        renderOnAddRemove: false,
-        enableRetinaScaling: false
-    });
+const renderObjectIntoCanvas = (ctx, object, bounds, temporaryProps = null) => {
+    const originalCanvas = object.canvas;
+    const originalDirty = object.dirty;
+    const originalProps = temporaryProps
+        ? Object.fromEntries(Object.keys(temporaryProps).map((key) => [key, object[key]]))
+        : null;
 
     try {
-        for (const object of objects) {
-            const cloned = await cloneFabricObject(object);
-            cloned.set({
-                left: (object.left ?? 0) - bounds.left,
-                top: (object.top ?? 0) - bounds.top,
-                selectable: false,
-                evented: false
-            });
-            staticCanvas.add(cloned);
+        if (temporaryProps) {
+            object.set(temporaryProps);
         }
-
-        staticCanvas.renderAll();
-
-        if (!canvasHasVisiblePixels(canvasEl)) {
-            return null;
-        }
-
-        return canvasEl.toDataURL('image/png');
+        object.canvas = null;
+        ctx.save();
+        ctx.translate(-bounds.left, -bounds.top);
+        object.render(ctx);
+        ctx.restore();
     } finally {
-        staticCanvas.dispose();
+        if (temporaryProps && originalProps) {
+            object.set(originalProps);
+        }
+        object.canvas = originalCanvas;
+        object.dirty = originalDirty;
     }
 };
 
-const createRasterObject = async (dataUrl, bounds, role) => (
-    new Promise((resolve, reject) => {
-        fabric.Image.fromURL(dataUrl, (image) => {
-            if (!image) {
-                reject(new Error('Failed to build raster image.'));
-                return;
-            }
+const rasterizeObjects = (entries, bounds) => {
+    const canvasEl = fabric.util.createCanvasElement();
+    canvasEl.width = bounds.width;
+    canvasEl.height = bounds.height;
+    const ctx = canvasEl.getContext('2d');
+    if (!ctx) {
+        return null;
+    }
 
-            image.set({
-                left: bounds.left,
-                top: bounds.top,
-                originX: 'left',
-                originY: 'top',
-                scaleX: 1,
-                scaleY: 1,
-                objectCaching: false,
-                noScaleCache: false,
-                selectable: false,
-                evented: false,
-                hasControls: false,
-                lockMovementX: true,
-                lockMovementY: true,
-                lockRotation: true,
-                lockScalingX: true,
-                lockScalingY: true,
-                hoverCursor: 'default',
-                editorRole: role
-            });
+    entries.forEach(({ object, temporaryProps }) => {
+        renderObjectIntoCanvas(ctx, object, bounds, temporaryProps);
+    });
 
-            resolve(image);
-        }, { crossOrigin: 'anonymous' });
-    })
-);
+    if (!canvasHasVisiblePixels(canvasEl)) {
+        return null;
+    }
+
+    return canvasEl;
+};
+
+const createRasterObject = (source, bounds, role) => {
+    const image = new fabric.Image(source, {
+        left: bounds.left,
+        top: bounds.top,
+        originX: 'left',
+        originY: 'top',
+        scaleX: 1,
+        scaleY: 1,
+        objectCaching: false,
+        noScaleCache: false,
+        selectable: false,
+        evented: false,
+        hasControls: false,
+        lockMovementX: true,
+        lockMovementY: true,
+        lockRotation: true,
+        lockScalingX: true,
+        lockScalingY: true,
+        hoverCursor: 'default',
+        editorRole: role
+    });
+
+    image.setCoords();
+    return image;
+};
 
 export const isBaseRasterObject = (object, genFrame) => (
     getRole(object, genFrame) === CANVAS_OBJECT_ROLES.BASE
@@ -256,20 +244,22 @@ export const bakeCandidateIntoCanvas = async (canvas, candidate, genFrame) => {
         candidateBounds,
         ...affectedBaseObjects.map((object) => getRasterObjectRenderBounds(object))
     ]));
-    const rasterCandidate = await cloneFabricObject(candidate);
-    rasterCandidate.set({
-        stroke: null,
-        strokeWidth: 0,
-        isCandidate: false,
-        editorRole: CANVAS_OBJECT_ROLES.BASE
-    });
-    const dataUrl = await rasterizeObjects([...affectedBaseObjects, rasterCandidate], bounds);
+    const rasterCanvas = rasterizeObjects([
+        ...affectedBaseObjects.map((object) => ({ object })),
+        {
+            object: candidate,
+            temporaryProps: {
+                stroke: null,
+                strokeWidth: 0
+            }
+        }
+    ], bounds);
 
     removedObjects.forEach((object) => canvas.remove(object));
 
     const addedObjects = [];
-    if (dataUrl) {
-        const bakedObject = await createRasterObject(dataUrl, bounds, CANVAS_OBJECT_ROLES.BASE);
+    if (rasterCanvas) {
+        const bakedObject = createRasterObject(rasterCanvas, bounds, CANVAS_OBJECT_ROLES.BASE);
         canvas.add(bakedObject);
         addedObjects.push(bakedObject);
     }
@@ -301,15 +291,18 @@ export const applyEraserPathToCanvas = async (canvas, eraserPath, genFrame) => {
 
     for (const object of affectedBaseObjects) {
         const bounds = getRasterObjectRenderBounds(object);
-        const dataUrl = await rasterizeObjects([object, eraserPath], bounds);
+        const rasterCanvas = rasterizeObjects([
+            { object },
+            { object: eraserPath }
+        ], bounds);
 
         canvas.remove(object);
 
-        if (!dataUrl) {
+        if (!rasterCanvas) {
             continue;
         }
 
-        const bakedObject = await createRasterObject(dataUrl, bounds, CANVAS_OBJECT_ROLES.BASE);
+        const bakedObject = createRasterObject(rasterCanvas, bounds, CANVAS_OBJECT_ROLES.BASE);
         canvas.add(bakedObject);
         addedObjects.push(bakedObject);
     }
