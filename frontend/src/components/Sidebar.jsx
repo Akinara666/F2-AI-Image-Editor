@@ -6,7 +6,7 @@ import './Sidebar.css';
 const Sidebar = ({
     availableModels,
     params, setParams,
-    isGenerating, onGenerate, onCancel,
+    isGenerating, isBusy, generationStatus, onGenerate, onCancel,
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
@@ -289,15 +289,17 @@ const Sidebar = ({
                     <button
                         className="btn btn-primary sidebar__cancel-btn"
                         onClick={onCancel}
+                        disabled={generationStatus === 'cancelling'}
                     >
-                        🛑 CANCEL
+                        {generationStatus === 'cancelling' ? '⏳ CANCELLING…' : '🛑 CANCEL'}
                     </button>
                 ) : (
                     <button
                         className="btn btn-primary sidebar__generate-btn"
                         onClick={onGenerate}
+                        disabled={isBusy}
                     >
-                        ✨ GENERATE
+                        {generationStatus === 'restoring' ? '⏳ RESTORING…' : '✨ GENERATE'}
                     </button>
                 )}
             </div>

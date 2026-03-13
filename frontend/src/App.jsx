@@ -9,6 +9,12 @@ import './theme.css';
 import './App.css';
 
 function App() {
+  const GENERATION_STATUS = {
+    IDLE: 'idle',
+    GENERATING: 'generating',
+    CANCELLING: 'cancelling',
+    RESTORING: 'restoring'
+  };
   const { showSuccess, showError, showInfo } = useToast();
   const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState({
@@ -46,8 +52,7 @@ function App() {
     fetchModels();
   }, []);
 
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [abortController, setAbortController] = useState(null);
+  const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
   const [history, setHistory] = useState(() => {
     try {
       const saved = localStorage.getItem('generation_history');
@@ -67,13 +72,21 @@ function App() {
 
   // Ref to Editor's export function
   const editorRef = React.useRef();
+  const abortControllerRef = React.useRef(null);
+  const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
+  const setGenerationLifecycleStatus = (nextStatus) => {
+    generationStatusRef.current = nextStatus;
+    setGenerationStatus(nextStatus);
+  };
+  const isGenerating = generationStatus === GENERATION_STATUS.GENERATING || generationStatus === GENERATION_STATUS.CANCELLING;
+  const isBusy = generationStatus !== GENERATION_STATUS.IDLE;
 
   const handleGenerate = async () => {
-    if (!editorRef.current) return;
-    setIsGenerating(true);
+    if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) return;
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
 
     const controller = new AbortController();
-    setAbortController(controller);
+    abortControllerRef.current = controller;
 
     try {
       // 1. Get Crops from Editor
@@ -145,26 +158,47 @@ function App() {
         showError(`Generation failed: ${errorMsg}`);
       }
     } finally {
-      setIsGenerating(false);
-      setAbortController(null);
+      abortControllerRef.current = null;
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
     }
   };
 
   const handleCancel = async () => {
-    if (abortController) {
-      abortController.abort();
+    if (generationStatusRef.current !== GENERATION_STATUS.GENERATING) {
+      return;
     }
-    setIsGenerating(false);
-    setAbortController(null);
+
+    setGenerationLifecycleStatus(GENERATION_STATUS.CANCELLING);
+    abortControllerRef.current?.abort();
+
     try {
       await axios.post(API_ENDPOINTS.CANCEL);
     } catch (e) {
       console.error("Failed to cleanly cancel on server", e);
+    } finally {
+      abortControllerRef.current = null;
+      setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
     }
   };
 
-  const handleRestore = (item) => {
-    editorRef.current.addGeneratedImage(item.url);
+  const handleRestore = async (item) => {
+    if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      return;
+    }
+
+    setGenerationLifecycleStatus(GENERATION_STATUS.RESTORING);
+    try {
+      await editorRef.current.addGeneratedImage(item.url);
+      showSuccess("History item restored to preview.");
+    } catch (e) {
+      console.error("Failed to restore history item", e);
+      const errorMsg = e.response?.data?.detail || e.message;
+      showError(`Failed to restore history item: ${errorMsg}`);
+    } finally {
+      setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+    }
   };
 
   return (
@@ -174,6 +208,8 @@ function App() {
         params={params}
         setParams={setParams}
         isGenerating={isGenerating}
+        isBusy={isBusy}
+        generationStatus={generationStatus}
         onGenerate={handleGenerate}
         onCancel={handleCancel}
         brushMode={brushMode}
@@ -200,6 +236,7 @@ function App() {
       <HistoryPanel
         history={history}
         onSelect={handleRestore}
+        isBusy={isBusy}
       />
     </div>
   );

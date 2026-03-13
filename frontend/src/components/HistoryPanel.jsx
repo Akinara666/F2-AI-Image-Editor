@@ -2,7 +2,7 @@ import React from 'react';
 import { resolveApiUrl } from '../constants';
 import './HistoryPanel.css';
 
-const HistoryPanel = ({ history, onSelect }) => {
+const HistoryPanel = ({ history, onSelect, isBusy = false }) => {
     return (
         <div className="panel history-panel">
             {/* Fixed Header */}
@@ -26,8 +26,13 @@ const HistoryPanel = ({ history, onSelect }) => {
                 {history.map((item, index) => (
                     <div
                         key={item.id}
-                        className="history-panel__card"
-                        onClick={() => onSelect(item)}
+                        className={`history-panel__card ${isBusy ? 'history-panel__card--disabled' : ''}`}
+                        onClick={() => {
+                            if (!isBusy) {
+                                void onSelect(item);
+                            }
+                        }}
+                        aria-disabled={isBusy}
                         style={{ animationDelay: `${index * 0.05}s`, animation: `fadeIn 0.3s ease ${index * 0.05}s backwards` }}
                     >
                         <div className="history-panel__thumb">

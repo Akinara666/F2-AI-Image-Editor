@@ -71,6 +71,17 @@
     box-shadow: var(--shadow-md), 0 0 12px rgba(0, 212, 255, 0.1);
 }
 
+.history-panel__card--disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.history-panel__card--disabled:hover {
+    border-color: rgba(255, 255, 255, 0.06);
+    transform: none;
+    box-shadow: var(--shadow-inset);
+}
+
 /* ===== Thumbnail ===== */
 .history-panel__thumb {
     position: relative;
@@ -90,6 +101,10 @@
 
 .history-panel__card:hover .history-panel__thumb img {
     transform: scale(1.05);
+}
+
+.history-panel__card--disabled:hover .history-panel__thumb img {
+    transform: none;
 }
 
 /* ===== Meta Info ===== */
