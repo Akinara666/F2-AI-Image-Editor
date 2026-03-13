@@ -4,6 +4,7 @@ import {
     applyEraserPathToCanvas,
     bakeCandidateIntoCanvas,
     enforceCanvasLayerOrder,
+    exportDocumentSnapshot,
     exportCanvasState,
     isBaseRasterObject,
     isCandidateObject,
@@ -351,6 +352,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         },
 
         exportForGeneration: async () => exportCanvasState(fabricCanvas, genFrame),
+
+        exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
         undo: performUndo,
 

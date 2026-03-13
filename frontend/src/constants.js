@@ -37,6 +37,7 @@ export const API_ENDPOINTS = {
     GENERATION_PREVIEW: (requestId) => `${API_BASE_URL}/generate/preview/${requestId}`,
     HEALTH: `${API_BASE_URL}/health`,
     CANCEL: `${API_BASE_URL}/cancel`,
+    HISTORY_SAVE: `${API_BASE_URL}/history/save`,
     HISTORY_DELETE: `${API_BASE_URL}/history/delete`,
     MODELS: `${API_BASE_URL}/models`
 };

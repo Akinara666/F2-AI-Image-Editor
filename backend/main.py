@@ -330,7 +330,8 @@ class CancelGenerationRequest(BaseModel):
 
 
 class DeleteHistoryOutputRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    urls: Optional[list[str]] = None
 
 
 def _resolve_output_path_from_url(url: str) -> Path:
@@ -365,18 +366,83 @@ def cancel_generation(payload: CancelGenerationRequest):
 
 @app.post("/history/delete")
 def delete_history_output(payload: DeleteHistoryOutputRequest):
-    target_path = _resolve_output_path_from_url(payload.url)
-    if not target_path.exists() or not target_path.is_file():
+    requested_urls: list[str] = []
+    if payload.url:
+        requested_urls.append(payload.url)
+    if payload.urls:
+        requested_urls.extend(payload.urls)
+
+    unique_urls = [url for index, url in enumerate(requested_urls) if url and url not in requested_urls[:index]]
+    if not unique_urls:
+        raise HTTPException(status_code=400, detail="url or urls is required")
+
+    deleted_urls: list[str] = []
+    missing_urls: list[str] = []
+
+    for url in unique_urls:
+        target_path = _resolve_output_path_from_url(url)
+        if not target_path.exists() or not target_path.is_file():
+            missing_urls.append(url)
+            continue
+
+        try:
+            target_path.unlink()
+        except Exception as exc:
+            logger.error("Failed to delete history output %s: %s", target_path, exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to delete output file")
+
+        logger.info("Deleted history output file: %s", target_path)
+        deleted_urls.append(url)
+
+    if not deleted_urls:
         raise HTTPException(status_code=404, detail="Output file not found")
 
-    try:
-        target_path.unlink()
-    except Exception as exc:
-        logger.error("Failed to delete history output %s: %s", target_path, exc, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to delete output file")
+    return {
+        "status": "success",
+        "deleted_urls": deleted_urls,
+        "missing_urls": missing_urls,
+    }
 
-    logger.info("Deleted history output file: %s", target_path)
-    return {"status": "success", "url": payload.url, "filename": target_path.name}
+
+@app.post("/history/save")
+async def save_history_snapshot(
+    image: UploadFile = File(...),
+    prompt: Optional[str] = Form(default=None),
+    raw_prompt: Optional[str] = Form(default=None),
+    negative_prompt: Optional[str] = Form(default=None),
+    seed: Optional[int] = Form(default=None),
+    generated_url: Optional[str] = Form(default=None),
+):
+    try:
+        image_bytes = await image.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="image file is empty")
+
+        with Image.open(io.BytesIO(image_bytes)) as opened_image:
+            snapshot_image = opened_image.copy()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to decode history snapshot upload: %s", exc, exc_info=True)
+        raise HTTPException(status_code=400, detail="Invalid history snapshot image")
+
+    meta = {
+        "prompt": prompt,
+        "raw_prompt": raw_prompt,
+        "negative_prompt": negative_prompt,
+        "seed": seed,
+        "generated_url": generated_url,
+        "history_kind": "document_snapshot",
+    }
+
+    filename = save_image_with_metadata(snapshot_image, meta, str(settings.OUTPUT_DIR))
+    url = f"/outputs/{filename}"
+    logger.info("Saved history snapshot: %s", url)
+    return {
+        "status": "success",
+        "url": url,
+        "filename": filename,
+    }
 
 @app.get("/health")
 def health_check():

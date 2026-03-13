@@ -51,10 +51,14 @@ const normalizeHistoryItem = (item) => {
     ? item.meta
     : {};
   const timestamp = Number(item.timestamp);
+  const generatedUrl = typeof item.generated_url === 'string' && item.generated_url.trim()
+    ? item.generated_url
+    : null;
 
   return {
     id: item.id ?? createClientId('history'),
     url: item.url,
+    generated_url: generatedUrl,
     meta,
     timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now()
   };
@@ -394,11 +398,41 @@ function App() {
         // 4. Add to Canvas
         await editorRef.current.addGeneratedImage(response.data.url);
 
+        const historyMeta = response.data.meta || {
+          prompt: normalizedParams.prompt,
+          raw_prompt: normalizedParams.prompt,
+          negative_prompt: normalizedParams.negative_prompt,
+          seed: normalizedParams.seed
+        };
+        let historyDocumentUrl = response.data.url;
+
+        try {
+          const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
+          const historyFormData = new FormData();
+          historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
+          historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
+          historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
+          historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
+          historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+          historyFormData.append('generated_url', response.data.url);
+
+          const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+          if (historySnapshotResponse.data?.url) {
+            historyDocumentUrl = historySnapshotResponse.data.url;
+          }
+        } catch (historySnapshotError) {
+          console.error("Failed to save full history snapshot", historySnapshotError);
+          showInfo("Generated tile saved, but full image snapshot could not be stored.");
+        }
+
         // 5. Add to History
         const newHistoryItem = {
           id: createClientId('history'),
-          url: response.data.url,
-          meta: response.data.meta || { prompt: normalizedParams.prompt, seed: normalizedParams.seed },
+          url: historyDocumentUrl,
+          generated_url: response.data.url,
+          meta: historyMeta,
           timestamp: Date.now()
         };
         setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
@@ -457,7 +491,7 @@ function App() {
 
     setGenerationLifecycleStatus(GENERATION_STATUS.RESTORING);
     try {
-      await editorRef.current.addGeneratedImage(item.url);
+      await editorRef.current.addGeneratedImage(item.generated_url || item.url);
       showSuccess("History item restored to preview.");
     } catch (e) {
       console.error("Failed to restore history item", e);
@@ -502,8 +536,9 @@ function App() {
 
   const handleDeleteHistoryItem = async (item) => {
     try {
+      const urls = Array.from(new Set([item.url, item.generated_url].filter(Boolean)));
       await axios.post(API_ENDPOINTS.HISTORY_DELETE, {
-        url: item.url
+        urls
       });
       removeHistoryItem(item);
       showSuccess("Image deleted from history.");

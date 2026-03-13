@@ -215,6 +215,31 @@ const canvasElementToBlob = (canvasEl, type, quality) => (
     })
 );
 
+const getDocumentSnapshotBounds = (objects, frame) => {
+    const renderBounds = objects.map((object) => {
+        const role = getRole(object, frame);
+        if (
+            role === CANVAS_OBJECT_ROLES.BASE
+            || role === CANVAS_OBJECT_ROLES.CANDIDATE
+        ) {
+            return getRasterObjectRenderBounds(object);
+        }
+        return getObjectBounds(object);
+    });
+
+    const mergedBounds = mergeRectBounds(renderBounds);
+    if (mergedBounds) {
+        return mergedBounds;
+    }
+
+    return {
+        left: frame.left,
+        top: frame.top,
+        width: Math.round(frame.width * frame.scaleX),
+        height: Math.round(frame.height * frame.scaleY)
+    };
+};
+
 const createRasterObject = (source, bounds, role) => {
     const image = new fabric.Image(source, {
         left: bounds.left,
@@ -440,6 +465,43 @@ export const exportCanvasState = async (canvas, frame) => {
     return {
         image: initBlob,
         mask: maskBlob,
+        width: bounds.width,
+        height: bounds.height
+    };
+};
+
+export const exportDocumentSnapshot = async (canvas, frame) => {
+    if (!canvas || !frame) {
+        throw new Error('Canvas invalid');
+    }
+
+    const exportableObjects = canvas.getObjects().filter((object) => (
+        object.visible !== false
+        && object !== frame
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && !isMaskObject(object, frame)
+        && !isSketchObject(object, frame)
+    ));
+
+    const bounds = getDocumentSnapshotBounds(exportableObjects, frame);
+    const snapshotCanvas = renderEntriesToCanvas(
+        exportableObjects.map((object) => ({
+            object,
+            temporaryProps: isCandidateObject(object, frame)
+                ? {
+                    stroke: null,
+                    strokeWidth: 0
+                }
+                : null
+        })),
+        bounds,
+        null
+    );
+
+    const image = await canvasElementToBlob(snapshotCanvas, 'image/png');
+    return {
+        image,
         width: bounds.width,
         height: bounds.height
     };

@@ -2,6 +2,7 @@ import os
 import numpy as np
 from PIL import Image, PngImagePlugin, ImageFilter
 from datetime import datetime
+from uuid import uuid4
 
 def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
     """
@@ -18,10 +19,12 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
             meta.add_text(str(key), str(value))
     
     # Generate filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Use prompt snippet for filename if available
     prompt_slug = params.get("prompt", "gen")[:20].replace(" ", "_").strip()
-    filename = f"{timestamp}_{prompt_slug}.png"
+    if not prompt_slug:
+        prompt_slug = "gen"
+    filename = f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
     filepath = os.path.join(output_dir, filename)
 
     image.save(filepath, "PNG", pnginfo=meta)
