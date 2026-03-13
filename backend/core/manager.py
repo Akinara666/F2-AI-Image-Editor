@@ -3,6 +3,7 @@ import gc
 import asyncio
 import logging
 import re
+import threading
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -46,6 +47,8 @@ class ModelManager:
         self.active_pipeline = None
         self.cancelled_request_ids = set()
         self.logger = logging.getLogger("ModelManager")
+        self.model_family_cache: dict[str, ModelFamily] = {}
+        self.model_family_cache_lock = threading.Lock()
 
     def _generate_cache_key(self, model_id: str, model_family: ModelFamily, pipeline_type: str) -> str:
         return f"{model_family}::{model_id}::{pipeline_type}"
@@ -60,11 +63,8 @@ class ModelManager:
             return normalized_family
         return None
 
-    def infer_model_family(self, model_id: str, model_family: Optional[str] = None) -> ModelFamily:
-        normalized_family = self._normalize_model_family(model_family)
-        if normalized_family is not None:
-            return normalized_family
-
+    @staticmethod
+    def _infer_model_family_from_name(model_id: str) -> ModelFamily:
         path_name = Path(model_id).name.lower()
         lowered = model_id.lower()
         sdxl_hints = (
@@ -82,6 +82,116 @@ class ModelManager:
         if re.search(r"(^|[-_.\s])xl([-. _\s]|$)", path_name):
             return "sdxl"
         return "sd"
+
+    @staticmethod
+    def _infer_model_family_from_safetensors_metadata(metadata: Optional[dict[str, str]]) -> Optional[ModelFamily]:
+        if not metadata:
+            return None
+
+        normalized_entries = [
+            f"{str(key).strip().lower()}={str(value).strip().lower()}"
+            for key, value in metadata.items()
+            if value is not None
+        ]
+        metadata_blob = " | ".join(normalized_entries)
+        sdxl_hints = (
+            "stable-diffusion-xl",
+            "sdxl",
+            "sd_xl_base_1.0",
+            "sd_xl_refiner_1.0",
+            "modelspec.architecture=stable-diffusion-xl",
+        )
+        if any(hint in metadata_blob for hint in sdxl_hints):
+            return "sdxl"
+
+        sd_hints = (
+            "stable-diffusion-v1",
+            "stable-diffusion-v2",
+            "stable-diffusion-2",
+        )
+        if any(hint in metadata_blob for hint in sd_hints):
+            return "sd"
+        return None
+
+    @staticmethod
+    def _infer_model_family_from_safetensors_keys(keys: list[str]) -> Optional[ModelFamily]:
+        sdxl_prefixes = (
+            "text_encoder_2.",
+            "conditioner.embedders.1.",
+            "conditioner.embedders.2.",
+        )
+        sdxl_fragments = (
+            ".text_projection",
+            ".add_embedding.",
+        )
+        if any(key.startswith(sdxl_prefixes) for key in keys):
+            return "sdxl"
+        if any(
+            key.startswith("conditioner.embedders.")
+            and any(fragment in key for fragment in sdxl_fragments)
+            for key in keys
+        ):
+            return "sdxl"
+        if any(key.startswith("cond_stage_model.") for key in keys):
+            return "sd"
+        if any(key.startswith("text_encoder.") for key in keys):
+            return "sd"
+        return None
+
+    def _infer_model_family_from_safetensors_file(self, model_path: Path) -> Optional[ModelFamily]:
+        try:
+            from safetensors import safe_open
+        except Exception as exc:
+            self.logger.warning("safetensors inspection unavailable for %s: %s", model_path, exc)
+            return None
+
+        try:
+            with safe_open(str(model_path), framework="pt", device="cpu") as safetensor_file:
+                metadata_family = self._infer_model_family_from_safetensors_metadata(safetensor_file.metadata())
+                if metadata_family is not None:
+                    self.logger.info(
+                        "Detected model family from safetensors metadata: path=%s family=%s",
+                        model_path,
+                        metadata_family,
+                    )
+                    return metadata_family
+
+                keys = list(safetensor_file.keys())
+                key_family = self._infer_model_family_from_safetensors_keys(keys)
+                if key_family is not None:
+                    self.logger.info(
+                        "Detected model family from safetensors keys: path=%s family=%s",
+                        model_path,
+                        key_family,
+                    )
+                    return key_family
+        except Exception as exc:
+            self.logger.warning("Failed to inspect safetensors model %s: %s", model_path, exc)
+            return None
+
+        return None
+
+    def infer_model_family(self, model_id: str, model_family: Optional[str] = None) -> ModelFamily:
+        normalized_family = self._normalize_model_family(model_family)
+        if normalized_family is not None:
+            return normalized_family
+
+        path = Path(model_id)
+        cache_key = str(path.resolve()) if path.is_absolute() or path.exists() else model_id
+
+        with self.model_family_cache_lock:
+            cached_family = self.model_family_cache.get(cache_key)
+        if cached_family is not None:
+            return cached_family
+
+        inferred_family: Optional[ModelFamily] = None
+        if path.suffix.lower() == ".safetensors" and path.exists():
+            inferred_family = self._infer_model_family_from_safetensors_file(path)
+
+        resolved_family = inferred_family or self._infer_model_family_from_name(model_id)
+        with self.model_family_cache_lock:
+            self.model_family_cache[cache_key] = resolved_family
+        return resolved_family
 
     @staticmethod
     def _get_pipeline_class(model_family: ModelFamily, pipeline_type: str):
