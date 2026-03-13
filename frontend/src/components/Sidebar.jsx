@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import axios from 'axios';
-import { AVAILABLE_SAMPLERS, AVAILABLE_SIZES, API_ENDPOINTS } from '../constants';
+import {
+    AVAILABLE_SAMPLERS,
+    AVAILABLE_SIZES,
+    API_ENDPOINTS,
+    parseGenerationNumericParam
+} from '../constants';
 import './Sidebar.css';
+
+const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
+const TEXT_NUMBER_FIELDS = ['seed', 'steps'];
 
 const Sidebar = ({
     availableModels,
@@ -14,12 +22,27 @@ const Sidebar = ({
     showToastError, showToastSuccess, showToastInfo
 }) => {
     const [isTransformingPrompt, setIsTransformingPrompt] = useState(false);
+    const [numberDrafts, setNumberDrafts] = useState({
+        seed: String(params.seed),
+        steps: String(params.steps)
+    });
+
+    useEffect(() => {
+        setNumberDrafts({
+            seed: String(params.seed),
+            steps: String(params.steps)
+        });
+    }, [params.seed, params.steps]);
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
 
         if (name === 'frame_size_index') {
-            const idx = parseInt(value);
+            const parsed = parseGenerationNumericParam(name, value);
+            if (!parsed.valid) {
+                return;
+            }
+            const idx = parsed.value;
             const size = AVAILABLE_SIZES[idx];
             if (editorRef && editorRef.current) {
                 editorRef.current.setGenFrameSize(size.width, size.height);
@@ -28,10 +51,54 @@ const Sidebar = ({
                 ...prev,
                 [name]: idx
             }));
-        } else {
+            return;
+        }
+
+        if (TEXT_NUMBER_FIELDS.includes(name)) {
+            setNumberDrafts(prev => ({
+                ...prev,
+                [name]: value
+            }));
+            const parsed = parseGenerationNumericParam(name, value);
+            if (!parsed.valid) {
+                return;
+            }
             setParams(prev => ({
                 ...prev,
-                [name]: type === 'number' ? parseFloat(value) : value
+                [name]: parsed.value
+            }));
+            return;
+        }
+
+        if (DIRECT_NUMBER_FIELDS.includes(name) || type === 'range') {
+            const parsed = parseGenerationNumericParam(name, value);
+            if (!parsed.valid) {
+                return;
+            }
+            setParams(prev => ({
+                ...prev,
+                [name]: parsed.value
+            }));
+            return;
+        }
+
+        setParams(prev => ({
+            ...prev,
+            [name]: value
+        }));
+    };
+
+    const handleNumberBlur = (name) => {
+        const parsed = parseGenerationNumericParam(name, numberDrafts[name]);
+        const nextValue = parsed.valid ? parsed.value : params[name];
+        setNumberDrafts(prev => ({
+            ...prev,
+            [name]: String(nextValue)
+        }));
+        if (parsed.valid && params[name] !== nextValue) {
+            setParams(prev => ({
+                ...prev,
+                [name]: nextValue
             }));
         }
     };
@@ -156,11 +223,31 @@ const Sidebar = ({
                 <div className="sidebar__grid-2col">
                     <div className="input-group">
                         <label className="input-label">Seed (-1 = Rnd)</label>
-                        <input type="number" className="input-field" name="seed" value={params.seed} onChange={handleChange} />
+                        <input
+                            type="number"
+                            className="input-field"
+                            name="seed"
+                            min="-1"
+                            max="4294967295"
+                            step="1"
+                            value={numberDrafts.seed}
+                            onChange={handleChange}
+                            onBlur={() => handleNumberBlur('seed')}
+                        />
                     </div>
                     <div className="input-group">
                         <label className="input-label">Steps</label>
-                        <input type="number" className="input-field" name="steps" value={params.steps} onChange={handleChange} />
+                        <input
+                            type="number"
+                            className="input-field"
+                            name="steps"
+                            min="1"
+                            max="150"
+                            step="1"
+                            value={numberDrafts.steps}
+                            onChange={handleChange}
+                            onBlur={() => handleNumberBlur('steps')}
+                        />
                     </div>
                 </div>
 

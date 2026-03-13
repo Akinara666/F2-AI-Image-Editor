@@ -4,7 +4,13 @@ import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
-import { API_ENDPOINTS, AVAILABLE_MODELS_PLACEHOLDER, AVAILABLE_SAMPLERS, AVAILABLE_SIZES } from './constants';
+import {
+  API_ENDPOINTS,
+  AVAILABLE_MODELS_PLACEHOLDER,
+  AVAILABLE_SAMPLERS,
+  AVAILABLE_SIZES,
+  normalizeGenerationParams
+} from './constants';
 import './theme.css';
 import './App.css';
 
@@ -83,6 +89,19 @@ function App() {
 
   const handleGenerate = async () => {
     if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) return;
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Invalid numeric parameters: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+    if (JSON.stringify(normalizedParams) !== JSON.stringify(params)) {
+      setParams(prev => ({
+        ...prev,
+        ...normalizedParams
+      }));
+    }
+
     setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
 
     const controller = new AbortController();
@@ -94,18 +113,18 @@ function App() {
 
       // 2. Prepare FormData
       const formData = new FormData();
-      formData.append('prompt', params.prompt);
-      formData.append('raw_prompt', params.prompt);
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('raw_prompt', normalizedParams.prompt);
       formData.append('use_prompt_transform', 'false');
-      formData.append('negative_prompt', params.negative_prompt);
-      formData.append('seed', params.seed);
-      formData.append('steps', params.steps);
-      formData.append('cfg', params.cfg);
-      formData.append('denoising_strength', params.denoising_strength);
-      formData.append('mask_blur', params.mask_blur);
-      formData.append('mask_padding', params.mask_padding);
-      formData.append('model_id', params.model_id);
-      formData.append('sampler', params.sampler);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', normalizedParams.seed);
+      formData.append('steps', normalizedParams.steps);
+      formData.append('cfg', normalizedParams.cfg);
+      formData.append('denoising_strength', normalizedParams.denoising_strength);
+      formData.append('mask_blur', normalizedParams.mask_blur);
+      formData.append('mask_padding', normalizedParams.mask_padding);
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
 
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
@@ -140,7 +159,7 @@ function App() {
         const newHistoryItem = {
           id: Date.now(),
           url: response.data.url,
-          meta: response.data.meta || { prompt: params.prompt, seed: params.seed },
+          meta: response.data.meta || { prompt: normalizedParams.prompt, seed: normalizedParams.seed },
           timestamp: Date.now()
         };
         setHistory(prev => [newHistoryItem, ...prev]);

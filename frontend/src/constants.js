@@ -64,3 +64,112 @@ export const AVAILABLE_SIZES = [
     { width: 512, height: 768, label: "512 x 768 (Portrait)" },
     { width: 768, height: 768, label: "768 x 768 (Square HD)" }
 ];
+
+export const GENERATION_NUMERIC_PARAM_RULES = {
+    frame_size_index: {
+        label: "Frame Size",
+        type: "int",
+        defaultValue: 0,
+        min: 0,
+        max: AVAILABLE_SIZES.length - 1
+    },
+    seed: {
+        label: "Seed",
+        type: "int",
+        defaultValue: -1,
+        min: -1,
+        max: 4294967295
+    },
+    steps: {
+        label: "Steps",
+        type: "int",
+        defaultValue: 20,
+        min: 1,
+        max: 150
+    },
+    cfg: {
+        label: "CFG Scale",
+        type: "float",
+        defaultValue: 7.5,
+        min: 1,
+        max: 20
+    },
+    denoising_strength: {
+        label: "Denoising",
+        type: "float",
+        defaultValue: 0.75,
+        min: 0,
+        max: 1
+    },
+    mask_blur: {
+        label: "Mask Blur",
+        type: "int",
+        defaultValue: 4,
+        min: 0,
+        max: 64
+    },
+    mask_padding: {
+        label: "Mask Padding",
+        type: "int",
+        defaultValue: 32,
+        min: 0,
+        max: 128
+    }
+};
+
+export const parseGenerationNumericParam = (name, rawValue) => {
+    const rule = GENERATION_NUMERIC_PARAM_RULES[name];
+    if (!rule) {
+        return { valid: false, reason: "unknown", value: rawValue };
+    }
+
+    if (rawValue === "" || rawValue === null || rawValue === undefined) {
+        return { valid: false, reason: "empty", value: rule.defaultValue, rule };
+    }
+
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue)) {
+        return { valid: false, reason: "nan", value: rule.defaultValue, rule };
+    }
+
+    if (rule.type === "int" && !Number.isInteger(numericValue)) {
+        return { valid: false, reason: "not_integer", value: rule.defaultValue, rule };
+    }
+
+    let value = numericValue;
+    if (rule.min !== undefined) {
+        value = Math.max(rule.min, value);
+    }
+    if (rule.max !== undefined) {
+        value = Math.min(rule.max, value);
+    }
+    if (rule.type === "int") {
+        value = Math.trunc(value);
+    }
+
+    return { valid: true, reason: null, value, rule };
+};
+
+export const normalizeGenerationParams = (params) => {
+    const normalized = { ...params };
+    const invalidFields = [];
+
+    Object.keys(GENERATION_NUMERIC_PARAM_RULES).forEach((name) => {
+        const parsed = parseGenerationNumericParam(name, params[name]);
+        if (parsed.valid) {
+            normalized[name] = parsed.value;
+            return;
+        }
+
+        invalidFields.push({
+            name,
+            label: parsed.rule?.label || name,
+            reason: parsed.reason
+        });
+    });
+
+    return {
+        normalized,
+        invalidFields
+    };
+};
