@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createClientId } from '../constants';
 import './ToastProvider.css';
 
 const ToastContext = createContext(null);
+const TOAST_DURATION_MS = 5000;
 
 export const useToast = () => {
     const context = useContext(ToastContext);
@@ -13,19 +15,36 @@ export const useToast = () => {
 
 export const ToastProvider = ({ children }) => {
     const [toasts, setToasts] = useState([]);
+    const timersRef = useRef(new Map());
 
-    const addToast = useCallback((message, type = 'info') => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type }]);
-
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-            removeToast(id);
-        }, 5000);
+    const clearToastTimer = useCallback((id) => {
+        const timerId = timersRef.current.get(id);
+        if (timerId) {
+            window.clearTimeout(timerId);
+            timersRef.current.delete(id);
+        }
     }, []);
 
     const removeToast = useCallback((id) => {
+        clearToastTimer(id);
         setToasts(prev => prev.filter(t => t.id !== id));
+    }, [clearToastTimer]);
+
+    const addToast = useCallback((message, type = 'info') => {
+        const id = createClientId('toast');
+        setToasts(prev => [...prev, { id, message, type }]);
+
+        const timerId = window.setTimeout(() => {
+            removeToast(id);
+        }, TOAST_DURATION_MS);
+        timersRef.current.set(id, timerId);
+    }, [removeToast]);
+
+    useEffect(() => () => {
+        timersRef.current.forEach((timerId) => {
+            window.clearTimeout(timerId);
+        });
+        timersRef.current.clear();
     }, []);
 
     const showSuccess = (msg) => addToast(msg, 'success');

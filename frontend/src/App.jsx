@@ -8,11 +8,58 @@ import {
   API_ENDPOINTS,
   AVAILABLE_MODELS_PLACEHOLDER,
   AVAILABLE_SAMPLERS,
-  AVAILABLE_SIZES,
+  createClientId,
   normalizeGenerationParams
 } from './constants';
 import './theme.css';
 import './App.css';
+
+const HISTORY_STORAGE_KEY = 'generation_history';
+const HISTORY_STORAGE_VERSION = 2;
+const HISTORY_MAX_ITEMS = 50;
+
+const normalizeHistoryItem = (item) => {
+  if (!item || typeof item !== 'object' || typeof item.url !== 'string' || !item.url.trim()) {
+    return null;
+  }
+
+  const meta = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
+    ? item.meta
+    : {};
+  const timestamp = Number(item.timestamp);
+
+  return {
+    id: item.id ?? createClientId('history'),
+    url: item.url,
+    meta,
+    timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now()
+  };
+};
+
+const normalizeHistoryItems = (items) => (
+  (Array.isArray(items) ? items : [])
+    .map(normalizeHistoryItem)
+    .filter(Boolean)
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .slice(0, HISTORY_MAX_ITEMS)
+);
+
+const loadHistoryFromStorage = () => {
+  try {
+    const saved = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!saved) {
+      return [];
+    }
+
+    const parsed = JSON.parse(saved);
+    const items = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.items) ? parsed.items : []);
+    return normalizeHistoryItems(items);
+  } catch {
+    return [];
+  }
+};
 
 function App() {
   const GENERATION_STATUS = {
@@ -59,17 +106,16 @@ function App() {
   }, []);
 
   const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
-  const [history, setHistory] = useState(() => {
-    try {
-      const saved = localStorage.getItem('generation_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch { return []; }
-  });
+  const [history, setHistory] = useState(loadHistoryFromStorage);
 
   // Persist history to localStorage
   React.useEffect(() => {
+    const normalizedHistory = normalizeHistoryItems(history);
     try {
-      localStorage.setItem('generation_history', JSON.stringify(history));
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify({
+        version: HISTORY_STORAGE_VERSION,
+        items: normalizedHistory
+      }));
     } catch { /* quota exceeded — silently ignore */ }
   }, [history]);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
@@ -157,12 +203,12 @@ function App() {
 
         // 5. Add to History
         const newHistoryItem = {
-          id: Date.now(),
+          id: createClientId('history'),
           url: response.data.url,
           meta: response.data.meta || { prompt: normalizedParams.prompt, seed: normalizedParams.seed },
           timestamp: Date.now()
         };
-        setHistory(prev => [newHistoryItem, ...prev]);
+        setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
       }
 
     } catch (e) {
