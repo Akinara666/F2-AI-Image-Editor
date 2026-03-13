@@ -8,6 +8,7 @@ const HistoryPanel = ({
     onMissing,
     onDelete,
     onDownload,
+    onCopyPrompt,
     isBusy = false
 }) => {
     const [openMenuId, setOpenMenuId] = useState(null);
@@ -80,6 +81,18 @@ const HistoryPanel = ({
                                         event.stopPropagation();
                                     }}
                                 >
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onCopyPrompt) {
+                                                void onCopyPrompt(item);
+                                            }
+                                        }}
+                                    >
+                                        Copy Prompt
+                                    </button>
                                     <button
                                         type="button"
                                         className="history-panel__menu-item"

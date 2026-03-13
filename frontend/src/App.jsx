@@ -18,6 +18,29 @@ import './App.css';
 const HISTORY_STORAGE_KEY = 'generation_history';
 const HISTORY_STORAGE_VERSION = 2;
 const HISTORY_MAX_ITEMS = 50;
+const APP_SETTINGS_STORAGE_KEY = 'generation_app_settings';
+const APP_SETTINGS_STORAGE_VERSION = 1;
+
+const DEFAULT_PARAMS = {
+  prompt: "A futuristic city",
+  negative_prompt: "low quality, blurry",
+  seed: -1,
+  steps: 20,
+  cfg: 7.5,
+  denoising_strength: 0.75,
+  mask_blur: 4,
+  mask_padding: 32,
+  preview_method: 'server_default',
+  model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
+  sampler: AVAILABLE_SAMPLERS[0],
+  frame_size_index: 0
+};
+
+const DEFAULT_BRUSH_SETTINGS = {
+  brushMode: 'none',
+  brushColor: '#ffffff',
+  brushSize: 20
+};
 
 const normalizeHistoryItem = (item) => {
   if (!item || typeof item !== 'object' || typeof item.url !== 'string' || !item.url.trim()) {
@@ -62,6 +85,49 @@ const loadHistoryFromStorage = () => {
   }
 };
 
+const loadAppSettingsFromStorage = () => {
+  try {
+    const saved = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+    if (!saved) {
+      return {
+        params: { ...DEFAULT_PARAMS },
+        brush: { ...DEFAULT_BRUSH_SETTINGS }
+      };
+    }
+
+    const parsed = JSON.parse(saved);
+    const rawParams = parsed?.params && typeof parsed.params === 'object' ? parsed.params : {};
+    const rawBrush = parsed?.brush && typeof parsed.brush === 'object' ? parsed.brush : {};
+    const { normalized } = normalizeGenerationParams({
+      ...DEFAULT_PARAMS,
+      ...rawParams
+    });
+
+    return {
+      params: {
+        ...normalized,
+        prompt: typeof rawParams.prompt === 'string' ? rawParams.prompt : DEFAULT_PARAMS.prompt,
+        negative_prompt: typeof rawParams.negative_prompt === 'string' ? rawParams.negative_prompt : DEFAULT_PARAMS.negative_prompt,
+        preview_method: typeof rawParams.preview_method === 'string' ? rawParams.preview_method : DEFAULT_PARAMS.preview_method,
+        model_id: typeof rawParams.model_id === 'string' ? rawParams.model_id : DEFAULT_PARAMS.model_id,
+        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler
+      },
+      brush: {
+        brushMode: typeof rawBrush.brushMode === 'string' ? rawBrush.brushMode : DEFAULT_BRUSH_SETTINGS.brushMode,
+        brushColor: typeof rawBrush.brushColor === 'string' ? rawBrush.brushColor : DEFAULT_BRUSH_SETTINGS.brushColor,
+        brushSize: Number.isFinite(Number(rawBrush.brushSize))
+          ? Math.max(1, Math.min(100, Number(rawBrush.brushSize)))
+          : DEFAULT_BRUSH_SETTINGS.brushSize
+      }
+    };
+  } catch {
+    return {
+      params: { ...DEFAULT_PARAMS },
+      brush: { ...DEFAULT_BRUSH_SETTINGS }
+    };
+  }
+};
+
 const isMissingHistoryError = (error) => {
   const status = error?.response?.status;
   if (status === 404 || status === 410) {
@@ -86,21 +152,9 @@ function App() {
     RESTORING: 'restoring'
   };
   const { showSuccess, showError, showInfo } = useToast();
+  const initialAppSettings = React.useMemo(loadAppSettingsFromStorage, []);
   const [availableModels, setAvailableModels] = useState([]);
-  const [params, setParams] = useState({
-    prompt: "A futuristic city",
-    negative_prompt: "low quality, blurry",
-    seed: -1,
-    steps: 20,
-    cfg: 7.5,
-    denoising_strength: 0.75,
-    mask_blur: 4,
-    mask_padding: 32,
-    preview_method: 'server_default',
-    model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
-    sampler: AVAILABLE_SAMPLERS[0],
-    frame_size_index: 0
-  });
+  const [params, setParams] = useState(initialAppSettings.params);
 
   // Fetch models on mount
   React.useEffect(() => {
@@ -109,10 +163,15 @@ function App() {
         const response = await axios.get(API_ENDPOINTS.MODELS);
         if (response.data && response.data.models) {
           setAvailableModels(response.data.models);
-          // Auto-select first model if none selected
+          // Replace placeholder or missing stored model with the first available model.
           setParams(prev => ({
             ...prev,
-            model_id: prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id ? response.data.models[0].id : prev.model_id
+            model_id: (
+              prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id
+              || !response.data.models.some((model) => model.id === prev.model_id)
+            )
+              ? response.data.models[0].id
+              : prev.model_id
           }));
         }
       } catch (err) {
@@ -198,9 +257,23 @@ function App() {
       controller.abort();
     };
   }, [history, pruneMissingHistoryItems]);
-  const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
-  const [brushColor, setBrushColor] = useState('#ffffff');
-  const [brushSize, setBrushSize] = useState(20);
+  const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
+  const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
+  const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify({
+        version: APP_SETTINGS_STORAGE_VERSION,
+        params,
+        brush: {
+          brushMode,
+          brushColor,
+          brushSize
+        }
+      }));
+    } catch { /* quota exceeded — silently ignore */ }
+  }, [params, brushMode, brushColor, brushSize]);
 
   // Ref to Editor's export function
   const editorRef = React.useRef();
@@ -446,6 +519,22 @@ function App() {
     }
   };
 
+  const handleCopyHistoryPrompt = async (item) => {
+    const promptText = String(item?.meta?.prompt || item?.meta?.raw_prompt || '').trim();
+    if (!promptText) {
+      showError("This history item has no saved prompt.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(promptText);
+      showSuccess("Prompt copied to clipboard.");
+    } catch (error) {
+      console.error("Failed to copy history prompt", error);
+      showError("Failed to copy prompt.");
+    }
+  };
+
   return (
     <div className="app-container">
       <Sidebar
@@ -485,6 +574,7 @@ function App() {
         onMissing={removeHistoryItem}
         onDelete={handleDeleteHistoryItem}
         onDownload={handleDownloadHistoryItem}
+        onCopyPrompt={handleCopyHistoryPrompt}
         isBusy={isBusy}
       />
     </div>
