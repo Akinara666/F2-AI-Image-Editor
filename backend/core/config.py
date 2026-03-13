@@ -27,6 +27,13 @@ class Settings:
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
     SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
     NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
+    NSFW_NEGATIVE_PROMPT: str = os.getenv(
+        "NSFW_NEGATIVE_PROMPT",
+        "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
+    )
+    CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
+    LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "full").strip().lower()
+    LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"

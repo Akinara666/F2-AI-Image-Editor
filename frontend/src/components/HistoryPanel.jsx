@@ -1,10 +1,33 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { resolveApiUrl } from '../constants';
 import './HistoryPanel.css';
 
-const HistoryPanel = ({ history, onSelect, isBusy = false }) => {
+const HistoryPanel = ({
+    history,
+    onSelect,
+    onMissing,
+    onDelete,
+    onDownload,
+    isBusy = false
+}) => {
+    const [openMenuId, setOpenMenuId] = useState(null);
+    const rootRef = useRef(null);
+
+    useEffect(() => {
+        const handlePointerDown = (event) => {
+            if (!rootRef.current?.contains(event.target)) {
+                setOpenMenuId(null);
+            }
+        };
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        return () => {
+            document.removeEventListener('pointerdown', handlePointerDown);
+        };
+    }, []);
+
     return (
-        <div className="panel history-panel">
+        <div className="panel history-panel" ref={rootRef}>
             {/* Fixed Header */}
             <div className="history-panel__header">
                 <h3 className="history-panel__title">
@@ -36,11 +59,63 @@ const HistoryPanel = ({ history, onSelect, isBusy = false }) => {
                         style={{ animationDelay: `${index * 0.05}s`, animation: `fadeIn 0.3s ease ${index * 0.05}s backwards` }}
                     >
                         <div className="history-panel__thumb">
+                            <button
+                                type="button"
+                                className="history-panel__menu-trigger"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setOpenMenuId((currentId) => (
+                                        currentId === item.id ? null : item.id
+                                    ));
+                                }}
+                                aria-label="History item actions"
+                                aria-expanded={openMenuId === item.id}
+                            >
+                                ⋯
+                            </button>
+                            {openMenuId === item.id && (
+                                <div
+                                    className="history-panel__menu"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                    }}
+                                >
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onDownload) {
+                                                void onDownload(item);
+                                            }
+                                        }}
+                                    >
+                                        Download
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item history-panel__menu-item--danger"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onDelete) {
+                                                void onDelete(item);
+                                            }
+                                        }}
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            )}
                             <img
                                 src={resolveApiUrl(item.url)}
                                 alt={item.meta.prompt}
                                 loading="lazy"
                                 crossOrigin="anonymous"
+                                onError={() => {
+                                    if (onMissing) {
+                                        onMissing(item);
+                                    }
+                                }}
                             />
                         </div>
                         <div className="history-panel__meta">

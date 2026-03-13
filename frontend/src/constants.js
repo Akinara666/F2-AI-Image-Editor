@@ -34,8 +34,10 @@ export const API_ENDPOINTS = {
     GENERATE: `${API_BASE_URL}/generate`,
     PROMPT_TRANSFORM: `${API_BASE_URL}/prompt/transform`,
     PROMPT_HEALTH: `${API_BASE_URL}/prompt/health`,
+    GENERATION_PREVIEW: (requestId) => `${API_BASE_URL}/generate/preview/${requestId}`,
     HEALTH: `${API_BASE_URL}/health`,
     CANCEL: `${API_BASE_URL}/cancel`,
+    HISTORY_DELETE: `${API_BASE_URL}/history/delete`,
     MODELS: `${API_BASE_URL}/models`
 };
 
@@ -56,6 +58,14 @@ export const AVAILABLE_SAMPLERS = [
     "Heun",
     "UniPC",
     "LMS"
+];
+
+export const AVAILABLE_LIVE_PREVIEW_METHODS = [
+    { id: "server_default", label: "Server Default" },
+    { id: "full", label: "Full" },
+    { id: "approx_nn", label: "Approx NN" },
+    { id: "approx_cheap", label: "Approx cheap" },
+    { id: "taesd", label: "TAESD" }
 ];
 
 export const AVAILABLE_SIZES = [

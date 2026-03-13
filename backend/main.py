@@ -6,12 +6,12 @@ import random
 from typing import Optional
 from pathlib import Path
 import math
-import re
 import uvicorn
 import io
 import asyncio
 import traceback
 import uuid
+from urllib.parse import urlparse, unquote
 from PIL import Image
 import torch
 from pydantic import BaseModel
@@ -27,6 +27,9 @@ from core.utils import (
 )
 from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
+from core.generation_preview import generation_preview_store
+from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
+from core.weighted_prompt import build_weighted_prompt_kwargs, has_weighted_prompt_syntax
 import logging
 
 # Setup Logging
@@ -84,28 +87,6 @@ ALLOWED_SAMPLERS = {
 ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
 LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
 ALLOWED_MODEL_FAMILIES = {"sd", "sdxl"}
-NSFW_BLOCKLIST_PATTERNS = (
-    (re.compile(r"\bnsfw\b", re.IGNORECASE), "nsfw"),
-    (re.compile(r"\bnude\b", re.IGNORECASE), "nude"),
-    (re.compile(r"\bnaked\b", re.IGNORECASE), "naked"),
-    (re.compile(r"\berotic\b", re.IGNORECASE), "erotic"),
-    (re.compile(r"\bporn(?:ography)?\b", re.IGNORECASE), "porn"),
-    (re.compile(r"\bsex(?:ual|y)?\b", re.IGNORECASE), "sex"),
-    (re.compile(r"\bhentai\b", re.IGNORECASE), "hentai"),
-    (re.compile(r"\bbreasts?\b", re.IGNORECASE), "breast"),
-    (re.compile(r"\bnipples?\b", re.IGNORECASE), "nipple"),
-    (re.compile(r"\bpenis\b", re.IGNORECASE), "penis"),
-    (re.compile(r"\bvagina\b", re.IGNORECASE), "vagina"),
-    (re.compile(r"\bvulva\b", re.IGNORECASE), "vulva"),
-    (re.compile(r"\bpussy\b", re.IGNORECASE), "pussy"),
-    (re.compile(r"\bblow\s?job\b", re.IGNORECASE), "blowjob"),
-    (re.compile(r"\boral sex\b", re.IGNORECASE), "oral sex"),
-    (re.compile(r"\bintercourse\b", re.IGNORECASE), "intercourse"),
-    (re.compile(r"\bmasturbat(?:e|ion)\b", re.IGNORECASE), "masturbation"),
-    (re.compile(r"\bej(?:aculat|aculation)\b", re.IGNORECASE), "ejaculation"),
-    (re.compile(r"\bcum\b", re.IGNORECASE), "cum"),
-    (re.compile(r"\banal\b", re.IGNORECASE), "anal"),
-)
 MIN_DIMENSION = 64
 MAX_DIMENSION = 2048
 MAX_GENERATION_PIXELS = 1024 * 1024
@@ -128,24 +109,72 @@ def _validation_error(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
 
 
-def _detect_nsfw_term(text: Optional[str]) -> Optional[str]:
-    if not text:
-        return None
+def _merge_negative_prompt_terms(base_prompt: Optional[str], extra_prompt: Optional[str]) -> str:
+    merged_terms: list[str] = []
+    seen_terms: set[str] = set()
 
-    for pattern, label in NSFW_BLOCKLIST_PATTERNS:
-        if pattern.search(text):
-            return label
-    return None
+    for source_prompt in (base_prompt, extra_prompt):
+        if not source_prompt:
+            continue
+
+        for raw_term in source_prompt.split(","):
+            term = raw_term.strip()
+            if not term:
+                continue
+
+            normalized_term = term.casefold()
+            if normalized_term in seen_terms:
+                continue
+
+            seen_terms.add(normalized_term)
+            merged_terms.append(term)
+
+    return ", ".join(merged_terms)
 
 
-def _enforce_nsfw_prompt_guard(*texts: tuple[str, Optional[str]]) -> None:
-    for field_name, text in texts:
-        matched_term = _detect_nsfw_term(text)
-        if matched_term is not None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"NSFW content is blocked by server policy. Matched term '{matched_term}' in {field_name}.",
-            )
+def _resolve_preview_method(preview_method: Optional[str]) -> str:
+    raw_value = str(preview_method or "").strip().lower()
+    if not raw_value or raw_value == "server_default":
+        return preview_decoder.normalize_method(settings.LIVE_PREVIEW_METHOD)
+    if raw_value not in LIVE_PREVIEW_METHOD_CHOICES:
+        raise _validation_error(
+            f"preview_method must be one of: server_default, {', '.join(LIVE_PREVIEW_METHOD_CHOICES)}."
+        )
+    return raw_value
+
+
+def _resolve_clip_skip_for_diffusers() -> tuple[int, Optional[int]]:
+    configured_clip_skip = max(1, int(settings.CLIP_SKIP))
+    # Use A1111/WebUI semantics in .env:
+    # 1 = default behavior, 2 = one layer earlier, etc.
+    diffusers_clip_skip = None if configured_clip_skip <= 1 else configured_clip_skip - 1
+    return configured_clip_skip, diffusers_clip_skip
+
+
+def _publish_generation_preview(
+    pipe,
+    request_id: str,
+    latents: Optional[torch.Tensor],
+    step_index: int,
+    total_steps: int,
+    *,
+    model_family: str,
+    preview_method: str,
+) -> None:
+    if latents is None or latents.ndim != 4:
+        return
+
+    preview_image = preview_decoder.decode(pipe, latents, model_family, preview_method)
+    if preview_image is None:
+        return
+
+    generation_preview_store.update(
+        request_id,
+        step=step_index + 1,
+        total_steps=total_steps,
+        image=preview_image,
+        status="running",
+    )
 
 
 def _get_local_model_entries() -> list[dict[str, str]]:
@@ -299,6 +328,32 @@ def _validate_generation_inputs(
 class CancelGenerationRequest(BaseModel):
     request_id: str
 
+
+class DeleteHistoryOutputRequest(BaseModel):
+    url: str
+
+
+def _resolve_output_path_from_url(url: str) -> Path:
+    raw_url = (url or "").strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    parsed = urlparse(raw_url)
+    path_value = parsed.path or raw_url
+    if not path_value.startswith("/outputs/"):
+        raise HTTPException(status_code=400, detail="Only /outputs files can be deleted")
+
+    relative_path = unquote(path_value.removeprefix("/outputs/")).lstrip("/")
+    if not relative_path:
+        raise HTTPException(status_code=400, detail="Invalid output path")
+
+    output_dir = settings.OUTPUT_DIR.resolve()
+    candidate_path = (output_dir / relative_path).resolve()
+    if output_dir not in candidate_path.parents:
+        raise HTTPException(status_code=400, detail="Output path escapes OUTPUT_DIR")
+
+    return candidate_path
+
 @app.post("/cancel")
 def cancel_generation(payload: CancelGenerationRequest):
     if not payload.request_id.strip():
@@ -306,6 +361,22 @@ def cancel_generation(payload: CancelGenerationRequest):
 
     model_manager.request_cancel(payload.request_id)
     return {"status": "cancelling", "request_id": payload.request_id}
+
+
+@app.post("/history/delete")
+def delete_history_output(payload: DeleteHistoryOutputRequest):
+    target_path = _resolve_output_path_from_url(payload.url)
+    if not target_path.exists() or not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    try:
+        target_path.unlink()
+    except Exception as exc:
+        logger.error("Failed to delete history output %s: %s", target_path, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to delete output file")
+
+    logger.info("Deleted history output file: %s", target_path)
+    return {"status": "success", "url": payload.url, "filename": target_path.name}
 
 @app.get("/health")
 def health_check():
@@ -371,6 +442,14 @@ def prompt_transform_health():
     return {"status": "success", "data": prompt_transformer.health()}
 
 
+@app.get("/generate/preview/{request_id}")
+def get_generation_preview(request_id: str):
+    preview = generation_preview_store.get(request_id)
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Generation preview not found")
+    return {"status": "success", "data": preview}
+
+
 @app.post("/generate")
 async def generate_image(
     prompt: str = Form(...),
@@ -388,6 +467,7 @@ async def generate_image(
     sampler: str = Form(default="Euler a"),
     mode: str = Form(default="auto"), # auto, txt2img, img2img, inpainting
     style_preset: Optional[str] = Form(None),
+    preview_method: Optional[str] = Form(default=None),
     denoising_strength: float = Form(default=0.75),
     mask_blur: int = Form(default=4),
     mask_padding: int = Form(default=32),
@@ -463,15 +543,31 @@ async def generate_image(
             final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
 
         nsfw_filter_active = settings.NSFW_FILTER_ENABLED
-        if nsfw_filter_active:
-            _enforce_nsfw_prompt_guard(
-                ("prompt", source_prompt),
-                ("transformed_prompt", final_prompt),
+        nsfw_negative_prompt_extra = (settings.NSFW_NEGATIVE_PROMPT or "").strip()
+        resolved_preview_method = _resolve_preview_method(preview_method)
+        preview_interval_steps = settings.LIVE_PREVIEW_INTERVAL_STEPS
+        configured_clip_skip, diffusers_clip_skip = _resolve_clip_skip_for_diffusers()
+        weighted_prompt_active = has_weighted_prompt_syntax(final_prompt) or has_weighted_prompt_syntax(final_negative_prompt)
+        nsfw_negative_prompt_applied = False
+        if nsfw_filter_active and nsfw_negative_prompt_extra:
+            merged_negative_prompt = _merge_negative_prompt_terms(
+                final_negative_prompt,
+                nsfw_negative_prompt_extra,
             )
+            nsfw_negative_prompt_applied = merged_negative_prompt != (final_negative_prompt or "").strip()
+            final_negative_prompt = merged_negative_prompt
+            weighted_prompt_active = weighted_prompt_active or has_weighted_prompt_syntax(final_negative_prompt)
         logger.info(
-            "NSFW request policy: request_id=%s filter_enabled=%s",
+            "Generation request policies: request_id=%s nsfw_enabled=%s nsfw_applied=%s nsfw_extra_len=%s preview_method=%s preview_interval=%s clip_skip=%s diffusers_clip_skip=%s weighted_prompt=%s",
             request_id,
             nsfw_filter_active,
+            nsfw_negative_prompt_applied,
+            len(nsfw_negative_prompt_extra),
+            resolved_preview_method,
+            preview_interval_steps,
+            configured_clip_skip,
+            diffusers_clip_skip,
+            weighted_prompt_active,
         )
              
         # Detect Mode & Process Inputs Early
@@ -537,7 +633,9 @@ async def generate_image(
 
         if model_manager.is_cancel_requested(request_id):
             raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
-            
+
+        generation_preview_store.start(request_id, steps)
+
         async with model_manager.generation_session(request_id):
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
@@ -549,7 +647,7 @@ async def generate_image(
                 sampler_name=sampler
             )
             model_manager.bind_active_pipeline(request_id, pipe)
-            nsfw_checker_active = model_manager.set_pipeline_nsfw_filter(pipe, enabled=nsfw_filter_active)
+            resolved_preview_method = preview_decoder.prepare(pipe, model_family, resolved_preview_method)
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
@@ -557,12 +655,24 @@ async def generate_image(
                 seed = random.randint(0, 2**32 - 1)
 
             generator = torch.Generator(device=model_manager.device).manual_seed(seed)
+            prompt_call_kwargs = {
+                "prompt": final_prompt,
+                "negative_prompt": final_negative_prompt,
+                "clip_skip": diffusers_clip_skip,
+            }
+            if weighted_prompt_active:
+                execution_device = getattr(pipe, "_execution_device", torch.device(model_manager.device))
+                prompt_call_kwargs = build_weighted_prompt_kwargs(
+                    pipe,
+                    prompt=final_prompt,
+                    negative_prompt=final_negative_prompt,
+                    device=execution_device,
+                    clip_skip=diffusers_clip_skip,
+                )
 
             result_image = None
-            result_nsfw_detected = False
-
             logger.info(
-                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s nsfw_filter=%s checker_active=%s",
+                "Starting Generation: request_id=%s family=%s Mode=%s Size=%sx%s Seed=%s nsfw_filter=%s nsfw_negative_applied=%s weighted_prompt=%s",
                 request_id,
                 model_family,
                 actual_mode,
@@ -570,29 +680,53 @@ async def generate_image(
                 height,
                 seed,
                 nsfw_filter_active,
-                nsfw_checker_active,
+                nsfw_negative_prompt_applied,
+                weighted_prompt_active,
             )
 
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 if model_manager.is_cancel_requested(request_id):
                     logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
                     pipeline._interrupt = True
+
+                should_publish_preview = (
+                    step_index == 0
+                    or (step_index + 1) % preview_interval_steps == 0
+                    or (step_index + 1) >= steps
+                )
+                if should_publish_preview:
+                    try:
+                        _publish_generation_preview(
+                            pipeline,
+                            request_id,
+                            callback_kwargs.get("latents"),
+                            step_index,
+                            steps,
+                            model_family=model_family,
+                            preview_method=resolved_preview_method,
+                        )
+                    except Exception as preview_error:
+                        logger.warning(
+                            "Failed to publish generation preview: request_id=%s step=%s error=%s",
+                            request_id,
+                            step_index + 1,
+                            preview_error,
+                        )
                 return callback_kwargs
 
             # 4. Generate
             if actual_mode == "text2img":
                 result = await asyncio.to_thread(
                     pipe,
-                    prompt=final_prompt,
-                    negative_prompt=final_negative_prompt,
                     width=width,
                     height=height,
                     num_inference_steps=steps,
                     guidance_scale=cfg,
                     generator=generator,
-                    callback_on_step_end=step_callback
+                    callback_on_step_end=step_callback,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                    **prompt_call_kwargs,
                 )
-                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
             elif actual_mode == "img2img":
@@ -603,16 +737,15 @@ async def generate_image(
 
                 result = await asyncio.to_thread(
                     pipe,
-                    prompt=final_prompt,
-                    negative_prompt=final_negative_prompt,
                     image=image_input,
                     num_inference_steps=steps,
                     guidance_scale=cfg,
                     strength=denoising_strength,
                     generator=generator,
-                    callback_on_step_end=step_callback
+                    callback_on_step_end=step_callback,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                    **prompt_call_kwargs,
                 )
-                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
             elif actual_mode == "inpainting":
@@ -637,8 +770,6 @@ async def generate_image(
 
                 result = await asyncio.to_thread(
                     pipe,
-                    prompt=final_prompt,
-                    negative_prompt=final_negative_prompt,
                     image=image_input,
                     mask_image=hard_mask_input,
                     width=width,
@@ -647,9 +778,10 @@ async def generate_image(
                     guidance_scale=cfg,
                     strength=denoising_strength,
                     generator=generator,
-                    callback_on_step_end=step_callback
+                    callback_on_step_end=step_callback,
+                    callback_on_step_end_tensor_inputs=["latents"],
+                    **prompt_call_kwargs,
                 )
-                result_nsfw_detected = any(getattr(result, "nsfw_content_detected", []) or [])
                 result_image = result.images[0]
 
                 # COMPOSITING
@@ -665,16 +797,19 @@ async def generate_image(
                             hard_mask=hard_mask_input
                         )
 
-            if nsfw_filter_active and result_nsfw_detected:
-                logger.warning("NSFW safety checker blocked generation: request_id=%s", request_id)
-                raise HTTPException(status_code=422, detail="NSFW content was detected and blocked.")
-
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
         # 5. Save & Return
         if result_image:
+            generation_preview_store.update(
+                request_id,
+                step=steps,
+                total_steps=steps,
+                image=result_image,
+                status="completed",
+            )
             # Metadata dict
             meta = {
                 "prompt": final_prompt,
@@ -695,8 +830,13 @@ async def generate_image(
                 "prompt_transform_latency_ms": transform_result.latency_ms,
                 "prompt_transform_strict": settings.PROMPT_TRANSFORM_STRICT,
                 "nsfw_filter_active": nsfw_filter_active,
-                "nsfw_checker_active": nsfw_checker_active,
-                "nsfw_detected": result_nsfw_detected,
+                "nsfw_negative_prompt_applied": nsfw_negative_prompt_applied,
+                "nsfw_negative_prompt_extra": nsfw_negative_prompt_extra if nsfw_filter_active else "",
+                "clip_skip": configured_clip_skip,
+                "diffusers_clip_skip": diffusers_clip_skip,
+                "weighted_prompt_active": weighted_prompt_active,
+                "preview_method": resolved_preview_method,
+                "preview_interval_steps": preview_interval_steps,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
@@ -710,9 +850,16 @@ async def generate_image(
                 "meta": meta
             }
             
-    except HTTPException:
+    except HTTPException as e:
+        if 'request_id' in locals() and request_id:
+            generation_preview_store.mark(
+                request_id,
+                status="cancelled" if e.status_code == 499 else "error",
+            )
         raise
     except Exception as e:
+        if request_id:
+            generation_preview_store.mark(request_id, status="error")
         logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

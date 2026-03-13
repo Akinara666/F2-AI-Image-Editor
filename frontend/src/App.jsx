@@ -9,7 +9,8 @@ import {
   AVAILABLE_MODELS_PLACEHOLDER,
   AVAILABLE_SAMPLERS,
   createClientId,
-  normalizeGenerationParams
+  normalizeGenerationParams,
+  resolveApiUrl
 } from './constants';
 import './theme.css';
 import './App.css';
@@ -61,6 +62,22 @@ const loadHistoryFromStorage = () => {
   }
 };
 
+const isMissingHistoryError = (error) => {
+  const status = error?.response?.status;
+  if (status === 404 || status === 410) {
+    return true;
+  }
+
+  const message = String(error?.message || error?.response?.data?.detail || '');
+  return /\b(404|410)\b/.test(message);
+};
+
+const getHistoryFilename = (url) => {
+  const path = String(url || '').split('?')[0];
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] || 'image.png';
+};
+
 function App() {
   const GENERATION_STATUS = {
     IDLE: 'idle',
@@ -79,6 +96,7 @@ function App() {
     denoising_strength: 0.75,
     mask_blur: 4,
     mask_padding: 32,
+    preview_method: 'server_default',
     model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
     sampler: AVAILABLE_SAMPLERS[0],
     frame_size_index: 0
@@ -107,6 +125,55 @@ function App() {
 
   const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
   const [history, setHistory] = useState(loadHistoryFromStorage);
+  const [generationPreview, setGenerationPreview] = useState(null);
+
+  const removeHistoryItem = React.useCallback((itemOrId) => {
+    const targetId = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
+    if (!targetId) {
+      return;
+    }
+
+    setHistory((prev) => {
+      const next = prev.filter((item) => item.id !== targetId);
+      return next.length === prev.length ? prev : normalizeHistoryItems(next);
+    });
+  }, []);
+
+  const pruneMissingHistoryItems = React.useCallback(async (items, signal) => {
+    if (!items.length) {
+      return;
+    }
+
+    const missingIds = (
+      await Promise.all(items.map(async (item) => {
+        try {
+          const response = await fetch(resolveApiUrl(item.url), {
+            method: 'HEAD',
+            cache: 'no-store',
+            signal
+          });
+          if (response.ok) {
+            return null;
+          }
+          return response.status === 404 || response.status === 410 ? item.id : null;
+        } catch (error) {
+          if (signal.aborted) {
+            return null;
+          }
+          return null;
+        }
+      }))
+    ).filter(Boolean);
+
+    if (missingIds.length === 0 || signal.aborted) {
+      return;
+    }
+
+    setHistory((prev) => {
+      const next = prev.filter((item) => !missingIds.includes(item.id));
+      return next.length === prev.length ? prev : normalizeHistoryItems(next);
+    });
+  }, []);
 
   // Persist history to localStorage
   React.useEffect(() => {
@@ -118,6 +185,19 @@ function App() {
       }));
     } catch { /* quota exceeded — silently ignore */ }
   }, [history]);
+
+  React.useEffect(() => {
+    if (history.length === 0) {
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    void pruneMissingHistoryItems(history, controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [history, pruneMissingHistoryItems]);
   const [brushMode, setBrushMode] = useState('none'); // none, sketch, mask
   const [brushColor, setBrushColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(20);
@@ -133,6 +213,36 @@ function App() {
   };
   const isGenerating = generationStatus === GENERATION_STATUS.GENERATING || generationStatus === GENERATION_STATUS.CANCELLING;
   const isBusy = generationStatus !== GENERATION_STATUS.IDLE;
+
+  const pollGenerationPreview = React.useCallback(async (requestId, signal) => {
+    while (!signal.aborted && currentGenerationRequestIdRef.current === requestId) {
+      try {
+        const response = await axios.get(API_ENDPOINTS.GENERATION_PREVIEW(requestId), {
+          signal,
+          params: { t: Date.now() }
+        });
+        const preview = response.data?.data;
+        if (preview) {
+          setGenerationPreview(preview);
+        }
+      } catch (error) {
+        if (signal.aborted || axios.isCancel(error)) {
+          return;
+        }
+        if (error?.response?.status !== 404) {
+          console.error("Failed to fetch generation preview", error);
+        }
+      }
+
+      await new Promise((resolve) => {
+        const timerId = window.setTimeout(resolve, 450);
+        signal.addEventListener('abort', () => {
+          window.clearTimeout(timerId);
+          resolve();
+        }, { once: true });
+      });
+    }
+  }, []);
 
   const handleGenerate = async () => {
     if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) return;
@@ -152,11 +262,14 @@ function App() {
     setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
 
     const controller = new AbortController();
+    const previewController = new AbortController();
     const requestId = createClientId('generation');
     abortControllerRef.current = controller;
     currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
 
     try {
+      void pollGenerationPreview(requestId, previewController.signal);
       // 1. Get Crops from Editor
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
 
@@ -175,6 +288,9 @@ function App() {
       formData.append('mask_padding', normalizedParams.mask_padding);
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
+      if (normalizedParams.preview_method && normalizedParams.preview_method !== 'server_default') {
+        formData.append('preview_method', normalizedParams.preview_method);
+      }
 
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
@@ -227,10 +343,12 @@ function App() {
         showError(`Generation failed: ${errorMsg}`);
       }
     } finally {
+      previewController.abort();
       abortControllerRef.current = null;
       if (currentGenerationRequestIdRef.current === requestId) {
         currentGenerationRequestIdRef.current = null;
       }
+      setGenerationPreview(null);
       if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
         setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
       }
@@ -271,9 +389,60 @@ function App() {
     } catch (e) {
       console.error("Failed to restore history item", e);
       const errorMsg = e.response?.data?.detail || e.message;
+      if (isMissingHistoryError(e)) {
+        removeHistoryItem(item);
+      }
       showError(`Failed to restore history item: ${errorMsg}`);
     } finally {
       setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+    }
+  };
+
+  const handleDownloadHistoryItem = async (item) => {
+    try {
+      const response = await fetch(resolveApiUrl(item.url), {
+        mode: 'cors',
+        cache: 'no-store'
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to download image: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = getHistoryFilename(item.url);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) {
+      console.error("Failed to download history item", e);
+      if (isMissingHistoryError(e)) {
+        removeHistoryItem(item);
+      }
+      const errorMsg = e.response?.data?.detail || e.message;
+      showError(`Failed to download image: ${errorMsg}`);
+    }
+  };
+
+  const handleDeleteHistoryItem = async (item) => {
+    try {
+      await axios.post(API_ENDPOINTS.HISTORY_DELETE, {
+        url: item.url
+      });
+      removeHistoryItem(item);
+      showSuccess("Image deleted from history.");
+    } catch (e) {
+      console.error("Failed to delete history item", e);
+      if (isMissingHistoryError(e)) {
+        removeHistoryItem(item);
+        showInfo("Image was already missing and has been removed from history.");
+        return;
+      }
+      const errorMsg = e.response?.data?.detail || e.message;
+      showError(`Failed to delete image: ${errorMsg}`);
     }
   };
 
@@ -297,6 +466,7 @@ function App() {
         onUndo={() => editorRef.current?.undo()}
         onClear={() => editorRef.current?.clearAll()}
         editorRef={editorRef}
+        generationPreview={generationPreview}
         showToastError={showError}
         showToastSuccess={showSuccess}
         showToastInfo={showInfo}
@@ -312,6 +482,9 @@ function App() {
       <HistoryPanel
         history={history}
         onSelect={handleRestore}
+        onMissing={removeHistoryItem}
+        onDelete={handleDeleteHistoryItem}
+        onDownload={handleDownloadHistoryItem}
         isBusy={isBusy}
       />
     </div>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import {
+    AVAILABLE_LIVE_PREVIEW_METHODS,
     AVAILABLE_SAMPLERS,
     AVAILABLE_SIZES,
     API_ENDPOINTS,
@@ -18,6 +19,7 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
+    generationPreview,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
@@ -184,6 +186,21 @@ const Sidebar = ({
                             ))}
                         </select>
                     </div>
+                </div>
+
+                <div className="input-group">
+                    <label className="input-label">Live Preview Decode</label>
+                    <select
+                        name="preview_method"
+                        className="input-field"
+                        value={params.preview_method}
+                        onChange={handleChange}
+                    >
+                        {AVAILABLE_LIVE_PREVIEW_METHODS.map((method) => (
+                            <option key={method.id} value={method.id}>{method.label}</option>
+                        ))}
+                    </select>
+                    <small className="sidebar__hint">Full = quality, Approx cheap = speed, TAESD/Approx NN = fast balance.</small>
                 </div>
 
                 {/* Prompt */}
@@ -372,6 +389,27 @@ const Sidebar = ({
 
             {/* Footer - Fixed Button */}
             <div className="sidebar__footer">
+                {generationPreview && generationPreview.image_data_url && (
+                    <div className="sidebar__preview-card">
+                        <div className="sidebar__preview-header">
+                            <span className="sidebar__preview-title">Live Preview</span>
+                            <span className="sidebar__preview-step">
+                                Step {generationPreview.step} / {generationPreview.total_steps}
+                            </span>
+                        </div>
+                        <div className="sidebar__preview-progress">
+                            <div
+                                className="sidebar__preview-progress-bar"
+                                style={{ width: `${Math.max(0, Math.min(100, (generationPreview.progress || 0) * 100))}%` }}
+                            />
+                        </div>
+                        <img
+                            className="sidebar__preview-image"
+                            src={generationPreview.image_data_url}
+                            alt={`Generation preview step ${generationPreview.step}`}
+                        />
+                    </div>
+                )}
                 {isGenerating ? (
                     <button
                         className="btn btn-primary sidebar__cancel-btn"
