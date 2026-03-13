@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import threading
+from dataclasses import dataclass
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,14 +33,28 @@ from typing import Optional, Literal
 from core.config import settings
 
 ModelFamily = Literal["sd", "sdxl"]
+PipelineType = Literal["text2img", "img2img", "inpainting", "controlnet"]
+
+
+@dataclass
+class ModelBundle:
+    cache_key: str
+    model_id: str
+    model_family: ModelFamily
+    anchor_pipeline_type: PipelineType
+    anchor_pipeline: object
+    torch_dtype: torch.dtype
+    uses_cpu_offload: bool
 
 class ModelManager:
     def __init__(self, device=settings.DEVICE, max_cache_size=settings.MAX_CACHED_MODELS):
         self.device = device
-        self.pipelines_cache = OrderedDict()  # LRU cache: { cache_key: pipeline }
+        self.sd_enable_cpu_offload = settings.SD_ENABLE_CPU_OFFLOAD
+        self.model_bundles_cache = OrderedDict()  # LRU cache: { bundle_key: ModelBundle }
         self.max_cache_size = max_cache_size
         self.current_pipeline = None
         self.current_cache_key = None
+        self.current_model_cache_key = None
         self.model_lock = asyncio.Lock()
         self.generation_lock = asyncio.Lock()
         self.active_request_id: Optional[str] = None
@@ -50,8 +65,24 @@ class ModelManager:
         self.model_family_cache: dict[str, ModelFamily] = {}
         self.model_family_cache_lock = threading.Lock()
 
-    def _generate_cache_key(self, model_id: str, model_family: ModelFamily, pipeline_type: str) -> str:
-        return f"{model_family}::{model_id}::{pipeline_type}"
+    @staticmethod
+    def _generate_model_cache_key(
+        model_id: str,
+        model_family: ModelFamily,
+        pipeline_type: PipelineType,
+        controlnet_model_id: Optional[str] = None,
+    ) -> str:
+        if pipeline_type == "controlnet":
+            resolved_controlnet_id = controlnet_model_id or "lllyasviel/sd-controlnet-canny"
+            return f"{model_family}::{model_id}::controlnet::{resolved_controlnet_id}"
+        return f"{model_family}::{model_id}"
+
+    @staticmethod
+    def _generate_runtime_cache_key(model_cache_key: str, pipeline_type: PipelineType) -> str:
+        return f"{model_cache_key}::{pipeline_type}"
+
+    def _get_default_torch_dtype(self) -> torch.dtype:
+        return torch.float16 if self.device == "cuda" else torch.float32
 
     @staticmethod
     def _normalize_model_family(model_family: Optional[str]) -> Optional[ModelFamily]:
@@ -213,7 +244,7 @@ class ModelManager:
         return StableDiffusionPipeline
 
     def _build_load_arg_candidates(self, model_id: str) -> list[dict[str, object]]:
-        torch_dtype = torch.float16 if self.device == "cuda" else torch.float32
+        torch_dtype = self._get_default_torch_dtype()
         lower_model_id = model_id.lower()
         base_args: dict[str, object] = {
             "torch_dtype": torch_dtype,
@@ -240,6 +271,7 @@ class ModelManager:
             # del self.current_pipeline
             self.current_pipeline = None
             self.current_cache_key = None
+            self.current_model_cache_key = None
             
         # Hard cleanup
         gc.collect()
@@ -252,7 +284,7 @@ class ModelManager:
         self, 
         model_id: str, 
         model_family: Optional[ModelFamily] = None,
-        pipeline_type: Literal["text2img", "img2img", "inpainting", "controlnet"] = "text2img",
+        pipeline_type: PipelineType = "text2img",
         sampler_name: str = "Euler a",
         **kwargs
     ):
@@ -262,123 +294,224 @@ class ModelManager:
         """
         async with self.model_lock:
             resolved_model_family = self.infer_model_family(model_id, model_family)
-            cache_key = self._generate_cache_key(model_id, resolved_model_family, pipeline_type)
-            
-            # Check if it is the EXACT same pipeline already active
-            if self.current_cache_key == cache_key and self.current_pipeline is not None:
-                return self.current_pipeline
-
-            # Check if we have it cached in RAM
-            if cache_key in self.pipelines_cache:
-                self.logger.info(f"Retrieving model {cache_key} from RAM cache...")
-                # Move to end (most recently used)
-                self.pipelines_cache.move_to_end(cache_key)
-                self.current_pipeline = self.pipelines_cache[cache_key]
-                self.current_cache_key = cache_key
-                self._apply_sampler(self.current_pipeline, sampler_name)
-                return self.current_pipeline
-
-            # We need to load it fresh
-            self.logger.info(
-                "Loading model freshly: model_id=%s family=%s pipeline_type=%s",
+            model_cache_key = self._generate_model_cache_key(
                 model_id,
                 resolved_model_family,
                 pipeline_type,
+                kwargs.get("controlnet_model_id"),
             )
+            runtime_cache_key = self._generate_runtime_cache_key(model_cache_key, pipeline_type)
             
-            try:
-                is_single_file = model_id.endswith(".safetensors") or model_id.endswith(".ckpt")
-                pipeline_class = self._get_pipeline_class(resolved_model_family, pipeline_type)
-                load_arg_candidates = self._build_load_arg_candidates(model_id)
-
-                # Helper to instantiate pipeline with specific args
-                def create_pipeline(load_args, *, local_files_only: bool):
-                    final_args = {**load_args}
-                    if not is_single_file:
-                        final_args["local_files_only"] = local_files_only
-                    
-                    if is_single_file:
-                        # Use from_single_file for legacy/webui models
-                        return pipeline_class.from_single_file(model_id, **final_args)
-                    else: 
-                        # Standard Diffusers loading
-                        if pipeline_type == "controlnet":
-                            cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
-                            controlnet = ControlNetModel.from_pretrained(
-                                cnet_path,
-                                torch_dtype=load_args["torch_dtype"],
-                            )
-                            return pipeline_class.from_pretrained(model_id, controlnet=controlnet, **final_args)
-                        return pipeline_class.from_pretrained(model_id, **final_args)
-
-                pipeline = None
-                load_errors = []
-                for local_files_only in ((True, False) if not is_single_file else (True,)):
-                    for load_args in load_arg_candidates:
-                        try:
-                            self.logger.info(
-                                "Attempting model load: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s dtype=%s",
-                                model_id,
-                                resolved_model_family,
-                                pipeline_type,
-                                local_files_only,
-                                load_args.get("variant", "<default>"),
-                                load_args["torch_dtype"],
-                            )
-                            pipeline = create_pipeline(load_args, local_files_only=local_files_only)
-                            break
-                        except Exception as e:
-                            load_errors.append(str(e))
-                            self.logger.info(
-                                "Model load attempt failed: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s error=%s",
-                                model_id,
-                                resolved_model_family,
-                                pipeline_type,
-                                local_files_only,
-                                load_args.get("variant", "<default>"),
-                                e,
-                            )
-                    if pipeline is not None:
-                        break
-
-                if pipeline is None:
-                    raise RuntimeError(
-                        "All model load attempts failed. Last errors: "
-                        + " | ".join(load_errors[-4:])
-                    )
-
-                # Optimize and handle VRAM
-                try:
-                    pipeline.enable_xformers_memory_efficient_attention()
-                except Exception as e:
-                    self.logger.warning(f"Could not enable xformers: {e}")
-
-                # Enable CPU Offload to keep weights in RAM and move to VRAM dynamically
-                if self.device == "cuda":
-                    try:
-                        pipeline.enable_model_cpu_offload()
-                        self.logger.info("Enabled CPU offloading for model.")
-                    except Exception as e:
-                        self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
-                        pipeline.to(self.device)
-                else:
-                    pipeline.to(self.device)
-                
-                # Cache it (with LRU eviction)
-                self._evict_if_needed()
-                self.pipelines_cache[cache_key] = pipeline
-
-                # Update state
-                self.current_pipeline = pipeline
-                self.current_cache_key = cache_key
-
+            # Check if it is the EXACT same pipeline already active
+            if self.current_cache_key == runtime_cache_key and self.current_pipeline is not None:
+                self.logger.info(
+                    "Reusing active runtime pipeline without rematerialization: runtime=%s model=%s family=%s",
+                    runtime_cache_key,
+                    model_id,
+                    resolved_model_family,
+                )
                 self._apply_sampler(self.current_pipeline, sampler_name)
                 return self.current_pipeline
 
+            try:
+                bundle = self.model_bundles_cache.get(model_cache_key)
+                if bundle is not None:
+                    self.logger.info(
+                        "Model bundle cache hit: bundle=%s requested_pipeline=%s anchor=%s offload=%s",
+                        model_cache_key,
+                        pipeline_type,
+                        bundle.anchor_pipeline_type,
+                        bundle.uses_cpu_offload,
+                    )
+                    self.model_bundles_cache.move_to_end(model_cache_key)
+                else:
+                    self.logger.info(
+                        "Model bundle cache miss. Loading fresh bundle: model_id=%s family=%s anchor_pipeline_type=%s",
+                        model_id,
+                        resolved_model_family,
+                        pipeline_type,
+                    )
+                    bundle = self._load_model_bundle(
+                        model_id=model_id,
+                        model_family=resolved_model_family,
+                        pipeline_type=pipeline_type,
+                        cache_key=model_cache_key,
+                        **kwargs,
+                    )
+                    self._evict_if_needed()
+                    self.model_bundles_cache[model_cache_key] = bundle
+
+                pipeline = self._materialize_pipeline(bundle, pipeline_type)
+                self._activate_pipeline_for_runtime(bundle, pipeline, runtime_cache_key)
+
+                self.current_pipeline = pipeline
+                self.current_cache_key = runtime_cache_key
+                self.current_model_cache_key = model_cache_key
+
+                self.logger.info(
+                    "Runtime pipeline ready: runtime=%s bundle=%s anchor=%s requested=%s offload=%s",
+                    runtime_cache_key,
+                    model_cache_key,
+                    bundle.anchor_pipeline_type,
+                    pipeline_type,
+                    bundle.uses_cpu_offload,
+                )
+                self._apply_sampler(self.current_pipeline, sampler_name)
+                return self.current_pipeline
             except Exception as e:
                 self.logger.error(f"Error loading model: {e}")
                 self._unload_current_model() # Cleanup on failure
                 raise e
+
+    def _load_model_bundle(
+        self,
+        *,
+        model_id: str,
+        model_family: ModelFamily,
+        pipeline_type: PipelineType,
+        cache_key: str,
+        **kwargs,
+    ) -> ModelBundle:
+        is_single_file = model_id.endswith(".safetensors") or model_id.endswith(".ckpt")
+        pipeline_class = self._get_pipeline_class(model_family, pipeline_type)
+        load_arg_candidates = self._build_load_arg_candidates(model_id)
+        preferred_torch_dtype = self._get_default_torch_dtype()
+
+        def create_pipeline(load_args, *, local_files_only: bool):
+            final_args = {**load_args}
+            if not is_single_file:
+                final_args["local_files_only"] = local_files_only
+
+            if is_single_file:
+                return pipeline_class.from_single_file(model_id, **final_args)
+
+            if pipeline_type == "controlnet":
+                cnet_path = kwargs.get("controlnet_model_id", "lllyasviel/sd-controlnet-canny")
+                controlnet = ControlNetModel.from_pretrained(
+                    cnet_path,
+                    torch_dtype=load_args["torch_dtype"],
+                )
+                return pipeline_class.from_pretrained(model_id, controlnet=controlnet, **final_args)
+
+            return pipeline_class.from_pretrained(model_id, **final_args)
+
+        pipeline = None
+        load_errors = []
+        for local_files_only in ((True, False) if not is_single_file else (True,)):
+            for load_args in load_arg_candidates:
+                try:
+                    self.logger.info(
+                        "Attempting model load: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s dtype=%s",
+                        model_id,
+                        model_family,
+                        pipeline_type,
+                        local_files_only,
+                        load_args.get("variant", "<default>"),
+                        load_args["torch_dtype"],
+                    )
+                    pipeline = create_pipeline(load_args, local_files_only=local_files_only)
+                    break
+                except Exception as e:
+                    load_errors.append(str(e))
+                    self.logger.info(
+                        "Model load attempt failed: model_id=%s family=%s pipeline_type=%s local_only=%s variant=%s error=%s",
+                        model_id,
+                        model_family,
+                        pipeline_type,
+                        local_files_only,
+                        load_args.get("variant", "<default>"),
+                        e,
+                    )
+            if pipeline is not None:
+                break
+
+        if pipeline is None:
+            raise RuntimeError(
+                "All model load attempts failed. Last errors: "
+                + " | ".join(load_errors[-4:])
+            )
+
+        try:
+            pipeline.enable_xformers_memory_efficient_attention()
+        except Exception as e:
+            self.logger.warning(f"Could not enable xformers: {e}")
+
+        uses_cpu_offload = False
+        if self.device == "cuda":
+            if self.sd_enable_cpu_offload:
+                try:
+                    pipeline.enable_model_cpu_offload()
+                    uses_cpu_offload = True
+                    self.logger.info("Enabled CPU offloading for model bundle %s.", cache_key)
+                except Exception as e:
+                    self.logger.warning(f"Could not enable CPU offload ({e}). Moving to device mostly manually.")
+                    pipeline.to(self.device)
+            else:
+                self.logger.info(
+                    "CPU offload disabled for SD bundle %s via SD_ENABLE_CPU_OFFLOAD=false. Keeping pipeline on %s.",
+                    cache_key,
+                    self.device,
+                )
+                pipeline.to(self.device)
+        else:
+            self.logger.info("Running SD bundle %s on CPU without model offload.", cache_key)
+            pipeline.to(self.device)
+
+        return ModelBundle(
+            cache_key=cache_key,
+            model_id=model_id,
+            model_family=model_family,
+            anchor_pipeline_type=pipeline_type,
+            anchor_pipeline=pipeline,
+            torch_dtype=preferred_torch_dtype,
+            uses_cpu_offload=uses_cpu_offload,
+        )
+
+    def _materialize_pipeline(self, bundle: ModelBundle, pipeline_type: PipelineType):
+        if pipeline_type == bundle.anchor_pipeline_type:
+            self.logger.info(
+                "Using anchor pipeline directly: bundle=%s pipeline_type=%s",
+                bundle.cache_key,
+                pipeline_type,
+            )
+            return bundle.anchor_pipeline
+
+        if bundle.anchor_pipeline_type == "controlnet" or pipeline_type == "controlnet":
+            raise RuntimeError("ControlNet pipelines are not shareable with non-ControlNet modes.")
+
+        pipeline_class = self._get_pipeline_class(bundle.model_family, pipeline_type)
+        self.logger.info(
+            "Creating runtime pipeline variant from shared bundle: bundle=%s anchor=%s target=%s",
+            bundle.cache_key,
+            bundle.anchor_pipeline_type,
+            pipeline_type,
+        )
+        return pipeline_class.from_pipe(bundle.anchor_pipeline, torch_dtype=bundle.torch_dtype)
+
+    def _activate_pipeline_for_runtime(self, bundle: ModelBundle, pipeline, runtime_cache_key: str) -> None:
+        if self.current_cache_key == runtime_cache_key and self.current_pipeline is pipeline:
+            return
+
+        if bundle.uses_cpu_offload and self.device == "cuda":
+            try:
+                pipeline.enable_model_cpu_offload()
+                self.logger.info("Re-activated CPU offload hooks for pipeline %s", runtime_cache_key)
+            except Exception as e:
+                self.logger.warning(
+                    "Could not re-activate CPU offload for pipeline %s (%s). Falling back to pipeline.to(%s).",
+                    runtime_cache_key,
+                    e,
+                    self.device,
+                )
+                pipeline.to(self.device)
+        elif self.device != "cuda":
+            pipeline.to(self.device)
+        else:
+            self.logger.info(
+                "Runtime pipeline %s stays resident on %s because SD CPU offload is disabled.",
+                runtime_cache_key,
+                self.device,
+            )
 
     @asynccontextmanager
     async def generation_session(self, request_id: str):
@@ -432,14 +565,15 @@ class ModelManager:
         return True
 
     def _evict_if_needed(self):
-        """Evict least-recently-used pipelines when cache exceeds max size."""
-        while len(self.pipelines_cache) >= self.max_cache_size:
-            evicted_key, evicted_pipeline = self.pipelines_cache.popitem(last=False)
-            self.logger.info(f"Evicting LRU model from cache: {evicted_key}")
-            if self.current_cache_key == evicted_key:
+        """Evict least-recently-used model bundles when cache exceeds max size."""
+        while len(self.model_bundles_cache) >= self.max_cache_size:
+            evicted_key, evicted_bundle = self.model_bundles_cache.popitem(last=False)
+            self.logger.info(f"Evicting LRU model bundle from cache: {evicted_key}")
+            if self.current_model_cache_key == evicted_key:
                 self.current_pipeline = None
                 self.current_cache_key = None
-            del evicted_pipeline
+                self.current_model_cache_key = None
+            del evicted_bundle
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()

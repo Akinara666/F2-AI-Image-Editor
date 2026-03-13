@@ -25,6 +25,7 @@ class Settings:
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
+    SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
@@ -63,7 +64,7 @@ class Settings:
 
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
-    MAX_CACHED_MODELS: int = 2    # Max pipelines kept in RAM (LRU eviction)
+    MAX_CACHED_MODELS: int = 2    # Max underlying model bundles kept in RAM (LRU eviction)
 
     # CORS
     CORS_ALLOW_ORIGINS: list[str] = [
