@@ -29,6 +29,8 @@ const blobToDataURL = (blob) => (
 const snapshotObjectTransform = (object) => ({
     left: object.left,
     top: object.top,
+    width: object.width,
+    height: object.height,
     scaleX: object.scaleX,
     scaleY: object.scaleY
 });
@@ -36,6 +38,8 @@ const snapshotObjectTransform = (object) => ({
 const areTransformsEqual = (left, right) => (
     left.left === right.left
     && left.top === right.top
+    && left.width === right.width
+    && left.height === right.height
     && left.scaleX === right.scaleX
     && left.scaleY === right.scaleY
 );
@@ -246,6 +250,107 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         });
 
         const gridSize = CANVAS_DEFAULTS.GRID_SIZE;
+        const SNAP_DEADZONE = 2;
+        const snapPositionToGrid = (value) => Math.round(value / gridSize) * gridSize;
+        const getDisplayBoundsFromTransform = (transform) => {
+            const left = transform?.left ?? 0;
+            const top = transform?.top ?? 0;
+            const width = Math.max(1, Math.round((transform?.width ?? 0) * (transform?.scaleX ?? 1)));
+            const height = Math.max(1, Math.round((transform?.height ?? 0) * (transform?.scaleY ?? 1)));
+
+            return {
+                left,
+                top,
+                width,
+                height,
+                right: left + width,
+                bottom: top + height
+            };
+        };
+        const getDisplayBoundsFromObject = (target) => getDisplayBoundsFromTransform({
+            left: target.left,
+            top: target.top,
+            width: target.width,
+            height: target.height,
+            scaleX: target.scaleX,
+            scaleY: target.scaleY
+        });
+        const snapEdgeByDirection = (rawEdge, baseEdge) => {
+            const delta = rawEdge - baseEdge;
+            if (Math.abs(delta) <= SNAP_DEADZONE) {
+                return baseEdge;
+            }
+            return delta > 0
+                ? Math.ceil(rawEdge / gridSize) * gridSize
+                : Math.floor(rawEdge / gridSize) * gridSize;
+        };
+        const getSnappedResizeBounds = (baseBounds, currentBounds, corner = '') => {
+            const nextBounds = {
+                left: baseBounds.left,
+                top: baseBounds.top,
+                right: baseBounds.right,
+                bottom: baseBounds.bottom
+            };
+
+            if (corner.includes('l')) {
+                nextBounds.left = Math.min(
+                    baseBounds.right - gridSize,
+                    snapEdgeByDirection(currentBounds.left, baseBounds.left)
+                );
+            } else if (corner.includes('r')) {
+                nextBounds.right = Math.max(
+                    baseBounds.left + gridSize,
+                    snapEdgeByDirection(currentBounds.right, baseBounds.right)
+                );
+            }
+
+            if (corner.includes('t')) {
+                nextBounds.top = Math.min(
+                    baseBounds.bottom - gridSize,
+                    snapEdgeByDirection(currentBounds.top, baseBounds.top)
+                );
+            } else if (corner.includes('b')) {
+                nextBounds.bottom = Math.max(
+                    baseBounds.top + gridSize,
+                    snapEdgeByDirection(currentBounds.bottom, baseBounds.bottom)
+                );
+            }
+
+            return {
+                left: nextBounds.left,
+                top: nextBounds.top,
+                width: Math.max(gridSize, nextBounds.right - nextBounds.left),
+                height: Math.max(gridSize, nextBounds.bottom - nextBounds.top)
+            };
+        };
+        const applyDisplayBoundsToObject = (target, bounds) => {
+            const sourceWidth = Math.max(1, target.width ?? 1);
+            const sourceHeight = Math.max(1, target.height ?? 1);
+
+            target.set({
+                left: bounds.left,
+                top: bounds.top,
+                scaleX: bounds.width / sourceWidth,
+                scaleY: bounds.height / sourceHeight
+            });
+            target.setCoords();
+            return bounds;
+        };
+        const commitDisplayBoundsToObject = (target, bounds) => {
+            if (target.type === 'image') {
+                return applyDisplayBoundsToObject(target, bounds);
+            }
+            target.set({
+                left: bounds.left,
+                top: bounds.top,
+                width: bounds.width,
+                height: bounds.height,
+                scaleX: 1,
+                scaleY: 1
+            });
+            target.setCoords();
+            return bounds;
+        };
         let isDragging = false;
         let lastPosX = 0;
         let lastPosY = 0;
@@ -266,7 +371,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             if (target && (target === frame || isCandidateObject(target, frame) || isBaseRasterObject(target, frame))) {
                 transformStartRef.current = {
                     object: target,
-                    previous: snapshotObjectTransform(target)
+                    previous: snapshotObjectTransform(target),
+                    action: null,
+                    corner: ''
                 };
             } else {
                 transformStartRef.current = null;
@@ -298,45 +405,46 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             if (target !== frame && !isCandidateObject(target, frame) && !isBaseRasterObject(target, frame)) {
                 return;
             }
+            if (transformStartRef.current?.object === target) {
+                transformStartRef.current.action = 'moving';
+            }
             target.set({
-                left: Math.round(target.left / gridSize) * gridSize,
-                top: Math.round(target.top / gridSize) * gridSize
+                left: snapPositionToGrid(target.left),
+                top: snapPositionToGrid(target.top)
             });
+            target.setCoords();
             if (target === frame) {
                 syncFrameVisualState(frame, frameVisual);
             }
         });
 
         canvas.on('object:scaling', (event) => {
-            if (event.target !== frame) return;
-
             const target = event.target;
-            const scaledWidth = target.width * target.scaleX;
-            const scaledHeight = target.height * target.scaleY;
-
-            const snappedWidth = Math.max(gridSize, Math.round(scaledWidth / gridSize) * gridSize);
-            const snappedHeight = Math.max(gridSize, Math.round(scaledHeight / gridSize) * gridSize);
+            if (!target) return;
+            if (target !== frame && !isCandidateObject(target, frame) && !isBaseRasterObject(target, frame)) {
+                return;
+            }
 
             const corner = event.transform ? event.transform.corner : '';
-            const nextScaleX = snappedWidth / target.width;
-            const nextScaleY = snappedHeight / target.height;
-
-            if (corner.includes('l')) {
-                const rightEdge = target.left + (target.width * target.scaleX);
-                target.left = rightEdge - (target.width * nextScaleX);
+            if (transformStartRef.current?.object === target) {
+                transformStartRef.current.action = 'scaling';
+                transformStartRef.current.corner = corner;
             }
-            if (corner.includes('t')) {
-                const bottomEdge = target.top + (target.height * target.scaleY);
-                target.top = bottomEdge - (target.height * nextScaleY);
+            const baseBounds = getDisplayBoundsFromTransform(
+                transformStartRef.current?.object === target
+                    ? transformStartRef.current.previous
+                    : snapshotObjectTransform(target)
+            );
+            const currentBounds = getDisplayBoundsFromObject(target);
+            const snappedBounds = applyDisplayBoundsToObject(
+                target,
+                getSnappedResizeBounds(baseBounds, currentBounds, corner)
+            );
+
+            if (target === frame) {
+                syncFrameVisualState(target, frameVisual);
+                setGenDimensions({ width: snappedBounds.width, height: snappedBounds.height });
             }
-
-            target.set({
-                scaleX: nextScaleX,
-                scaleY: nextScaleY
-            });
-
-            syncFrameVisualState(target, frameVisual);
-            setGenDimensions({ width: snappedWidth, height: snappedHeight });
         });
 
         canvas.on('object:modified', (event) => {
@@ -344,6 +452,32 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             const transformStart = transformStartRef.current;
             if (!target || !transformStart || transformStart.object !== target) {
                 return;
+            }
+
+            if (transformStart.action === 'scaling') {
+                const corner = transformStart.corner || event.transform?.corner || '';
+                const baseBounds = getDisplayBoundsFromTransform(transformStart.previous);
+                const currentBounds = getDisplayBoundsFromObject(target);
+                const snappedBounds = getSnappedResizeBounds(baseBounds, {
+                    left: currentBounds.left,
+                    right: currentBounds.right,
+                    top: currentBounds.top,
+                    bottom: currentBounds.bottom
+                }, corner);
+                commitDisplayBoundsToObject(target, snappedBounds);
+                if (target === frame) {
+                    syncFrameVisualState(target, frameVisual);
+                    setGenDimensions({ width: snappedBounds.width, height: snappedBounds.height });
+                }
+            } else if (transformStart.action === 'moving') {
+                target.set({
+                    left: snapPositionToGrid(target.left),
+                    top: snapPositionToGrid(target.top)
+                });
+                target.setCoords();
+                if (target === frame) {
+                    syncFrameVisualState(frame, frameVisual);
+                }
             }
 
             const nextTransform = snapshotObjectTransform(target);
@@ -659,6 +793,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                         originY: 'top',
                         scaleX: displayWidth / image.width,
                         scaleY: displayHeight / image.height,
+                        objectCaching: false,
+                        noScaleCache: false,
                         selectable: true,
                         evented: true,
                         hasControls: true,

@@ -86,6 +86,24 @@ const mergeBounds = (objects) => {
     };
 };
 
+const mergeRectBounds = (rects) => {
+    if (!rects || rects.length === 0) {
+        return null;
+    }
+
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const right = Math.max(...rects.map((rect) => rect.left + rect.width));
+    const bottom = Math.max(...rects.map((rect) => rect.top + rect.height));
+
+    return {
+        left,
+        top,
+        width: Math.max(1, Math.ceil(right - left)),
+        height: Math.max(1, Math.ceil(bottom - top))
+    };
+};
+
 const alignBoundsToGrid = (bounds) => {
     if (!bounds) {
         return null;
@@ -171,6 +189,8 @@ const createRasterObject = async (dataUrl, bounds, role) => (
                 originY: 'top',
                 scaleX: 1,
                 scaleY: 1,
+                objectCaching: false,
+                noScaleCache: false,
                 selectable: false,
                 evented: false,
                 hasControls: false,
@@ -227,12 +247,15 @@ export const bakeCandidateIntoCanvas = async (canvas, candidate, genFrame) => {
         return { addedObjects: [], removedObjects: [] };
     }
 
-    const candidateBounds = getObjectBounds(candidate);
+    const candidateBounds = getRasterObjectRenderBounds(candidate);
     const affectedBaseObjects = getBaseRasterObjects(canvas, genFrame).filter((object) => (
-        rectsIntersect(getObjectBounds(object), candidateBounds)
+        rectsIntersect(getRasterObjectRenderBounds(object), candidateBounds)
     ));
     const removedObjects = [...affectedBaseObjects, candidate];
-    const bounds = alignBoundsToGrid(mergeBounds(removedObjects));
+    const bounds = alignBoundsToGrid(mergeRectBounds([
+        candidateBounds,
+        ...affectedBaseObjects.map((object) => getRasterObjectRenderBounds(object))
+    ]));
     const rasterCandidate = await cloneFabricObject(candidate);
     rasterCandidate.set({
         stroke: null,
