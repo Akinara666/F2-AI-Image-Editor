@@ -16,6 +16,28 @@ import './Editor.css';
 const MAX_UNDO_STEPS = 50;
 const FRAME_STROKE_WIDTH = 3;
 const FRAME_DASH_PATTERN = [10, 5];
+const UNDO_SERIALIZED_PROPS = [
+    'editorRole',
+    'id',
+    'isMask',
+    'isCandidate',
+    'candidateSourceUrl',
+    'selectable',
+    'evented',
+    'hasControls',
+    'hasBorders',
+    'lockMovementX',
+    'lockMovementY',
+    'lockScalingX',
+    'lockScalingY',
+    'lockRotation',
+    'hoverCursor',
+    'objectCaching',
+    'noScaleCache',
+    'perPixelTargetFind',
+    'transparentCorners',
+    'cornerSize'
+];
 
 const blobToDataURL = (blob) => (
     new Promise((resolve, reject) => {
@@ -44,6 +66,32 @@ const areTransformsEqual = (left, right) => (
     && left.scaleY === right.scaleY
 );
 
+const serializeFrameState = (object) => ({
+    left: object.left,
+    top: object.top,
+    width: object.width,
+    height: object.height,
+    scaleX: object.scaleX,
+    scaleY: object.scaleY,
+    angle: object.angle,
+    visible: object.visible
+});
+
+const serializeFrameVisualState = (object) => ({
+    ...serializeFrameState(object),
+    strokeWidth: object.strokeWidth,
+    strokeDashArray: Array.isArray(object.strokeDashArray) ? [...object.strokeDashArray] : object.strokeDashArray
+});
+
+const applyFrameViewportStyle = (frameVisualObject, zoomLevel) => {
+    if (!frameVisualObject) return;
+    const safeZoom = Math.max(zoomLevel || 1, 0.1);
+    frameVisualObject.set({
+        strokeWidth: FRAME_STROKE_WIDTH / safeZoom,
+        strokeDashArray: FRAME_DASH_PATTERN.map((segment) => segment / safeZoom)
+    });
+};
+
 const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
@@ -69,8 +117,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
     const transformStartRef = useRef(null);
 
     const undoStackRef = useRef([]);
-    const pushUndo = (action) => {
-        undoStackRef.current.push(action);
+    const pushUndoSnapshot = (snapshot) => {
+        if (!snapshot) return;
+        undoStackRef.current.push(snapshot);
         if (undoStackRef.current.length > MAX_UNDO_STEPS) {
             undoStackRef.current.splice(0, undoStackRef.current.length - MAX_UNDO_STEPS);
         }
@@ -82,8 +131,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         setCandidateUrl(nextUrl);
     };
 
-    const syncCandidateFromCanvas = (canvas) => {
-        const nextCandidate = canvas?.getObjects().find((object) => isCandidateObject(object, genFrame)) || null;
+    const syncCandidateFromCanvas = (canvas, frameObject = genFrame) => {
+        const nextCandidate = canvas?.getObjects().find((object) => isCandidateObject(object, frameObject)) || null;
         setCandidateState(nextCandidate, nextCandidate?.candidateSourceUrl || null);
         return nextCandidate;
     };
@@ -134,6 +183,68 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         frameVisualObject.setCoords();
     };
 
+    const createUndoSnapshot = (canvas = fabricCanvas, frameObject = genFrame, frameVisualObject = genFrameVisualRef.current) => {
+        if (!canvas || !frameObject || !frameVisualObject) {
+            return null;
+        }
+
+        return {
+            frame: serializeFrameState(frameObject),
+            frameVisual: serializeFrameVisualState(frameVisualObject),
+            objects: canvas
+                .getObjects()
+                .filter((object) => object !== frameObject && object !== frameVisualObject)
+                .map((object) => object.toObject(UNDO_SERIALIZED_PROPS))
+        };
+    };
+
+    const commitUndoSnapshot = (canvas = fabricCanvas, frameObject = genFrame, frameVisualObject = genFrameVisualRef.current) => {
+        pushUndoSnapshot(createUndoSnapshot(canvas, frameObject, frameVisualObject));
+    };
+
+    const restoreUndoSnapshot = async (
+        snapshot,
+        canvas = fabricCanvas,
+        frameObject = genFrame,
+        frameVisualObject = genFrameVisualRef.current
+    ) => {
+        if (!snapshot || !canvas || !frameObject || !frameVisualObject) {
+            return;
+        }
+
+        const enlivenedObjects = await new Promise((resolve) => {
+            fabric.util.enlivenObjects(snapshot.objects || [], resolve);
+        });
+
+        canvas.discardActiveObject();
+        canvas.getObjects()
+            .filter((object) => object !== frameObject && object !== frameVisualObject)
+            .forEach((object) => canvas.remove(object));
+
+        frameObject.set(snapshot.frame);
+        frameObject.setCoords();
+        frameVisualObject.set(snapshot.frameVisual);
+        frameVisualObject.setCoords();
+        genFrameVisualRef.current = frameVisualObject;
+
+        enlivenedObjects.forEach((object) => {
+            canvas.add(object);
+        });
+
+        syncFrameVisualState(frameObject, frameVisualObject);
+        applyFrameViewportStyle(frameVisualObject, canvas.getZoom());
+        setGenFrame(frameObject);
+        setGenDimensions({
+            width: Math.round(frameObject.width * frameObject.scaleX),
+            height: Math.round(frameObject.height * frameObject.scaleY)
+        });
+        enforceCanvasLayerOrder(canvas, frameObject);
+        syncCandidateFromCanvas(canvas, frameObject);
+        syncMaskStateFromCanvas(canvas);
+        syncCanvasInteractionMode(canvas, frameObject);
+        canvas.requestRenderAll();
+    };
+
     const enqueueCanvasMutation = async (mutation) => {
         const task = mutationQueueRef.current.then(async () => {
             setIsMutatingCanvas(true);
@@ -170,11 +281,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         setFabricCanvas(canvas);
 
         const updateFrameViewportStyle = (zoomLevel) => {
-            const safeZoom = Math.max(zoomLevel || 1, 0.1);
-            frameVisual.set({
-                strokeWidth: FRAME_STROKE_WIDTH / safeZoom,
-                strokeDashArray: FRAME_DASH_PATTERN.map((segment) => segment / safeZoom)
-            });
+            applyFrameViewportStyle(frameVisual, zoomLevel);
         };
 
         const frame = new fabric.Rect({
@@ -221,6 +328,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         canvas.add(frameVisual);
         syncFrameVisualState(frame, frameVisual);
         setGenFrame(frame);
+        pushUndoSnapshot(createUndoSnapshot(canvas, frame, frameVisual));
 
         canvas.on('mouse:wheel', (opt) => {
             const delta = opt.e.deltaY;
@@ -483,12 +591,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
             const nextTransform = snapshotObjectTransform(target);
             if (!areTransformsEqual(transformStart.previous, nextTransform)) {
-                pushUndo({
-                    type: 'objectTransform',
-                    object: target,
-                    previous: transformStart.previous,
-                    next: nextTransform
-                });
+                commitUndoSnapshot(canvas, frame, frameVisual);
             }
             if (target === frame) {
                 syncFrameVisualState(frame, frameVisual);
@@ -510,34 +613,38 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         };
     }, []);
 
-    const syncCanvasInteractionMode = () => {
-        if (!fabricCanvas || !genFrame) return;
+    const syncCanvasInteractionMode = (
+        canvas = fabricCanvas,
+        frameObject = genFrame,
+        currentCandidate = candidateRef.current
+    ) => {
+        if (!canvas || !frameObject) return;
 
         const currentBrushMode = brushModeRef.current;
         const currentBrushColor = brushColorRef.current;
         const currentBrushSize = brushSizeRef.current;
         const isDrawing = !['none', 'hand'].includes(currentBrushMode);
-        fabricCanvas.isDrawingMode = isDrawing;
-        fabricCanvas.selection = currentBrushMode === 'none';
-        fabricCanvas.defaultCursor = currentBrushMode === 'hand' ? 'grab' : 'default';
+        canvas.isDrawingMode = isDrawing;
+        canvas.selection = currentBrushMode === 'none';
+        canvas.defaultCursor = currentBrushMode === 'hand' ? 'grab' : 'default';
 
-        if (currentBrushMode !== 'none' && fabricCanvas.getActiveObject()) {
-            fabricCanvas.discardActiveObject();
+        if (currentBrushMode !== 'none' && canvas.getActiveObject()) {
+            canvas.discardActiveObject();
         }
 
         if (isDrawing) {
-            const brush = new fabric.PencilBrush(fabricCanvas);
+            const brush = new fabric.PencilBrush(canvas);
             brush.width = currentBrushMode === 'eraser' ? currentBrushSize * 2 : currentBrushSize;
             brush.color = currentBrushMode === 'mask'
                 ? 'rgba(255, 0, 0, 1.0)'
                 : (currentBrushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : currentBrushColor);
-            fabricCanvas.freeDrawingBrush = brush;
+            canvas.freeDrawingBrush = brush;
         }
 
-        fabricCanvas.getObjects().forEach((object) => {
-            const isFrame = object === genFrame;
-            const isBaseRaster = isBaseRasterObject(object, genFrame);
-            const isCurrentCandidate = object === candidateRef.current || isCandidateObject(object, genFrame);
+        canvas.getObjects().forEach((object) => {
+            const isFrame = object === frameObject;
+            const isBaseRaster = isBaseRasterObject(object, frameObject);
+            const isCurrentCandidate = object === currentCandidate || isCandidateObject(object, frameObject);
             const interactive = currentBrushMode === 'none' && (isFrame || isCurrentCandidate || isBaseRaster);
 
             object.selectable = interactive;
@@ -564,8 +671,8 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             }
         });
 
-        enforceCanvasLayerOrder(fabricCanvas, genFrame);
-        fabricCanvas.requestRenderAll();
+        enforceCanvasLayerOrder(canvas, frameObject);
+        canvas.requestRenderAll();
     };
 
     useEffect(() => {
@@ -607,10 +714,10 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 if (candidateRef.current && !maskOverlayVisibleRef.current) {
                     maskGroup.set({ visible: false });
                 }
-                pushUndo({ type: 'maskPath', object: path });
                 enforceCanvasLayerOrder(fabricCanvas, genFrame);
                 syncMaskStateFromCanvas(fabricCanvas);
                 fabricCanvas.requestRenderAll();
+                commitUndoSnapshot(fabricCanvas, genFrame);
                 return;
             }
 
@@ -627,11 +734,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 enqueueCanvasMutation(async () => {
                     const result = await applyEraserPathToCanvas(fabricCanvas, path, genFrame);
                     if (result.removedObjects.length > 0 || result.addedObjects.length > 0) {
-                        pushUndo({
-                            type: 'replaceObjects',
-                            removedObjects: result.removedObjects,
-                            addedObjects: result.addedObjects
-                        });
+                        commitUndoSnapshot(fabricCanvas, genFrame);
                     }
                     syncCandidateFromCanvas(fabricCanvas);
                     syncCanvasInteractionMode();
@@ -645,9 +748,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 selectable: false,
                 evented: false
             });
-            pushUndo({ type: 'sketchPath', object: path });
             enforceCanvasLayerOrder(fabricCanvas, genFrame);
             fabricCanvas.requestRenderAll();
+            commitUndoSnapshot(fabricCanvas, genFrame);
         };
 
         fabricCanvas.on('path:created', handlePathCreated);
@@ -663,25 +766,22 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         setCandidateState(null, null);
         setMaskOverlayVisibility(true, fabricCanvas);
         syncCanvasInteractionMode();
+        commitUndoSnapshot(fabricCanvas, genFrame);
     };
 
     const performAccept = async () => {
         if (!fabricCanvas || !genFrame || !candidateRef.current) return;
 
         await enqueueCanvasMutation(async () => {
-            const result = await bakeCandidateIntoCanvas(fabricCanvas, candidateRef.current, genFrame);
+            await bakeCandidateIntoCanvas(fabricCanvas, candidateRef.current, genFrame);
             const maskGroup = getMaskGroupFromCanvas(fabricCanvas);
             if (maskGroup) {
                 fabricCanvas.remove(maskGroup);
             }
-            pushUndo({
-                type: 'replaceObjects',
-                removedObjects: maskGroup ? [...result.removedObjects, maskGroup] : result.removedObjects,
-                addedObjects: result.addedObjects
-            });
             setCandidateState(null, null);
             syncMaskStateFromCanvas(fabricCanvas);
             syncCanvasInteractionMode();
+            commitUndoSnapshot(fabricCanvas, genFrame);
         });
     };
 
@@ -689,47 +789,13 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         if (!fabricCanvas || !genFrame) return;
 
         await enqueueCanvasMutation(async () => {
-            if (undoStackRef.current.length === 0) {
+            if (undoStackRef.current.length <= 1) {
                 return;
             }
 
-            const action = undoStackRef.current.pop();
-
-            if (action.type === 'maskPath') {
-                const maskGroup = fabricCanvas.getObjects().find((object) => object.id === 'maskGroup');
-                if (maskGroup) {
-                    maskGroup.removeWithUpdate(action.object);
-                    if (maskGroup.getObjects().length === 0) {
-                        fabricCanvas.remove(maskGroup);
-                    }
-                }
-            } else if (action.type === 'sketchPath') {
-                fabricCanvas.remove(action.object);
-            } else if (action.type === 'replaceObjects') {
-                action.addedObjects.forEach((object) => {
-                    fabricCanvas.remove(object);
-                });
-                action.removedObjects.forEach((object) => {
-                    if (!fabricCanvas.getObjects().includes(object)) {
-                        fabricCanvas.add(object);
-                    }
-                });
-            } else if (action.type === 'objectTransform') {
-                action.object.set(action.previous);
-                action.object.setCoords();
-                if (action.object === genFrame) {
-                    setGenDimensions({
-                        width: Math.round(action.object.width * action.object.scaleX),
-                        height: Math.round(action.object.height * action.object.scaleY)
-                    });
-                    syncFrameVisualState(action.object);
-                }
-            }
-
-            enforceCanvasLayerOrder(fabricCanvas, genFrame);
-            syncCandidateFromCanvas(fabricCanvas);
-            syncMaskStateFromCanvas(fabricCanvas);
-            syncCanvasInteractionMode();
+            undoStackRef.current.pop();
+            const snapshot = undoStackRef.current[undoStackRef.current.length - 1];
+            await restoreUndoSnapshot(snapshot, fabricCanvas, genFrame, genFrameVisualRef.current);
         });
     };
 
@@ -741,13 +807,9 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
 
         fabricCanvas.remove(activeObject);
         fabricCanvas.discardActiveObject();
-        pushUndo({
-            type: 'replaceObjects',
-            removedObjects: [activeObject],
-            addedObjects: []
-        });
         syncCandidateFromCanvas(fabricCanvas);
         syncCanvasInteractionMode();
+        commitUndoSnapshot(fabricCanvas, genFrame);
     };
 
     useImperativeHandle(ref, () => ({
@@ -759,6 +821,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             setGenDimensions({ width, height });
             enforceCanvasLayerOrder(fabricCanvas, genFrame);
             syncCanvasInteractionMode();
+            commitUndoSnapshot(fabricCanvas, genFrame);
         },
 
         addGeneratedImage: async (url) => {
@@ -819,6 +882,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                     setCandidateState(image, url);
                     syncMaskStateFromCanvas(fabricCanvas);
                     syncCanvasInteractionMode();
+                    commitUndoSnapshot(fabricCanvas, genFrame);
                     resolve();
                 }, { crossOrigin: 'anonymous' });
             });
@@ -848,17 +912,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 fabricCanvas.remove(object);
             });
 
-            pushUndo({
-                type: 'replaceObjects',
-                removedObjects: removableObjects,
-                addedObjects: []
-            });
-
             fabricCanvas.discardActiveObject();
             enforceCanvasLayerOrder(fabricCanvas, genFrame);
             syncCandidateFromCanvas(fabricCanvas);
             syncMaskStateFromCanvas(fabricCanvas);
             syncCanvasInteractionMode();
+            commitUndoSnapshot(fabricCanvas, genFrame);
         }
     }));
 
