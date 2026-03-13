@@ -12,3 +12,6 @@ backend/static/outputs/
 
 .env
 .vite
+
+.gguf
+.safetensors

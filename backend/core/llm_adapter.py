@@ -8,13 +8,47 @@ from core.config import settings
 
 #_____________апдейт_______ Shared adapter contract
 class BasePromptLLMAdapter:
+    def __init__(self) -> None:
+        self._state_lock = threading.RLock()
+        self._active_calls = 0
+        self._unload_requested = False
+
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         raise NotImplementedError
+
+    def run_transform(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        with self._state_lock:
+            self._active_calls += 1
+
+        try:
+            return self.transform_to_sd(prompt, context)
+        finally:
+            should_unload = False
+            with self._state_lock:
+                self._active_calls = max(0, self._active_calls - 1)
+                if self._active_calls == 0 and self._unload_requested:
+                    self._unload_requested = False
+                    should_unload = True
+            if should_unload:
+                self._unload_now()
 
     def health(self) -> dict[str, Any]:
         return {"status": "ok", "adapter": self.__class__.__name__}
 
     def unload(self) -> None:
+        with self._state_lock:
+            if self._active_calls > 0:
+                self._unload_requested = True
+                return
+
+        self._unload_now()
+
+    def _unload_now(self) -> None:
+        with self._state_lock:
+            self._unload_requested = False
+        self._unload_now_locked()
+
+    def _unload_now_locked(self) -> None:
         pass
 
 
@@ -45,6 +79,7 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         system_prompt: str = "",
         logger: Optional[logging.Logger] = None,
     ):
+        super().__init__()
         self.model_path = model_path
         self.lora_path = lora_path
         self.lora_scale = lora_scale
@@ -155,13 +190,15 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             "status": "ok",
             "adapter": "qwen_gguf_lora",
             "loaded": loaded,
+            "active_calls": self._active_calls,
+            "unload_requested": self._unload_requested,
             "model_path": self.model_path,
             "lora_path": self.lora_path,
             "n_ctx": self.n_ctx,
             "n_gpu_layers": self.n_gpu_layers,
         }
 
-    def unload(self) -> None:
+    def _unload_now_locked(self) -> None:
         with self._load_lock:
             if self._llm is not None:
                 self.logger.info("Unloading Qwen GGUF model from memory.")

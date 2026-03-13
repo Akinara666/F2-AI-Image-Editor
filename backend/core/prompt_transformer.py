@@ -145,7 +145,7 @@ class PromptTransformer:
         started = time.perf_counter()
         try:
             raw_payload = await asyncio.wait_for(
-                asyncio.to_thread(self.adapter.transform_to_sd, prompt_clean, context or {}),
+                asyncio.to_thread(self.adapter.run_transform, prompt_clean, context or {}),
                 timeout=max(0.1, self.timeout_ms / 1000.0),
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
