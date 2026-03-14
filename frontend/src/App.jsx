@@ -491,8 +491,8 @@ function App() {
 
     setGenerationLifecycleStatus(GENERATION_STATUS.RESTORING);
     try {
-      await editorRef.current.addGeneratedImage(item.generated_url || item.url);
-      showSuccess("History item restored to preview.");
+      await editorRef.current.restoreHistoryDocument(item.url);
+      showSuccess("History item restored to canvas.");
     } catch (e) {
       console.error("Failed to restore history item", e);
       const errorMsg = e.response?.data?.detail || e.message;

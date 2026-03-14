@@ -363,7 +363,7 @@ const Sidebar = ({
 
                             <div className="input-group sidebar__mask-group">
                                 <label className="input-label">Mask Blur ({params.mask_blur})</label>
-                                <input type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="64" step="1" value={params.mask_blur} onChange={handleChange} />
+                                <input type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
                             </div>
 
                             <div className="input-group sidebar__mask-group">

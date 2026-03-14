@@ -117,7 +117,7 @@ export const GENERATION_NUMERIC_PARAM_RULES = {
         type: "int",
         defaultValue: 4,
         min: 0,
-        max: 64
+        max: 128
     },
     mask_padding: {
         label: "Mask Padding",

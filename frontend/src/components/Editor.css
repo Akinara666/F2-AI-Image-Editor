@@ -40,7 +40,7 @@
     background: rgba(10, 16, 24, 0.82);
     backdrop-filter: var(--glass-blur);
     -webkit-backdrop-filter: var(--glass-blur);
-    color: var(--text-primary);
+    color: #f5fbff;
     padding: 6px 12px;
     border-radius: var(--radius-md);
     pointer-events: none;

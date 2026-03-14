@@ -25,6 +25,7 @@ import {
     clearEditorOverlays,
     deleteActiveObject,
     discardCandidate,
+    restoreHistoryDocument,
     setGenerationFrameSize,
     undoEditorChange
 } from './editor/commands';
@@ -404,6 +405,23 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
         exportForGeneration: async () => exportCanvasState(fabricCanvas, genFrame),
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
+
+        restoreHistoryDocument: async (url) => restoreHistoryDocument({
+            url,
+            fabricCanvas,
+            genFrame,
+            genFrameVisual: genFrameVisualRef.current,
+            candidateRef,
+            setCandidateState,
+            enforceCanvasLayerOrder,
+            syncMaskStateFromCanvas,
+            syncCanvasInteractionMode,
+            syncFrameVisualState,
+            setGenDimensions,
+            markUndoDirty,
+            commitUndoSnapshot,
+            getUndoSnapshotParams
+        }),
 
         undo: performUndo,
 

@@ -196,6 +196,90 @@ export const addGeneratedImage = async ({
     });
 };
 
+export const restoreHistoryDocument = async ({
+    url,
+    fabricCanvas,
+    genFrame,
+    genFrameVisual,
+    candidateRef,
+    setCandidateState,
+    enforceCanvasLayerOrder,
+    syncMaskStateFromCanvas,
+    syncCanvasInteractionMode,
+    syncFrameVisualState,
+    setGenDimensions,
+    markUndoDirty,
+    commitUndoSnapshot,
+    getUndoSnapshotParams
+}) => {
+    if (!fabricCanvas || !genFrame || !genFrameVisual) return;
+
+    const response = await fetch(resolveApiUrl(url), { mode: 'cors' });
+    if (!response.ok) {
+        throw new Error(`Failed to load history image: ${response.status}`);
+    }
+
+    const imageBlob = await response.blob();
+    const dataUrl = await blobToDataURL(imageBlob);
+
+    await new Promise((resolve, reject) => {
+        fabric.Image.fromURL(dataUrl, (image) => {
+            if (!image) {
+                reject(new Error('Failed to decode history image.'));
+                return;
+            }
+
+            fabricCanvas.discardActiveObject();
+            fabricCanvas.getObjects()
+                .filter((object) => object !== genFrame && object !== genFrameVisual)
+                .forEach((object) => fabricCanvas.remove(object));
+
+            genFrame.set({
+                width: image.width,
+                height: image.height,
+                scaleX: 1,
+                scaleY: 1
+            });
+            genFrame.setCoords();
+            syncFrameVisualState(genFrame, genFrameVisual);
+
+            image.set({
+                left: genFrame.left,
+                top: genFrame.top,
+                originX: 'left',
+                originY: 'top',
+                scaleX: 1,
+                scaleY: 1,
+                objectCaching: false,
+                noScaleCache: false,
+                selectable: false,
+                evented: false,
+                hasControls: false,
+                lockRotation: true,
+                editorRole: CANVAS_OBJECT_ROLES.BASE,
+                hoverCursor: 'default'
+            });
+
+            image.setCoords();
+            fabricCanvas.add(image);
+            fabricCanvas.setActiveObject(image);
+
+            if (candidateRef.current) {
+                candidateRef.current = null;
+            }
+            setCandidateState(null, null);
+            setGenDimensions({ width: image.width, height: image.height });
+            markUndoDirty(genFrame);
+            markUndoDirty(genFrameVisual);
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
+            syncMaskStateFromCanvas(fabricCanvas);
+            syncCanvasInteractionMode();
+            commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame, genFrameVisual));
+            resolve();
+        }, { crossOrigin: 'anonymous' });
+    });
+};
+
 export const clearEditorOverlays = ({
     fabricCanvas,
     genFrame,
