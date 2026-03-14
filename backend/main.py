@@ -11,7 +11,11 @@ import io
 import asyncio
 import traceback
 import uuid
-from urllib.parse import urlparse, unquote
+import shutil
+import threading
+from time import monotonic
+from urllib.request import Request as UrlRequest, urlopen
+from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
 from PIL import Image
 import torch
 from pydantic import BaseModel
@@ -67,10 +71,20 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 ALLOWED_CLOUD_MODELS = [
     {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)", "family": "sd"},
-    {"id": "Lykon/DreamShaper", "label": "DreamShaper (Cloud)", "family": "sd"},
-    {"id": "prompthero/openjourney-v4", "label": "OpenJourney v4 (Cloud)", "family": "sd"},
     {"id": "stabilityai/stable-diffusion-xl-base-1.0", "label": "SDXL Base 1.0 (Cloud)", "family": "sdxl"},
 ]
+MANAGED_DOWNLOADABLE_MODELS = [
+    {
+        "id": "managed:cyberrealistic-pony-v16",
+        "label": "CyberRealistic Pony v16 (Auto-download on Generate)",
+        "family": "sdxl",
+        "source": "managed_download",
+        "requires_auth": True,
+        "filename": "CyberRealistic_Pony_v16_fp32.safetensors",
+        "download_url": "https://civitai.com/api/download/models/2581228?type=Model&format=SafeTensor&size=full&fp=fp32",
+    },
+]
+MANAGED_MODEL_DOWNLOAD_LOCKS: dict[str, threading.Lock] = {}
 ALLOWED_SAMPLERS = {
     "Euler a",
     "Euler",
@@ -183,6 +197,10 @@ def _get_local_model_entries() -> list[dict[str, str]]:
         return []
 
     resolved_models_dir = models_dir.resolve()
+    managed_local_paths = {
+        Path(entry["local_path"]).resolve()
+        for entry in _get_managed_model_entries()
+    }
     entries: list[dict[str, str]] = []
     try:
         for file in sorted(models_dir.iterdir()):
@@ -192,6 +210,8 @@ def _get_local_model_entries() -> list[dict[str, str]]:
             resolved_file = file.resolve()
             if resolved_file.parent != resolved_models_dir:
                 logger.warning("Skipping local model outside MODELS_DIR: %s", resolved_file)
+                continue
+            if resolved_file in managed_local_paths:
                 continue
 
             entries.append({
@@ -205,9 +225,138 @@ def _get_local_model_entries() -> list[dict[str, str]]:
     return entries
 
 
+def _get_managed_model_entries() -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    for entry in MANAGED_DOWNLOADABLE_MODELS:
+        local_path = (settings.MODELS_DIR / entry["filename"]).resolve()
+        entries.append({
+            **entry,
+            "local_path": str(local_path),
+            "downloaded": local_path.exists() and local_path.is_file(),
+            "auto_download": True,
+        })
+    return entries
+
+
 def _get_allowed_model_map() -> dict[str, dict[str, str]]:
-    entries = ALLOWED_CLOUD_MODELS + _get_local_model_entries()
+    entries = ALLOWED_CLOUD_MODELS + _get_managed_model_entries() + _get_local_model_entries()
     return {entry["id"]: entry for entry in entries}
+
+
+def _append_token_to_url(url: str, token: str) -> str:
+    parsed = urlparse(url)
+    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_params["token"] = token
+    return urlunparse(parsed._replace(query=urlencode(query_params)))
+
+
+def _download_managed_model_sync(model_entry: dict[str, object]) -> tuple[str, bool]:
+    model_id = str(model_entry["id"])
+    target_path = Path(str(model_entry["local_path"])).resolve()
+    download_url = str(model_entry["download_url"])
+    requires_auth = bool(model_entry.get("requires_auth"))
+    lock = MANAGED_MODEL_DOWNLOAD_LOCKS.setdefault(model_id, threading.Lock())
+
+    with lock:
+        if target_path.exists() and target_path.is_file() and target_path.stat().st_size > 0:
+            logger.info("Managed model already available locally: id=%s path=%s", model_id, target_path)
+            return str(target_path), False
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = target_path.with_suffix(f"{target_path.suffix}.part")
+        if temp_path.exists():
+            temp_path.unlink()
+
+        request_headers = {"User-Agent": settings.PROJECT_NAME}
+        request_url = download_url
+        if requires_auth:
+            if not settings.CIVITAI_API_TOKEN:
+                raise RuntimeError(
+                    "CIVITAI_API_TOKEN is required to download this model. "
+                    "Add it to backend/.env and restart the backend."
+                )
+            request_url = _append_token_to_url(download_url, settings.CIVITAI_API_TOKEN)
+
+        logger.info("Downloading managed model: id=%s path=%s requires_auth=%s", model_id, target_path, requires_auth)
+        request = UrlRequest(request_url, headers=request_headers)
+        started_at = monotonic()
+        try:
+            with urlopen(request, timeout=900) as response, temp_path.open("wb") as output_file:
+                total_bytes = int(response.headers.get("Content-Length", "0") or "0")
+                logger.info(
+                    "Managed model response opened: id=%s status=%s content_length_bytes=%s content_length_mb=%.2f",
+                    model_id,
+                    getattr(response, "status", "<unknown>"),
+                    total_bytes or "<unknown>",
+                    (total_bytes / (1024 * 1024)) if total_bytes else 0.0,
+                )
+
+                downloaded_bytes = 0
+                chunk_size = 1024 * 1024
+                last_logged_bytes = 0
+                progress_log_step = 100 * 1024 * 1024
+
+                while True:
+                    chunk = response.read(chunk_size)
+                    if not chunk:
+                        break
+
+                    output_file.write(chunk)
+                    downloaded_bytes += len(chunk)
+
+                    if (
+                        downloaded_bytes == len(chunk)
+                        or downloaded_bytes - last_logged_bytes >= progress_log_step
+                        or (total_bytes and downloaded_bytes >= total_bytes)
+                    ):
+                        elapsed = max(monotonic() - started_at, 0.001)
+                        speed_mb_s = (downloaded_bytes / (1024 * 1024)) / elapsed
+                        if total_bytes:
+                            progress_pct = (downloaded_bytes / total_bytes) * 100
+                            logger.info(
+                                "Managed model download progress: id=%s downloaded_mb=%.2f total_mb=%.2f progress=%.1f%% speed_mb_s=%.2f",
+                                model_id,
+                                downloaded_bytes / (1024 * 1024),
+                                total_bytes / (1024 * 1024),
+                                progress_pct,
+                                speed_mb_s,
+                            )
+                        else:
+                            logger.info(
+                                "Managed model download progress: id=%s downloaded_mb=%.2f speed_mb_s=%.2f",
+                                model_id,
+                                downloaded_bytes / (1024 * 1024),
+                                speed_mb_s,
+                            )
+                        last_logged_bytes = downloaded_bytes
+            temp_path.replace(target_path)
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            raise
+
+        elapsed = max(monotonic() - started_at, 0.001)
+        final_size_mb = target_path.stat().st_size / (1024 * 1024)
+        logger.info(
+            "Managed model download completed: id=%s path=%s size_mb=%.2f elapsed_s=%.2f avg_speed_mb_s=%.2f",
+            model_id,
+            target_path,
+            final_size_mb,
+            elapsed,
+            final_size_mb / elapsed,
+        )
+        return str(target_path), True
+
+
+async def _prepare_model_for_runtime(
+    selected_model_id: str,
+    allowed_model_entry: dict[str, object],
+) -> tuple[str, bool]:
+    if allowed_model_entry.get("source") != "managed_download":
+        return selected_model_id, False
+
+    logger.info("Preparing managed model for runtime: id=%s", selected_model_id)
+    return await asyncio.to_thread(_download_managed_model_sync, allowed_model_entry)
 
 
 def _normalize_model_family(model_family: Optional[str]) -> Optional[str]:
@@ -314,6 +463,7 @@ def _validate_generation_inputs(
         "cfg": cfg,
         "seed": seed,
         "model_id": normalized_model_id,
+        "model_entry": allowed_model_entry,
         "model_family": resolved_model_family,
         "sampler": sampler,
         "mode": mode,
@@ -487,7 +637,7 @@ def read_root():
 
 @app.get("/models")
 def list_models():
-    return {"models": ALLOWED_CLOUD_MODELS + _get_local_model_entries()}
+    return {"models": ALLOWED_CLOUD_MODELS + _get_managed_model_entries() + _get_local_model_entries()}
 
 
 #_____________апдейт_______ Prompt transformer preview contract
@@ -597,6 +747,7 @@ async def generate_image(
         cfg = validated["cfg"]
         seed = validated["seed"]
         model_id = validated["model_id"]
+        model_entry = validated["model_entry"]
         model_family = validated["model_family"]
         sampler = validated["sampler"]
         mode = validated["mode"]
@@ -604,6 +755,7 @@ async def generate_image(
         denoising_strength = validated["denoising_strength"]
         mask_blur = validated["mask_blur"]
         mask_padding = validated["mask_padding"]
+        runtime_model_id, downloaded_managed_model = await _prepare_model_for_runtime(model_id, model_entry)
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
         source_prompt = raw_prompt.strip() if raw_prompt and raw_prompt.strip() else prompt
@@ -737,7 +889,7 @@ async def generate_image(
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
             pipe = await model_manager.get_model(
-                model_id,
+                runtime_model_id,
                 model_family=model_family,
                 pipeline_type=pipeline_type,
                 sampler_name=sampler
@@ -920,7 +1072,10 @@ async def generate_image(
                 "steps": steps,
                 "cfg": cfg,
                 "model_id": model_id,
+                "runtime_model_id": runtime_model_id if runtime_model_id != model_id else "",
                 "model_family": model_family,
+                "model_auto_download": bool(model_entry.get("auto_download")),
+                "model_downloaded_now": downloaded_managed_model,
                 "mode": actual_mode,
                 #_____________апдейт_______ Prompt transformation trace
                 "raw_prompt": transform_result.raw_prompt,

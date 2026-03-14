@@ -34,6 +34,7 @@ class Settings:
     CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
     LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "full").strip().lower()
     LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
+    CIVITAI_API_TOKEN: str = os.getenv("CIVITAI_API_TOKEN", "").strip()
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"

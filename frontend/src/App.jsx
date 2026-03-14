@@ -392,6 +392,9 @@ function App() {
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
         showSuccess("Image generated successfully!");
+        if (response.data?.meta?.model_downloaded_now) {
+          showInfo("Selected model was downloaded during this generation and is now cached locally.");
+        }
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
           showInfo(`Prompt transformer: ${response.data.meta.prompt_transform_status}`);
         }
