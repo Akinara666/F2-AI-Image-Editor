@@ -19,7 +19,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
 from PIL import Image
 import torch
 from pydantic import BaseModel
-from compel import Compel, ReturnedEmbeddingsType
+from compel import CompelForSD, CompelForSDXL
 
 # Import core modules
 from core.manager import model_manager
@@ -478,12 +478,7 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
     negative_prompt = negative_prompt or ""
     
     if model_family == "sdxl":
-        compel = Compel(
-            tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
-            text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
-            returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-            requires_pooled=[False, True]
-        )
+        compel = CompelForSDXL(pipe=pipe)
         prompt_embeds, pooled_prompt_embeds = compel(prompt)
         negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
         return {
@@ -493,12 +488,7 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
             "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
         }
     else:
-        compel = Compel(
-            tokenizer=pipe.tokenizer,
-            text_encoder=pipe.text_encoder,
-            returned_embeddings_type=ReturnedEmbeddingsType.LAST_HIDDEN_STATES,
-            requires_pooled=False
-        )
+        compel = CompelForSD(pipe=pipe)
         prompt_embeds = compel(prompt)
         negative_prompt_embeds = compel(negative_prompt)
         return {
