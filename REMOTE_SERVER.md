@@ -1,122 +1,290 @@
-# Инструкция: Backend на удаленном сервере
+# Запуск API на удаленном сервере
 
-Этот документ описывает два рабочих сценария:
+Этот гайд описывает рабочий сценарий:
 
-1. `SSH`-туннель между вашим ПК и удалённым backend.
-2. Публичный `https://` URL через `cloudflared` или `ngrok`.
+1. На локальной машине создается `ssh`-ключ.
+2. Репозиторий клонируется на удаленный сервер по `git@github.com:...`.
+3. Backend запускается на сервере только на `127.0.0.1:8000`.
+4. Доступ к API дается либо через `SSH`-туннель, либо через `cloudflared`.
 
-Если используете `SSH`-туннель, CORS обычно не нужен: браузер видит `localhost:8000`.
-Если используете публичный URL (`trycloudflare.com`, `ngrok-free.app`), CORS обязателен.
+Если нужен просто безопасный доступ с твоего компьютера, лучший вариант: `SSH`-туннель.
+Если нужен внешний `https://` URL, используй `cloudflared`.
 
-## Где лежат env-переменные
+## 1. Что должно быть установлено
 
-- `backend/.env`
-  Backend читает его через `python-dotenv`.
-- `frontend/.env`
-  Vite читает его при запуске фронтенда.
+На локальной машине:
 
-Новые переменные для удалённого сценария:
+- `git`
+- `ssh`
+- `nodejs` и `npm` для фронтенда
 
-- `backend/.env`: `CORS_ALLOW_ORIGINS`, `CORS_ALLOW_ORIGIN_REGEX`
-- `frontend/.env`: `VITE_API_BASE_URL`
+На сервере:
 
-Их можно задать и через `export`, но для постоянной конфигурации лучше хранить в `.env`.
+- `git`
+- `python3`
+- `python3-venv`
+- `pip`
+- `cloudflared` если нужен публичный URL
 
----
-
-## Шаг 1: Подготовка удаленного сервера
-
-### Вариант А: обычный Linux/VPS
+Пример для Ubuntu:
 
 ```bash
-ssh root@<IP_АДРЕС_СЕРВЕРА>
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
 ```
 
-### Вариант Б: Vast.ai
+## 2. Создание SSH-ключа на локальной машине
+
+Если ключа еще нет:
 
 ```bash
-ssh -p <PORT_С_VAST> root@<IP_С_VAST>
+ssh-keygen -t ed25519 -C "your_email@example.com"
 ```
 
-### Настройка backend на сервере
+По умолчанию ключи будут созданы здесь:
+
+- приватный ключ: `~/.ssh/id_ed25519`
+- публичный ключ: `~/.ssh/id_ed25519.pub`
+
+Покажи публичный ключ:
 
 ```bash
-cd path/to/working-title-psd2/backend
+cat ~/.ssh/id_ed25519.pub
+```
+
+## 3. Добавление ключа в GitHub
+
+В GitHub:
+
+1. Открой `Settings`
+2. Перейди в `SSH and GPG keys`
+3. Нажми `New SSH key`
+4. Вставь содержимое `~/.ssh/id_ed25519.pub`
+
+Проверь доступ:
+
+```bash
+ssh -T git@github.com
+```
+
+Ожидаемое поведение: GitHub пишет, что успешно аутентифицировал тебя по SSH.
+
+## 4. Подключение к серверу
+
+Обычный сервер:
+
+```bash
+ssh user@SERVER_IP
+```
+
+Если нестандартный порт:
+
+```bash
+ssh -p 2222 user@SERVER_IP
+```
+
+Если это `Vast.ai`:
+
+```bash
+ssh -p PORT root@SERVER_IP
+```
+
+## 5. Клонирование репозитория на сервер
+
+На сервере:
+
+```bash
+git clone git@github.com:Akinara666/working-title-psd2.git
+cd working-title-psd2
+```
+
+Если репозиторий уже есть:
+
+```bash
+cd working-title-psd2
+git pull
+```
+
+## 6. Настройка backend на сервере
+
+Перейди в backend:
+
+```bash
+cd backend
 python3 -m venv venv
 source venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-После этого отредактируйте `backend/.env`.
+## 7. Настройка `backend/.env`
 
-Минимум для обычного запуска:
+Минимальный пример для GPU-сервера:
 
 ```env
 USE_CUDA=true
 DEFAULT_MODEL_ID=runwayml/stable-diffusion-v1-5
-```
+SD_ENABLE_CPU_OFFLOAD=true
 
-Если backend будет доступен через публичный URL, добавьте CORS:
+PROMPT_TRANSFORM_ENABLED=false
 
-```env
 CORS_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
+```
+
+Если хочешь использовать CivitAI managed download:
+
+```env
+CIVITAI_API_TOKEN=your_civitai_token
+```
+
+Если используешь prompt transformer с `GGUF`:
+
+```env
+PROMPT_TRANSFORM_ENABLED=true
+PROMPT_TRANSFORM_PROVIDER=qwen_gguf
+LLM_MODEL_PATH=/abs/path/to/model.gguf
+LLM_LORA_PATH=/abs/path/to/adapter.gguf
+LLM_GPU_LAYERS=0
+```
+
+### Скачивание Qwen GGUF на сервер
+
+Если хочешь использовать встроенный prompt transformer на `Qwen`, скачай модель в `backend/models/llm/`.
+
+Из корня проекта на сервере:
+
+```bash
+mkdir -p backend/models/llm
+cd backend/models/llm
+wget -O model.gguf "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf?download=true"
+```
+
+После этого в `backend/.env` можно использовать простой путь:
+
+```env
+PROMPT_TRANSFORM_ENABLED=true
+PROMPT_TRANSFORM_PROVIDER=qwen_gguf
+LLM_MODEL_PATH=./models/llm/model.gguf
+LLM_LORA_PATH=./models/llm/adapter.gguf
+```
+
+Если `adapter.gguf` не нужен, укажи пустое значение:
+
+```env
+LLM_LORA_PATH=
+```
+
+Важно:
+
+- backend должен слушать `127.0.0.1`, а не `0.0.0.0`
+- это уменьшает лишнюю внешнюю экспозицию
+
+## 8. Ручной запуск backend
+
+Из каталога `backend`:
+
+```bash
+source venv/bin/activate
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Проверка на сервере:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Ожидаемый ответ:
+
+```json
+{"status":"ok"}
+```
+
+## 9. Как не терять процесс после закрытия SSH
+
+Самый простой вариант: `tmux`
+
+Установка:
+
+```bash
+sudo apt install -y tmux
 ```
 
 Запуск:
 
 ```bash
-venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8000
+tmux new -s psd2
+cd ~/working-title-psd2/backend
+source venv/bin/activate
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-Важно: backend должен слушать `127.0.0.1:8000`, а не внешний интерфейс.
-
----
-
-## Сценарий A: SSH-туннель
-
-Это предпочтительный вариант.
-
-### На вашем ПК
+Отключиться от сессии:
 
 ```bash
-ssh -N -f -L 8000:127.0.0.1:8000 root@<IP_АДРЕС_СЕРВЕРА>
+Ctrl+b
+d
 ```
 
-Для Vast.ai:
+Вернуться:
 
 ```bash
-ssh -N -f -L 8000:127.0.0.1:8000 -p <PORT_С_VAST> root@<IP_С_VAST>
+tmux attach -t psd2
 ```
 
-### Настройка frontend
+## 10. Вариант A: доступ через SSH-туннель
 
-В `frontend/.env`:
+Это предпочтительный способ.
+
+На локальной машине открой туннель:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP
+```
+
+Если сервер на нестандартном порту:
+
+```bash
+ssh -N -L 8000:127.0.0.1:8000 -p 2222 user@SERVER_IP
+```
+
+После этого локальный адрес:
+
+```text
+http://127.0.0.1:8000
+```
+
+будет проброшен на backend удаленного сервера.
+
+### Настройка frontend для SSH-туннеля
+
+На локальной машине в `frontend/.env`:
 
 ```env
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-Дальше:
+Запуск фронтенда:
 
 ```bash
-cd path/to/working-title-psd2/frontend
+cd frontend
 npm install
 npm run dev
 ```
 
-Откройте `http://localhost:5173`.
+Открой:
 
-В этом сценарии CORS обычно не нужен.
+```text
+http://localhost:5173
+```
 
----
+В этом сценарии браузер фактически общается с `localhost`, поэтому это самый чистый режим.
 
-## Сценарий B: публичный URL через туннель
+## 11. Вариант B: публичный URL через cloudflared
 
-Используйте этот вариант, если `SSH` недоступен или неудобен.
-
-### Cloudflare Tunnel
+Используй этот режим, если frontend не может работать через `SSH`-туннель или нужен внешний `https://` URL.
 
 На сервере:
 
@@ -124,83 +292,155 @@ npm run dev
 cloudflared tunnel --url http://127.0.0.1:8000
 ```
 
-Вы получите URL вида:
+Ты получишь URL вида:
 
 ```text
-https://random-words.trycloudflare.com
+https://random-name.trycloudflare.com
 ```
 
-### Ngrok
+### Настройка frontend для cloudflared
 
-На сервере:
-
-```bash
-ngrok http 8000
-```
-
-Вы получите URL вида:
-
-```text
-https://a1b2c3d4.ngrok-free.app
-```
-
-### Настройка frontend
-
-На вашем ПК в `frontend/.env`:
+На локальной машине в `frontend/.env`:
 
 ```env
-VITE_API_BASE_URL=https://random-words.trycloudflare.com
+VITE_API_BASE_URL=https://random-name.trycloudflare.com
 ```
 
 Потом:
 
 ```bash
-cd path/to/working-title-psd2/frontend
+cd frontend
+npm install
 npm run dev
 ```
 
-### Настройка backend
+### Почему здесь нужен CORS
 
-На сервере в `backend/.env`:
+Потому что frontend работает на:
+
+```text
+http://localhost:5173
+```
+
+а backend отвечает с другого origin:
+
+```text
+https://random-name.trycloudflare.com
+```
+
+Поэтому `backend/.env` должен содержать:
 
 ```env
 CORS_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
 ```
 
-Затем перезапустите backend.
+После правки `.env` backend нужно перезапустить.
 
-Без этих переменных браузер будет блокировать:
+## 12. Полный короткий сценарий
 
-- `POST /generate`
-- `GET /models`
-- `POST /prompt/transform`
-- загрузку картинок из `/outputs/...`
+### Локальная машина
 
----
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
+cat ~/.ssh/id_ed25519.pub
+```
 
-## Почему раньше ломалось
+Добавляешь ключ в GitHub.
 
-Проблема была из двух частей:
+### Сервер
 
-1. Backend не отдавал CORS-заголовки, когда фронтенд на `http://localhost:5173` ходил на `https://...trycloudflare.com`.
-2. После первой генерации Fabric загружал картинку с другого origin, и canvas становился `tainted`, из-за чего второй `GENERATE` падал на чтении пикселей.
+```bash
+git clone git@github.com:Akinara666/working-title-psd2.git
+cd working-title-psd2/backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
+```
 
-Сейчас код учитывает оба случая:
+### Если нужен публичный URL
 
-- backend умеет CORS для `localhost`
-- frontend загружает результат генерации CORS-safe способом
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+```
 
----
+## 13. Проверка, что все реально работает
 
-## Краткая схема
+На сервере:
 
-`SSH`-туннель:
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/models
+```
 
-- `backend/.env`: без обязательного CORS
-- `frontend/.env`: `VITE_API_BASE_URL=http://localhost:8000`
+На локальной машине при SSH-туннеле:
 
-Публичный URL:
+```bash
+curl http://127.0.0.1:8000/health
+```
 
-- `backend/.env`: добавить `CORS_ALLOW_ORIGINS` и `CORS_ALLOW_ORIGIN_REGEX`
-- `frontend/.env`: `VITE_API_BASE_URL=https://...`
+Если используется `cloudflared`:
+
+```bash
+curl https://random-name.trycloudflare.com/health
+```
+
+## 14. Частые проблемы
+
+### `ModuleNotFoundError`
+
+Обычно значит, что ты не активировал `venv`.
+
+Решение:
+
+```bash
+cd ~/working-title-psd2/backend
+source venv/bin/activate
+```
+
+### `Address already in use`
+
+Порт `8000` уже занят.
+
+Проверь:
+
+```bash
+ss -ltnp | grep 8000
+```
+
+### Браузер пишет CORS error
+
+Значит frontend идет на публичный URL, а backend не отдает нужные CORS-заголовки.
+
+Проверь `backend/.env`:
+
+```env
+CORS_ALLOW_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+CORS_ALLOW_ORIGIN_REGEX=^https?://(localhost|127\.0\.0\.1)(:\d+)?$
+```
+
+### `GET /outputs/... 404 Not Found`
+
+Это значит, что файла уже нет в `backend/static/outputs`, а frontend еще пытается его показать из истории.
+
+### API работает, но генерация очень медленная
+
+Смотри:
+
+- `USE_CUDA=true`
+- `SD_ENABLE_CPU_OFFLOAD=true/false`
+- хватает ли VRAM
+- не включен ли слишком частый `LIVE_PREVIEW`
+
+## 15. Что я рекомендую
+
+Для обычной удаленной разработки:
+
+1. Поднять backend на сервере на `127.0.0.1:8000`
+2. Запускать его в `tmux`
+3. Использовать `SSH`-туннель
+4. Держать frontend локально на своей машине
+
+`cloudflared` нужен только если тебе реально нужен внешний публичный URL.

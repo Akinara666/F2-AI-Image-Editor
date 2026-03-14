@@ -811,12 +811,12 @@ async def generate_image(
         # Detect Mode & Process Inputs Early
         
         image_input = None
-        hard_mask_input = None
-        soft_mask_input = None
+        generation_mask_input = None
+        blend_mask_input = None
         has_transparency = False
         outpaint_ready_image = None
-        outpaint_hard_mask = None
-        outpaint_soft_mask = None
+        outpaint_generation_mask = None
+        outpaint_blend_mask = None
         
         # Load Init Image
         if init_image:
@@ -832,27 +832,26 @@ async def generate_image(
         if mask_image:
             mask_bytes = await mask_image.read()
             raw_mask = Image.open(io.BytesIO(mask_bytes))
-            # WebUI/Invoke style inpaint mask controls.
-            hard_mask, soft_mask = process_mask_for_inpainting(
+            generation_mask, blend_mask = process_mask_for_inpainting(
                 raw_mask,
                 mask_padding=mask_padding,
                 mask_blur=mask_blur
             )
-            hard_mask_input = hard_mask.resize((width, height), Image.Resampling.NEAREST)
-            soft_mask_input = soft_mask.resize((width, height), Image.Resampling.BICUBIC)
+            generation_mask_input = generation_mask.resize((width, height), Image.Resampling.NEAREST)
+            blend_mask_input = blend_mask.resize((width, height), Image.Resampling.BICUBIC)
             logger.info(
-                "Prepared manual inpaint mask: blur=%s padding=%s hard_extrema=%s soft_extrema=%s size=%sx%s",
+                "Prepared manual inpaint mask: blur=%s padding=%s generation_extrema=%s blend_extrema=%s size=%sx%s",
                 mask_blur,
                 mask_padding,
-                hard_mask_input.getextrema(),
-                soft_mask_input.getextrema(),
+                generation_mask_input.getextrema(),
+                blend_mask_input.getextrema(),
                 width,
                 height,
             )
 
         # Prepare outpaint context whenever transparency exists.
         if image_input and has_transparency:
-            outpaint_ready_image, outpaint_hard_mask, outpaint_soft_mask = prepare_image_for_outpainting(
+            outpaint_ready_image, outpaint_generation_mask, outpaint_blend_mask = prepare_image_for_outpainting(
                 image_input,
                 mask_padding=mask_padding,
                 mask_blur=mask_blur
@@ -862,7 +861,7 @@ async def generate_image(
         actual_mode = mode
         
         if mode == "auto":
-             if hard_mask_input:
+             if generation_mask_input:
                  actual_mode = "inpainting"
              elif image_input:
                  if has_transparency:
@@ -1004,26 +1003,31 @@ async def generate_image(
 
                 if has_transparency and outpaint_ready_image is not None:
                     image_input = outpaint_ready_image
-                    hard_mask_input, soft_mask_input = merge_generation_masks(
-                        hard_mask_input,
-                        soft_mask_input,
-                        outpaint_hard_mask,
-                        outpaint_soft_mask,
+                    generation_mask_input, blend_mask_input = merge_generation_masks(
+                        generation_mask_input,
+                        blend_mask_input,
+                        outpaint_generation_mask,
+                        outpaint_blend_mask,
                     )
                     # Outpainting needs strong rewrite in transparent areas.
                     denoising_strength = max(denoising_strength, 0.95)
                 elif image_input.mode == "RGBA":
                     image_input = image_input.convert("RGB")
 
-                if hard_mask_input is None:
+                if generation_mask_input is None:
                     raise HTTPException(status_code=400, detail="Inpainting requires mask_image or transparent init_image")
-
-                pipeline_mask_input = soft_mask_input if soft_mask_input is not None else hard_mask_input
+                logger.info(
+                    "Using inpaint masks: generation_extrema=%s blend_extrema=%s blur=%s padding=%s",
+                    generation_mask_input.getextrema(),
+                    blend_mask_input.getextrema() if blend_mask_input is not None else None,
+                    mask_blur,
+                    mask_padding,
+                )
 
                 result = await asyncio.to_thread(
                     pipe,
                     image=image_input,
-                    mask_image=pipeline_mask_input,
+                    mask_image=generation_mask_input,
                     width=width,
                     height=height,
                     num_inference_steps=steps,
@@ -1039,13 +1043,14 @@ async def generate_image(
                 # COMPOSITING
                 # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
                 # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-                if image_input and soft_mask_input:
-                    if result_image.size == image_input.size == soft_mask_input.size:
+                if image_input and blend_mask_input:
+                    if result_image.size == image_input.size == blend_mask_input.size:
                         # Use new feather_blend logic for seamless edges
                         result_image = feather_blend(
                             image_input,
                             result_image,
-                            soft_mask_input,
+                            blend_mask_input,
+                            generation_mask_input,
                         )
 
             # 4.5 Check for cancellation
