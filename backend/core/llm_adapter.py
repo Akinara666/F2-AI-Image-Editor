@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import threading
 import time
 from typing import Any, Optional
@@ -116,6 +117,18 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         self._llm = None
         self._load_lock = threading.Lock()
 
+    @staticmethod
+    def _validate_runtime_file(path: str, label: str) -> str:
+        normalized_path = (path or "").strip()
+        if not normalized_path:
+            raise RuntimeError(f"{label} path is empty.")
+        if not os.path.isfile(normalized_path):
+            raise RuntimeError(f"{label} file does not exist: {normalized_path}")
+        file_size = os.path.getsize(normalized_path)
+        if file_size <= 0:
+            raise RuntimeError(f"{label} file is empty: {normalized_path}")
+        return normalized_path
+
     def _ensure_model_loaded(self):
         if self._llm is not None:
             self.logger.info(
@@ -137,6 +150,11 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             if not self.model_path:
                 raise RuntimeError("LLM_MODEL_PATH is empty for qwen_gguf provider.")
 
+            validated_model_path = self._validate_runtime_file(self.model_path, "LLM model")
+            validated_lora_path = ""
+            if self.lora_path:
+                validated_lora_path = self._validate_runtime_file(self.lora_path, "LLM LoRA adapter")
+
             try:
                 from llama_cpp import Llama
             except Exception as exc:
@@ -145,7 +163,7 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 ) from exc
 
             init_args: dict[str, Any] = {
-                "model_path": self.model_path,
+                "model_path": validated_model_path,
                 "n_ctx": self.n_ctx,
                 "n_threads": self.n_threads,
                 "n_gpu_layers": self.n_gpu_layers,
@@ -153,15 +171,15 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             }
 
             # LoRA support depends on installed llama_cpp build.
-            if self.lora_path:
-                init_args["lora_path"] = self.lora_path
+            if validated_lora_path:
+                init_args["lora_path"] = validated_lora_path
                 init_args["lora_scale"] = self.lora_scale
 
             started = time.perf_counter()
             self.logger.info(
                 "Loading Qwen GGUF model. model_path=%s lora_path=%s n_ctx=%s n_gpu_layers=%s",
-                self.model_path,
-                self.lora_path or "<none>",
+                validated_model_path,
+                validated_lora_path or "<none>",
                 self.n_ctx,
                 self.n_gpu_layers,
             )
