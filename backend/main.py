@@ -15,6 +15,7 @@ from urllib.parse import urlparse, unquote
 from PIL import Image
 import torch
 from pydantic import BaseModel
+from compel import Compel, ReturnedEmbeddingsType
 
 # Import core modules
 from core.manager import model_manager
@@ -321,6 +322,39 @@ def _validate_generation_inputs(
         "mask_blur": mask_blur,
         "mask_padding": mask_padding,
     }
+
+def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Optional[str], model_family: Optional[str]) -> dict:
+    prompt = prompt or ""
+    negative_prompt = negative_prompt or ""
+    
+    if model_family == "sdxl":
+        compel = Compel(
+            tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
+            text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
+            returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+            requires_pooled=[False, True]
+        )
+        prompt_embeds, pooled_prompt_embeds = compel(prompt)
+        negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
+        return {
+            "prompt_embeds": prompt_embeds,
+            "pooled_prompt_embeds": pooled_prompt_embeds,
+            "negative_prompt_embeds": negative_prompt_embeds,
+            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+        }
+    else:
+        compel = Compel(
+            tokenizer=pipe.tokenizer,
+            text_encoder=pipe.text_encoder,
+            returned_embeddings_type=ReturnedEmbeddingsType.LAST_HIDDEN_STATES,
+            requires_pooled=False
+        )
+        prompt_embeds = compel(prompt)
+        negative_prompt_embeds = compel(negative_prompt)
+        return {
+            "prompt_embeds": prompt_embeds,
+            "negative_prompt_embeds": negative_prompt_embeds,
+        }
 
 # --- Endpoints ---
 
@@ -717,11 +751,24 @@ async def generate_image(
                 seed = random.randint(0, 2**32 - 1)
 
             generator = torch.Generator(device=model_manager.device).manual_seed(seed)
-            prompt_call_kwargs = {
-                "prompt": final_prompt,
-                "negative_prompt": final_negative_prompt,
-                "clip_skip": diffusers_clip_skip,
-            }
+            try:
+                # Use Compel to process the prompts with A1111 weights
+                embeds_kwargs = _process_prompt_with_compel(
+                    pipe,
+                    final_prompt,
+                    final_negative_prompt,
+                    model_family
+                )
+                prompt_call_kwargs = {
+                    **embeds_kwargs
+                }
+            except Exception as e:
+                logger.warning(f"Compel prompt processing failed: {e}. Falling back to default diffusers parser.")
+                prompt_call_kwargs = {
+                    "prompt": final_prompt,
+                    "negative_prompt": final_negative_prompt,
+                    "clip_skip": diffusers_clip_skip,
+                }
 
             result_image = None
             logger.info(
@@ -820,10 +867,12 @@ async def generate_image(
                 if hard_mask_input is None:
                     raise HTTPException(status_code=400, detail="Inpainting requires mask_image or transparent init_image")
 
+                pipeline_mask_input = soft_mask_input if soft_mask_input is not None else hard_mask_input
+
                 result = await asyncio.to_thread(
                     pipe,
                     image=image_input,
-                    mask_image=hard_mask_input,
+                    mask_image=pipeline_mask_input,
                     width=width,
                     height=height,
                     num_inference_steps=steps,
