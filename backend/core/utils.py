@@ -74,7 +74,6 @@ def feather_blend(
     original_image: Image.Image,
     generated_image: Image.Image,
     soft_mask: Image.Image,
-    hard_mask: Image.Image | None = None
 ) -> Image.Image:
     """
     Blends the generated image back into the original image using the soft mask as an alpha channel.
@@ -86,10 +85,6 @@ def feather_blend(
     orig = np.array(original_image.convert("RGB"), dtype=np.float32)
     gen = np.array(generated_image.convert("RGB"), dtype=np.float32)
     alpha = np.array(soft_mask.convert("L"), dtype=np.float32) / 255.0
-    if hard_mask is not None:
-        hard_alpha = (np.array(hard_mask.convert("L"), dtype=np.float32) >= 127.0).astype(np.float32)
-        alpha = np.maximum(alpha, hard_alpha * 0.98)
-
     alpha_3 = alpha[..., None]
 
     blended = (orig * (1.0 - alpha_3)) + (gen * alpha_3)

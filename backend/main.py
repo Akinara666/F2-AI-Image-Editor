@@ -838,8 +838,17 @@ async def generate_image(
                 mask_padding=mask_padding,
                 mask_blur=mask_blur
             )
-            hard_mask_input = hard_mask.resize((width, height))
-            soft_mask_input = soft_mask.resize((width, height))
+            hard_mask_input = hard_mask.resize((width, height), Image.Resampling.NEAREST)
+            soft_mask_input = soft_mask.resize((width, height), Image.Resampling.BICUBIC)
+            logger.info(
+                "Prepared manual inpaint mask: blur=%s padding=%s hard_extrema=%s soft_extrema=%s size=%sx%s",
+                mask_blur,
+                mask_padding,
+                hard_mask_input.getextrema(),
+                soft_mask_input.getextrema(),
+                width,
+                height,
+            )
 
         # Prepare outpaint context whenever transparency exists.
         if image_input and has_transparency:
@@ -1037,7 +1046,6 @@ async def generate_image(
                             image_input,
                             result_image,
                             soft_mask_input,
-                            hard_mask=hard_mask_input
                         )
 
             # 4.5 Check for cancellation
