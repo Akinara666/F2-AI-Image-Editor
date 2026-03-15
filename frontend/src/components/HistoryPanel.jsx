@@ -32,7 +32,7 @@ const HistoryPanel = ({
             {/* Fixed Header */}
             <div className="history-panel__header">
                 <h3 className="history-panel__title">
-                    History
+                    История
                 </h3>
                 <span className="history-panel__count">
                     {history.length}
@@ -43,7 +43,7 @@ const HistoryPanel = ({
             <div className="custom-scrollbar history-panel__list">
                 {history.length === 0 && (
                     <div className="history-panel__empty">
-                        No generations yet.<br />Time to create!
+                        Пока нет генераций.<br />Самое время создать первую.
                     </div>
                 )}
 
@@ -69,7 +69,7 @@ const HistoryPanel = ({
                                         currentId === item.id ? null : item.id
                                     ));
                                 }}
-                                aria-label="History item actions"
+                                aria-label="Действия с элементом истории"
                                 aria-expanded={openMenuId === item.id}
                             >
                                 ⋯
@@ -91,7 +91,7 @@ const HistoryPanel = ({
                                             }
                                         }}
                                     >
-                                        Copy Prompt
+                                        Копировать промпт
                                     </button>
                                     <button
                                         type="button"
@@ -103,7 +103,7 @@ const HistoryPanel = ({
                                             }
                                         }}
                                     >
-                                        Download
+                                        Скачать
                                     </button>
                                     <button
                                         type="button"
@@ -115,7 +115,7 @@ const HistoryPanel = ({
                                             }
                                         }}
                                     >
-                                        Delete
+                                        Удалить
                                     </button>
                                 </div>
                             )}
@@ -133,7 +133,7 @@ const HistoryPanel = ({
                         </div>
                         <div className="history-panel__meta">
                             <div className="history-panel__seed">
-                                Seed: {item.meta.seed}
+                                Сид: {item.meta.seed}
                             </div>
                             {item.meta.prompt && (
                                 <div className="history-panel__prompt">

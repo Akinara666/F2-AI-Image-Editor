@@ -32,7 +32,7 @@ class Settings:
         "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
     )
     CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
-    LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "full").strip().lower()
+    LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "approx_nn").strip().lower()
     LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
     CIVITAI_API_TOKEN: str = os.getenv("CIVITAI_API_TOKEN", "").strip()
 

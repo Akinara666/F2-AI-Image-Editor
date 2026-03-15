@@ -20,6 +20,11 @@ const HISTORY_STORAGE_VERSION = 2;
 const HISTORY_MAX_ITEMS = 50;
 const APP_SETTINGS_STORAGE_KEY = 'generation_app_settings';
 const APP_SETTINGS_STORAGE_VERSION = 1;
+const SIDEBAR_WIDTH_STORAGE_KEY = 'app_sidebar_width';
+const DEFAULT_SIDEBAR_WIDTH = 360;
+const MIN_SIDEBAR_WIDTH = 320;
+const MAX_SIDEBAR_WIDTH = 560;
+const MIN_EDITOR_WIDTH = 320;
 
 const DEFAULT_PARAMS = {
   prompt: "A futuristic city",
@@ -30,7 +35,6 @@ const DEFAULT_PARAMS = {
   denoising_strength: 0.75,
   mask_blur: 4,
   mask_padding: 32,
-  preview_method: 'server_default',
   model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
   sampler: AVAILABLE_SAMPLERS[0],
   frame_size_index: 0
@@ -109,12 +113,17 @@ const loadAppSettingsFromStorage = () => {
 
     return {
       params: {
-        ...normalized,
         prompt: typeof rawParams.prompt === 'string' ? rawParams.prompt : DEFAULT_PARAMS.prompt,
         negative_prompt: typeof rawParams.negative_prompt === 'string' ? rawParams.negative_prompt : DEFAULT_PARAMS.negative_prompt,
-        preview_method: typeof rawParams.preview_method === 'string' ? rawParams.preview_method : DEFAULT_PARAMS.preview_method,
+        seed: normalized.seed,
+        steps: normalized.steps,
+        cfg: normalized.cfg,
+        denoising_strength: normalized.denoising_strength,
+        mask_blur: normalized.mask_blur,
+        mask_padding: normalized.mask_padding,
+        frame_size_index: normalized.frame_size_index,
         model_id: typeof rawParams.model_id === 'string' ? rawParams.model_id : DEFAULT_PARAMS.model_id,
-        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler
+        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler,
       },
       brush: {
         brushMode: typeof rawBrush.brushMode === 'string' ? rawBrush.brushMode : DEFAULT_BRUSH_SETTINGS.brushMode,
@@ -146,6 +155,30 @@ const getHistoryFilename = (url) => {
   const path = String(url || '').split('?')[0];
   const parts = path.split('/').filter(Boolean);
   return parts[parts.length - 1] || 'image.png';
+};
+
+const clampSidebarWidth = (rawWidth, viewportWidth = window.innerWidth) => {
+  const maxAllowed = Math.min(
+    MAX_SIDEBAR_WIDTH,
+    Math.max(MIN_SIDEBAR_WIDTH, viewportWidth - MIN_EDITOR_WIDTH)
+  );
+  return Math.round(Math.min(maxAllowed, Math.max(MIN_SIDEBAR_WIDTH, rawWidth)));
+};
+
+const loadSidebarWidthFromStorage = () => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+
+  try {
+    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    if (!Number.isFinite(saved)) {
+      return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
+    }
+    return clampSidebarWidth(saved, window.innerWidth);
+  } catch {
+    return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
+  }
 };
 
 function App() {
@@ -180,7 +213,7 @@ function App() {
         }
       } catch (err) {
         console.error("Failed to fetch models:", err);
-        showError("Failed to load models list from server.");
+        showError("Не удалось загрузить список моделей с сервера.");
       }
     };
     fetchModels();
@@ -189,6 +222,10 @@ function App() {
   const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
   const [history, setHistory] = useState(loadHistoryFromStorage);
   const [generationPreview, setGenerationPreview] = useState(null);
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidthFromStorage);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const appContainerRef = React.useRef(null);
+  const sidebarResizeStateRef = React.useRef(null);
 
   const removeHistoryItem = React.useCallback((itemOrId) => {
     const targetId = typeof itemOrId === 'string' ? itemOrId : itemOrId?.id;
@@ -261,6 +298,50 @@ function App() {
       controller.abort();
     };
   }, [history, pruneMissingHistoryItems]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+    } catch { /* ignore storage issues */ }
+  }, [sidebarWidth]);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setSidebarWidth((currentWidth) => clampSidebarWidth(currentWidth, window.innerWidth));
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (!isResizingSidebar) {
+      return undefined;
+    }
+
+    const handlePointerMove = (event) => {
+      const containerLeft = sidebarResizeStateRef.current?.containerLeft ?? 0;
+      const nextWidth = event.clientX - containerLeft;
+      setSidebarWidth(clampSidebarWidth(nextWidth, window.innerWidth));
+    };
+
+    const stopResizing = () => {
+      setIsResizingSidebar(false);
+      sidebarResizeStateRef.current = null;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', stopResizing);
+    window.addEventListener('pointercancel', stopResizing);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', stopResizing);
+      window.removeEventListener('pointercancel', stopResizing);
+    };
+  }, [isResizingSidebar]);
   const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
   const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
   const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
@@ -326,7 +407,7 @@ function App() {
 
     const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
     if (invalidFields.length > 0) {
-      showError(`Invalid numeric parameters: ${invalidFields.map(field => field.label).join(', ')}`);
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
       return;
     }
     if (JSON.stringify(normalizedParams) !== JSON.stringify(params)) {
@@ -365,10 +446,6 @@ function App() {
       formData.append('mask_padding', normalizedParams.mask_padding);
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
-      if (normalizedParams.preview_method && normalizedParams.preview_method !== 'server_default') {
-        formData.append('preview_method', normalizedParams.preview_method);
-      }
-
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
 
@@ -391,12 +468,12 @@ function App() {
 
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
-        showSuccess("Image generated successfully!");
+        showSuccess("Изображение успешно сгенерировано.");
         if (response.data?.meta?.model_downloaded_now) {
-          showInfo("Selected model was downloaded during this generation and is now cached locally.");
+          showInfo("Выбранная модель была скачана во время генерации и теперь сохранена локально.");
         }
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
-          showInfo(`Prompt transformer: ${response.data.meta.prompt_transform_status}`);
+          showInfo(`Трансформер промпта: ${response.data.meta.prompt_transform_status}`);
         }
         // 4. Add to Canvas
         await editorRef.current.addGeneratedImage(response.data.url);
@@ -427,7 +504,7 @@ function App() {
           }
         } catch (historySnapshotError) {
           console.error("Failed to save full history snapshot", historySnapshotError);
-          showInfo("Generated tile saved, but full image snapshot could not be stored.");
+          showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
         }
 
         // 5. Add to History
@@ -444,13 +521,12 @@ function App() {
     } catch (e) {
       if (axios.isCancel(e)) {
         console.log("Request canceled by user");
-        // showSuccess is used here or showError, but usually cancellations don't need a harsh red error
-        showError("Generation cancelled.");
+        showError("Генерация отменена.");
       } else {
         console.error("Generation failed", e);
         const errorMsg = e.response?.data?.detail || e.message;
         console.error("Error details:", errorMsg);
-        showError(`Generation failed: ${errorMsg}`);
+        showError(`Ошибка генерации: ${errorMsg}`);
       }
     } finally {
       previewController.abort();
@@ -495,14 +571,14 @@ function App() {
     setGenerationLifecycleStatus(GENERATION_STATUS.RESTORING);
     try {
       await editorRef.current.restoreHistoryDocument(item.url);
-      showSuccess("History item restored to canvas.");
+      showSuccess("Элемент истории восстановлен на холст.");
     } catch (e) {
       console.error("Failed to restore history item", e);
       const errorMsg = e.response?.data?.detail || e.message;
       if (isMissingHistoryError(e)) {
         removeHistoryItem(item);
       }
-      showError(`Failed to restore history item: ${errorMsg}`);
+      showError(`Не удалось восстановить элемент истории: ${errorMsg}`);
     } finally {
       setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
     }
@@ -533,7 +609,7 @@ function App() {
         removeHistoryItem(item);
       }
       const errorMsg = e.response?.data?.detail || e.message;
-      showError(`Failed to download image: ${errorMsg}`);
+      showError(`Не удалось скачать изображение: ${errorMsg}`);
     }
   };
 
@@ -544,59 +620,83 @@ function App() {
         urls
       });
       removeHistoryItem(item);
-      showSuccess("Image deleted from history.");
+      showSuccess("Изображение удалено из истории.");
     } catch (e) {
       console.error("Failed to delete history item", e);
       if (isMissingHistoryError(e)) {
         removeHistoryItem(item);
-        showInfo("Image was already missing and has been removed from history.");
+        showInfo("Файл уже отсутствовал и был удалён из истории.");
         return;
       }
       const errorMsg = e.response?.data?.detail || e.message;
-      showError(`Failed to delete image: ${errorMsg}`);
+      showError(`Не удалось удалить изображение: ${errorMsg}`);
     }
   };
 
   const handleCopyHistoryPrompt = async (item) => {
     const promptText = String(item?.meta?.prompt || item?.meta?.raw_prompt || '').trim();
     if (!promptText) {
-      showError("This history item has no saved prompt.");
+      showError("У этого элемента истории нет сохранённого промпта.");
       return;
     }
 
     try {
       await navigator.clipboard.writeText(promptText);
-      showSuccess("Prompt copied to clipboard.");
+      showSuccess("Промпт скопирован в буфер обмена.");
     } catch (error) {
       console.error("Failed to copy history prompt", error);
-      showError("Failed to copy prompt.");
+      showError("Не удалось скопировать промпт.");
     }
   };
 
+  const handleSidebarResizeStart = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const containerRect = appContainerRef.current?.getBoundingClientRect();
+    sidebarResizeStateRef.current = {
+      containerLeft: containerRect?.left ?? 0
+    };
+    setIsResizingSidebar(true);
+    event.preventDefault();
+  };
+
   return (
-    <div className="app-container">
-      <Sidebar
-        availableModels={availableModels}
-        params={params}
-        setParams={setParams}
-        isGenerating={isGenerating}
-        isBusy={isBusy}
-        generationStatus={generationStatus}
-        onGenerate={handleGenerate}
-        onCancel={handleCancel}
-        brushMode={brushMode}
-        setBrushMode={setBrushMode}
-        brushColor={brushColor}
-        setBrushColor={setBrushColor}
-        brushSize={brushSize}
-        setBrushSize={setBrushSize}
-        onUndo={() => editorRef.current?.undo()}
-        onClear={() => editorRef.current?.clearAll()}
-        editorRef={editorRef}
-        generationPreview={generationPreview}
-        showToastError={showError}
-        showToastSuccess={showSuccess}
-        showToastInfo={showInfo}
+    <div
+      ref={appContainerRef}
+      className={`app-container ${isResizingSidebar ? 'app-container--resizing' : ''}`}
+    >
+      <div className="sidebar-shell" style={{ width: `${sidebarWidth}px` }}>
+        <Sidebar
+          availableModels={availableModels}
+          params={params}
+          setParams={setParams}
+          isGenerating={isGenerating}
+          isBusy={isBusy}
+          generationStatus={generationStatus}
+          onGenerate={handleGenerate}
+          onCancel={handleCancel}
+          brushMode={brushMode}
+          setBrushMode={setBrushMode}
+          brushColor={brushColor}
+          setBrushColor={setBrushColor}
+          brushSize={brushSize}
+          setBrushSize={setBrushSize}
+          onUndo={() => editorRef.current?.undo()}
+          onClear={() => editorRef.current?.clearAll()}
+          editorRef={editorRef}
+          showToastError={showError}
+          showToastSuccess={showSuccess}
+          showToastInfo={showInfo}
+        />
+      </div>
+      <div
+        className="sidebar-resizer"
+        onPointerDown={handleSidebarResizeStart}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize settings panel"
       />
       <div className="editor-wrapper">
         <Editor
@@ -604,6 +704,7 @@ function App() {
           brushMode={brushMode}
           brushColor={brushColor}
           brushSize={brushSize}
+          generationPreview={generationPreview}
         />
       </div>
       <HistoryPanel

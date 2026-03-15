@@ -44,7 +44,7 @@ export const API_ENDPOINTS = {
 
 // Initial placeholder shown while fetching the real list from the backend
 export const AVAILABLE_MODELS_PLACEHOLDER = [
-    { id: "runwayml/stable-diffusion-v1-5", label: "Loading models..." }
+    { id: "runwayml/stable-diffusion-v1-5", label: "Загрузка моделей..." }
 ];
 
 export const AVAILABLE_SAMPLERS = [
@@ -61,66 +61,58 @@ export const AVAILABLE_SAMPLERS = [
     "LMS"
 ];
 
-export const AVAILABLE_LIVE_PREVIEW_METHODS = [
-    { id: "server_default", label: "Server Default" },
-    { id: "full", label: "Full" },
-    { id: "approx_nn", label: "Approx NN" },
-    { id: "approx_cheap", label: "Approx cheap" },
-    { id: "taesd", label: "TAESD" }
-];
-
 export const AVAILABLE_SIZES = [
-    { width: 512, height: 512, label: "512 x 512 (Square)" },
-    { width: 768, height: 512, label: "768 x 512 (Landscape)" },
-    { width: 512, height: 768, label: "512 x 768 (Portrait)" },
-    { width: 768, height: 768, label: "768 x 768 (Square HD)" }
+    { width: 512, height: 512, label: "512 x 512 (Квадрат)" },
+    { width: 768, height: 512, label: "768 x 512 (Альбом)" },
+    { width: 512, height: 768, label: "512 x 768 (Портрет)" },
+    { width: 768, height: 768, label: "768 x 768 (Квадрат HD)" }
 ];
 
 export const GENERATION_NUMERIC_PARAM_RULES = {
     frame_size_index: {
-        label: "Frame Size",
+        label: "Размер рамки",
         type: "int",
         defaultValue: 0,
         min: 0,
         max: AVAILABLE_SIZES.length - 1
     },
     seed: {
-        label: "Seed",
+        label: "Сид",
         type: "int",
         defaultValue: -1,
         min: -1,
         max: 4294967295
     },
     steps: {
-        label: "Steps",
+        label: "Шаги",
         type: "int",
         defaultValue: 20,
         min: 1,
         max: 150
     },
     cfg: {
-        label: "CFG Scale",
+        label: "CFG",
         type: "float",
         defaultValue: 7.5,
         min: 1,
         max: 20
     },
     denoising_strength: {
-        label: "Denoising",
+        label: "Денойзинг",
         type: "float",
         defaultValue: 0.75,
         min: 0,
         max: 1
     },
     mask_blur: {
-        label: "Mask Blur",
+        label: "Размытие маски",
         type: "int",
         defaultValue: 4,
         min: 0,
         max: 128
     },
     mask_padding: {
-        label: "Mask Padding",
+        label: "Расширение маски",
         type: "int",
         defaultValue: 32,
         min: 0,

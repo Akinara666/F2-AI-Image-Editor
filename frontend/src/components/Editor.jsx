@@ -39,12 +39,14 @@ import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
 
-const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
+const Editor = forwardRef(({ brushMode, brushColor, brushSize, generationPreview }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [isMutatingCanvas, setIsMutatingCanvas] = useState(false);
     const [activeImageResolution, setActiveImageResolution] = useState(null);
+    const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
+    const previewFrameBoundsRef = useRef(null);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -219,6 +221,64 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
             canvas.dispose();
         };
     }, []);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame || !wrapperRef.current) {
+            previewFrameBoundsRef.current = null;
+            setPreviewFrameBounds(null);
+            return undefined;
+        }
+
+        const syncPreviewFrameBounds = () => {
+            const viewportTransform = fabricCanvas.viewportTransform || fabric.iMatrix.concat();
+            const zoomX = viewportTransform[0] ?? fabricCanvas.getZoom();
+            const zoomY = viewportTransform[3] ?? fabricCanvas.getZoom();
+            const frameObject = genFrameVisualRef.current || genFrame;
+            const overlayInset = FRAME_STROKE_WIDTH + 1;
+            const rawLeft = (frameObject.left ?? 0) * zoomX + (viewportTransform[4] ?? 0);
+            const rawTop = (frameObject.top ?? 0) * zoomY + (viewportTransform[5] ?? 0);
+            const rawWidth = Math.max(1, (frameObject.width ?? 0) * (frameObject.scaleX ?? 1) * zoomX);
+            const rawHeight = Math.max(1, (frameObject.height ?? 0) * (frameObject.scaleY ?? 1) * zoomY);
+            const innerLeft = Math.ceil(rawLeft + overlayInset);
+            const innerTop = Math.ceil(rawTop + overlayInset);
+            const innerRight = Math.floor(rawLeft + rawWidth - overlayInset);
+            const innerBottom = Math.floor(rawTop + rawHeight - overlayInset);
+            const wrapperWidth = wrapperRef.current?.clientWidth ?? fabricCanvas.getWidth();
+            const wrapperHeight = wrapperRef.current?.clientHeight ?? fabricCanvas.getHeight();
+            const nextBounds = {
+                left: innerLeft,
+                top: innerTop,
+                width: Math.max(1, innerRight - innerLeft),
+                height: Math.max(1, innerBottom - innerTop),
+                visible: innerLeft < wrapperWidth
+                    && innerTop < wrapperHeight
+                    && innerRight > 0
+                    && innerBottom > 0
+            };
+
+            const prevBounds = previewFrameBoundsRef.current;
+            const unchanged = prevBounds
+                && prevBounds.left === nextBounds.left
+                && prevBounds.top === nextBounds.top
+                && prevBounds.width === nextBounds.width
+                && prevBounds.height === nextBounds.height
+                && prevBounds.visible === nextBounds.visible;
+
+            if (!unchanged) {
+                previewFrameBoundsRef.current = nextBounds;
+                setPreviewFrameBounds(nextBounds);
+            }
+        };
+
+        fabricCanvas.on('after:render', syncPreviewFrameBounds);
+        window.addEventListener('resize', syncPreviewFrameBounds);
+        syncPreviewFrameBounds();
+
+        return () => {
+            fabricCanvas.off('after:render', syncPreviewFrameBounds);
+            window.removeEventListener('resize', syncPreviewFrameBounds);
+        };
+    }, [fabricCanvas, genFrame]);
 
     const syncCanvasInteractionMode = (
         canvas = fabricCanvas,
@@ -478,6 +538,38 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                 </div>
             )}
 
+            {generationPreview?.image_data_url && previewFrameBounds?.visible && (
+                <div
+                    className="editor-live-preview"
+                    style={{
+                        left: `${previewFrameBounds.left}px`,
+                        top: `${previewFrameBounds.top}px`,
+                        width: `${previewFrameBounds.width}px`,
+                        height: `${previewFrameBounds.height}px`
+                    }}
+                >
+                    <img
+                        className="editor-live-preview__image"
+                        src={generationPreview.image_data_url}
+                        alt={`Предпросмотр генерации, шаг ${generationPreview.step}`}
+                    />
+                    <div className="editor-live-preview__hud">
+                        <div className="editor-live-preview__header">
+                            <span className="editor-live-preview__title">Предпросмотр</span>
+                            <span className="editor-live-preview__step">
+                                Шаг {generationPreview.step} / {generationPreview.total_steps}
+                            </span>
+                        </div>
+                        <div className="editor-live-preview__progress">
+                            <div
+                                className="editor-live-preview__progress-bar"
+                                style={{ width: `${Math.max(0, Math.min(100, (generationPreview.progress || 0) * 100))}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {candidateUrl && (
                 <div className="editor-staging-bar">
                     <button
@@ -485,14 +577,14 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                         onClick={() => void performAccept()}
                         disabled={isMutatingCanvas}
                     >
-                        ✓ ACCEPT
+                        ✓ ПРИНЯТЬ
                     </button>
                     <button
                         className="editor-staging-btn editor-staging-btn--discard"
                         onClick={discardCandidateHelper}
                         disabled={isMutatingCanvas}
                     >
-                        ✕ DISCARD
+                        ✕ ОТМЕНИТЬ
                     </button>
                     {hasMaskOverlay && (
                         <button
@@ -500,7 +592,7 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize }, ref) => {
                             onClick={toggleMaskOverlayPreview}
                             disabled={isMutatingCanvas}
                         >
-                            {isMaskOverlayVisible ? 'Hide Mask' : 'Show Mask'}
+                            {isMaskOverlayVisible ? 'Скрыть маску' : 'Показать маску'}
                         </button>
                     )}
                 </div>

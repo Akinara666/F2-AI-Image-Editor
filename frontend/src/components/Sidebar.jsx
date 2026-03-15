@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import {
-    AVAILABLE_LIVE_PREVIEW_METHODS,
     AVAILABLE_SAMPLERS,
     AVAILABLE_SIZES,
     API_ENDPOINTS,
@@ -11,6 +10,18 @@ import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
 const TEXT_NUMBER_FIELDS = ['seed', 'steps'];
+const getPromptTransformStageLabel = (elapsedMs) => {
+    if (elapsedMs < 1200) {
+        return 'Отправляем запрос в AI-модуль';
+    }
+    if (elapsedMs < 5000) {
+        return 'Загружаем модель и подготавливаем контекст';
+    }
+    if (elapsedMs < 12000) {
+        return 'Анализируем промпт и собираем улучшенную версию';
+    }
+    return 'Первый запуск может быть долгим, ждём ответ модели';
+};
 
 const Sidebar = ({
     availableModels,
@@ -19,11 +30,11 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
-    generationPreview,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
     const [isTransformingPrompt, setIsTransformingPrompt] = useState(false);
+    const [promptTransformElapsedMs, setPromptTransformElapsedMs] = useState(0);
     const [numberDrafts, setNumberDrafts] = useState({
         seed: String(params.seed),
         steps: String(params.steps)
@@ -35,6 +46,22 @@ const Sidebar = ({
             steps: String(params.steps)
         });
     }, [params.seed, params.steps]);
+
+    useEffect(() => {
+        if (!isTransformingPrompt) {
+            setPromptTransformElapsedMs(0);
+            return undefined;
+        }
+
+        const startedAt = Date.now();
+        const intervalId = window.setInterval(() => {
+            setPromptTransformElapsedMs(Date.now() - startedAt);
+        }, 120);
+
+        return () => {
+            window.clearInterval(intervalId);
+        };
+    }, [isTransformingPrompt]);
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
@@ -123,15 +150,15 @@ const Sidebar = ({
                     prompt: result.transformed_prompt || prev.prompt,
                     negative_prompt: result.transformed_negative_prompt || prev.negative_prompt
                 }));
-                showToastSuccess("Prompt improved successfully!");
+                showToastSuccess("Промпт успешно улучшен.");
                 if (result.transform_status && result.transform_status !== 'disabled') {
-                    showToastInfo(`Transformer: ${result.provider} (${result.latency_ms}ms)`);
+                    showToastInfo(`Трансформер: ${result.provider} (${result.latency_ms} мс)`);
                 }
             }
         } catch (e) {
             console.error("Prompt transform failed", e);
             const errorMsg = e.response?.data?.detail || e.message;
-            showToastError(`Transform failed: ${errorMsg}`);
+            showToastError(`Ошибка улучшения промпта: ${errorMsg}`);
         } finally {
             setIsTransformingPrompt(false);
         }
@@ -142,11 +169,11 @@ const Sidebar = ({
 
             {/* Scrollable Content */}
             <div className="custom-scrollbar sidebar__content">
-                <h2 className="sidebar__title">AI Settings</h2>
+                <h2 className="sidebar__title">Настройки AI</h2>
 
                 {/* Model & Sampler */}
                 <div className="input-group">
-                    <label className="input-label">Model</label>
+                    <label className="input-label">Модель</label>
                     <select
                         name="model_id"
                         className="input-field"
@@ -161,7 +188,7 @@ const Sidebar = ({
 
                 <div className="sidebar__grid-2col">
                     <div className="input-group">
-                        <label className="input-label">Sampler</label>
+                        <label className="input-label">Сэмплер</label>
                         <select
                             name="sampler"
                             className="input-field"
@@ -174,7 +201,7 @@ const Sidebar = ({
                         </select>
                     </div>
                     <div className="input-group">
-                        <label className="input-label">Frame Size</label>
+                        <label className="input-label">Размер рамки</label>
                         <select
                             name="frame_size_index"
                             className="input-field"
@@ -188,33 +215,50 @@ const Sidebar = ({
                     </div>
                 </div>
 
-                <div className="input-group">
-                    <label className="input-label">Live Preview Decode</label>
-                    <select
-                        name="preview_method"
-                        className="input-field"
-                        value={params.preview_method}
-                        onChange={handleChange}
-                    >
-                        {AVAILABLE_LIVE_PREVIEW_METHODS.map((method) => (
-                            <option key={method.id} value={method.id}>{method.label}</option>
-                        ))}
-                    </select>
-                    <small className="sidebar__hint">Full = quality, Approx cheap = speed, TAESD/Approx NN = fast balance.</small>
-                </div>
-
                 {/* Prompt */}
                 <div className="input-group">
-                    <div className="sidebar__prompt-header">
-                        <label className="input-label">Prompt</label>
-                        <button
-                            className="btn sidebar__sparkle-btn"
-                            onClick={handleTransformPrompt}
-                            disabled={isTransformingPrompt || !params.prompt.trim()}
-                            title="Improve with AI"
-                        >
-                            {isTransformingPrompt ? '⌛' : '✨'}
-                        </button>
+                    <div className="sidebar__prompt-header sidebar__prompt-header--stacked">
+                        <label className="input-label">Промпт</label>
+                        <div className="sidebar__prompt-enhancer">
+                            <div className="sidebar__prompt-enhancer-copy">
+                                <div className="sidebar__prompt-enhancer-title">Улучшение промпта AI</div>
+                                <div className="sidebar__prompt-enhancer-caption">
+                                    Делает промпт и негативный промпт чище и точнее для более детальной генерации.
+                                </div>
+                            </div>
+                            <button
+                                className="btn sidebar__prompt-enhancer-btn"
+                                onClick={handleTransformPrompt}
+                                disabled={isTransformingPrompt || !params.prompt.trim()}
+                                title="Улучшить промпт с помощью AI"
+                            >
+                                <span className="sidebar__prompt-enhancer-icon" aria-hidden="true">
+                                    {isTransformingPrompt ? '⌛' : '✨'}
+                                </span>
+                                <span className="sidebar__prompt-enhancer-label">
+                                    {isTransformingPrompt ? 'Улучшаем промпт...' : 'Улучшить промпт с AI'}
+                                </span>
+                            </button>
+                            {isTransformingPrompt && (
+                                <div className="sidebar__prompt-transform-status" aria-live="polite">
+                                    <div className="sidebar__prompt-transform-status-header">
+                                        <div className="sidebar__prompt-transform-spinner" aria-hidden="true" />
+                                        <div className="sidebar__prompt-transform-copy">
+                                            <div className="sidebar__prompt-transform-title">AI обрабатывает промпт</div>
+                                            <div className="sidebar__prompt-transform-caption">
+                                                {getPromptTransformStageLabel(promptTransformElapsedMs)}
+                                            </div>
+                                        </div>
+                                        <div className="sidebar__prompt-transform-time">
+                                            {(promptTransformElapsedMs / 1000).toFixed(1)} c
+                                        </div>
+                                    </div>
+                                    <div className="sidebar__prompt-transform-progress">
+                                        <div className="sidebar__prompt-transform-progress-bar" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <textarea
                         name="prompt"
@@ -227,7 +271,7 @@ const Sidebar = ({
 
                 {/* Negative Prompt */}
                 <div className="input-group">
-                    <label className="input-label">Negative Prompt</label>
+                    <label className="input-label">Негативный промпт</label>
                     <textarea
                         name="negative_prompt"
                         className="input-field sidebar__neg-prompt-field"
@@ -239,7 +283,7 @@ const Sidebar = ({
                 {/* Params */}
                 <div className="sidebar__grid-2col">
                     <div className="input-group">
-                        <label className="input-label">Seed (-1 = Rnd)</label>
+                        <label className="input-label">Сид (-1 = случайный)</label>
                         <input
                             type="number"
                             className="input-field"
@@ -253,7 +297,7 @@ const Sidebar = ({
                         />
                     </div>
                     <div className="input-group">
-                        <label className="input-label">Steps</label>
+                        <label className="input-label">Шаги</label>
                         <input
                             type="number"
                             className="input-field"
@@ -269,25 +313,25 @@ const Sidebar = ({
                 </div>
 
                 <div className="input-group">
-                    <label className="input-label">CFG Scale ({params.cfg})</label>
+                    <label className="input-label">CFG ({params.cfg})</label>
                     <input type="range" className="input-range sidebar__range sidebar__range--primary" name="cfg" min="1" max="20" step="0.5" value={params.cfg} onChange={handleChange} />
                 </div>
 
                 <div className="input-group">
-                    <label className="input-label">Denoising ({params.denoising_strength})</label>
+                    <label className="input-label">Денойзинг ({params.denoising_strength})</label>
                     <input type="range" className="input-range sidebar__range sidebar__range--accent" name="denoising_strength" min="0" max="1" step="0.05" value={params.denoising_strength} onChange={handleChange} />
-                    <small className="sidebar__hint">1.0 = Ignore Init Image</small>
+                    <small className="sidebar__hint">1.0 = полностью игнорировать исходное изображение</small>
                 </div>
 
                 <hr className="sidebar__divider" />
 
                 {/* Brush Controls */}
                 <div className="input-group">
-                    <h3 className="sidebar__section-title">Brush Tools</h3>
+                    <h3 className="sidebar__section-title">Инструменты</h3>
                     <div className="sidebar__tool-bar">
                         {[
                             {
-                                id: 'none', label: 'Cursor', color: 'var(--primary)', icon: (
+                                id: 'none', label: 'Курсор', color: 'var(--primary)', icon: (
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
                                         <path d="M13 13l6 6" />
@@ -295,14 +339,14 @@ const Sidebar = ({
                                 )
                             },
                             {
-                                id: 'sketch', label: 'Sketch', color: 'var(--primary)', icon: (
+                                id: 'sketch', label: 'Скетч', color: 'var(--primary)', icon: (
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
                                     </svg>
                                 )
                             },
                             {
-                                id: 'mask', label: 'Mask', color: 'var(--danger)', icon: (
+                                id: 'mask', label: 'Маска', color: 'var(--danger)', icon: (
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <circle cx="12" cy="12" r="10" />
                                         <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
@@ -310,7 +354,7 @@ const Sidebar = ({
                                 )
                             },
                             {
-                                id: 'hand', label: 'Hand', color: 'var(--accent)', icon: (
+                                id: 'hand', label: 'Рука', color: 'var(--accent)', icon: (
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <path d="M18 11V6a2 2 0 0 0-4 0v5" />
                                         <path d="M14 10V4a2 2 0 0 0-4 0v6" />
@@ -320,7 +364,7 @@ const Sidebar = ({
                                 )
                             },
                             {
-                                id: 'eraser', label: 'Eraser', color: 'var(--warning)', icon: (
+                                id: 'eraser', label: 'Ластик', color: 'var(--warning)', icon: (
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                         <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
                                         <path d="M22 21H7" />
@@ -348,7 +392,7 @@ const Sidebar = ({
                     {brushMode !== 'none' && (
                         <div className="input-group sidebar__brush-options">
                             <div className="sidebar__brush-row">
-                                <label className="input-label sidebar__brush-label">Size: {brushSize}</label>
+                                <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
                                 <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
                                 {brushMode === 'sketch' && (
                                     <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
@@ -359,15 +403,15 @@ const Sidebar = ({
 
                     {brushMode === 'mask' && (
                         <div className="input-group sidebar__mask-panel">
-                            <h4 className="sidebar__mask-title">Inpaint Mask</h4>
+                            <h4 className="sidebar__mask-title">Маска инпейнта</h4>
 
                             <div className="input-group sidebar__mask-group">
-                                <label className="input-label">Mask Blur ({params.mask_blur})</label>
+                                <label className="input-label">Размытие маски ({params.mask_blur})</label>
                                 <input type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
                             </div>
 
                             <div className="input-group sidebar__mask-group">
-                                <label className="input-label">Mask Padding ({params.mask_padding})</label>
+                                <label className="input-label">Расширение маски ({params.mask_padding})</label>
                                 <input type="range" className="input-range sidebar__range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} />
                             </div>
                             <small className="sidebar__mask-hint">
@@ -378,10 +422,10 @@ const Sidebar = ({
 
                     <div className="sidebar__actions">
                         <button className="btn btn-secondary sidebar__action-btn" onClick={onUndo}>
-                            ↶ Undo
+                            ↶ Отменить
                         </button>
                         <button className="btn btn-secondary sidebar__action-btn sidebar__action-btn--danger" onClick={onClear}>
-                            Clear
+                            Очистить
                         </button>
                     </div>
                 </div>
@@ -389,34 +433,13 @@ const Sidebar = ({
 
             {/* Footer - Fixed Button */}
             <div className="sidebar__footer">
-                {generationPreview && generationPreview.image_data_url && (
-                    <div className="sidebar__preview-card">
-                        <div className="sidebar__preview-header">
-                            <span className="sidebar__preview-title">Live Preview</span>
-                            <span className="sidebar__preview-step">
-                                Step {generationPreview.step} / {generationPreview.total_steps}
-                            </span>
-                        </div>
-                        <div className="sidebar__preview-progress">
-                            <div
-                                className="sidebar__preview-progress-bar"
-                                style={{ width: `${Math.max(0, Math.min(100, (generationPreview.progress || 0) * 100))}%` }}
-                            />
-                        </div>
-                        <img
-                            className="sidebar__preview-image"
-                            src={generationPreview.image_data_url}
-                            alt={`Generation preview step ${generationPreview.step}`}
-                        />
-                    </div>
-                )}
                 {isGenerating ? (
                     <button
                         className="btn btn-primary sidebar__cancel-btn"
                         onClick={onCancel}
                         disabled={generationStatus === 'cancelling'}
                     >
-                        {generationStatus === 'cancelling' ? '⏳ CANCELLING…' : '🛑 CANCEL'}
+                        {generationStatus === 'cancelling' ? '⏳ ОТМЕНА…' : '🛑 ОТМЕНИТЬ'}
                     </button>
                 ) : (
                     <button
@@ -424,7 +447,7 @@ const Sidebar = ({
                         onClick={onGenerate}
                         disabled={isBusy}
                     >
-                        {generationStatus === 'restoring' ? '⏳ RESTORING…' : '✨ GENERATE'}
+                        {generationStatus === 'restoring' ? '⏳ ВОССТАНОВЛЕНИЕ…' : '✨ СГЕНЕРИРОВАТЬ'}
                     </button>
                 )}
             </div>
