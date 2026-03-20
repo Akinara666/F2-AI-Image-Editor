@@ -71,11 +71,83 @@
     box-shadow: var(--shadow-md), 0 0 12px rgba(0, 212, 255, 0.1);
 }
 
+.history-panel__card--disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.history-panel__card--disabled:hover {
+    border-color: rgba(255, 255, 255, 0.06);
+    transform: none;
+    box-shadow: var(--shadow-inset);
+}
+
 /* ===== Thumbnail ===== */
 .history-panel__thumb {
     position: relative;
     width: 100%;
     padding-top: 100%; /* 1:1 aspect ratio */
+}
+
+.history-panel__menu-trigger {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    width: 30px;
+    height: 30px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    background: rgba(12, 14, 20, 0.78);
+    color: var(--text-main);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 1.1rem;
+    line-height: 1;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.history-panel__menu-trigger:hover {
+    background: rgba(18, 24, 34, 0.92);
+    border-color: rgba(255, 255, 255, 0.24);
+}
+
+.history-panel__menu {
+    position: absolute;
+    top: 44px;
+    right: 8px;
+    z-index: 3;
+    min-width: 120px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    border-radius: 12px;
+    background: rgba(12, 14, 20, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+
+.history-panel__menu-item {
+    border: none;
+    background: transparent;
+    color: var(--text-main);
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: var(--font-sm);
+}
+
+.history-panel__menu-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.history-panel__menu-item--danger {
+    color: var(--danger);
 }
 
 .history-panel__thumb img {
@@ -90,6 +162,10 @@
 
 .history-panel__card:hover .history-panel__thumb img {
     transform: scale(1.05);
+}
+
+.history-panel__card--disabled:hover .history-panel__thumb img {
+    transform: none;
 }
 
 /* ===== Meta Info ===== */

@@ -25,6 +25,16 @@ class Settings:
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
+    SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
+    NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
+    NSFW_NEGATIVE_PROMPT: str = os.getenv(
+        "NSFW_NEGATIVE_PROMPT",
+        "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
+    )
+    CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
+    LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "approx_nn").strip().lower()
+    LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
+    CIVITAI_API_TOKEN: str = os.getenv("CIVITAI_API_TOKEN", "").strip()
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
@@ -33,10 +43,14 @@ class Settings:
     #_____________апдейт_______ Strict mode and merge policy
     PROMPT_TRANSFORM_STRICT: bool = os.getenv("PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
     PROMPT_NEGATIVE_MERGE_POLICY: str = os.getenv("PROMPT_NEGATIVE_MERGE_POLICY", "append")
+    PROMPT_TRANSFORM_UNLOAD_AFTER_CALL: bool = os.getenv(
+        "PROMPT_TRANSFORM_UNLOAD_AFTER_CALL",
+        "true",
+    ).lower() == "true"
 
     #_____________апдейт_______ GGUF + LoRA LLM runtime config
-    LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", "")
-    LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", "")
+    LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", str(BASE_DIR / "models" / "llm" / "model.gguf"))
+    LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", str(BASE_DIR / "models" / "llm" / "adapter.gguf"))
     LLM_LORA_SCALE: float = float(os.getenv("LLM_LORA_SCALE", "1.0"))
     LLM_CTX_SIZE: int = int(os.getenv("LLM_CTX_SIZE", "4096"))
     LLM_THREADS: int = int(os.getenv("LLM_THREADS", "6"))
@@ -59,7 +73,21 @@ class Settings:
 
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
-    MAX_CACHED_MODELS: int = 2    # Max pipelines kept in RAM (LRU eviction)
+    MAX_CACHED_MODELS: int = 2    # Max underlying model bundles kept in RAM (LRU eviction)
+
+    # CORS
+    CORS_ALLOW_ORIGINS: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ALLOW_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ]
+    CORS_ALLOW_ORIGIN_REGEX: str = os.getenv(
+        "CORS_ALLOW_ORIGIN_REGEX",
+        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    )
 
     def __init__(self):
         # Ensure output directory exists

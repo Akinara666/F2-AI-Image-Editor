@@ -2,6 +2,7 @@ import os
 import numpy as np
 from PIL import Image, PngImagePlugin, ImageFilter
 from datetime import datetime
+from uuid import uuid4
 
 def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
     """
@@ -18,10 +19,12 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
             meta.add_text(str(key), str(value))
     
     # Generate filename
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Use prompt snippet for filename if available
     prompt_slug = params.get("prompt", "gen")[:20].replace(" ", "_").strip()
-    filename = f"{timestamp}_{prompt_slug}.png"
+    if not prompt_slug:
+        prompt_slug = "gen"
+    filename = f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
     filepath = os.path.join(output_dir, filename)
 
     image.save(filepath, "PNG", pnginfo=meta)
@@ -29,6 +32,11 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
 
 def _odd_kernel_size(radius_px: int) -> int:
     return max(3, radius_px * 2 + 1)
+
+
+def _binarize_mask(mask_image: Image.Image, threshold: int) -> Image.Image:
+    mask_arr = np.array(mask_image.convert("L"), dtype=np.uint8)
+    return Image.fromarray(np.where(mask_arr >= threshold, 255, 0).astype(np.uint8), mode="L")
 
 def _combine_masks_max(mask_a: Image.Image | None, mask_b: Image.Image | None) -> Image.Image | None:
     if mask_a is None:
@@ -47,63 +55,77 @@ def process_mask_for_inpainting(
     threshold: int = 127
 ) -> tuple[Image.Image, Image.Image]:
     """
-    WebUI/Invoke-style mask processing:
-    1. Binary inpaint mask.
-    2. Optional padding (dilation) around mask.
-    3. Separate blurred blend mask for final compositing.
+    Prepare two masks for inpainting:
+    1. A binary generation mask for the diffusion pipeline.
+    2. A soft blend mask for post-compositing on top of the untouched source image.
+
+    Diffusers inpaint pipelines binarize `mask_image` internally, so passing a blurred mask
+    directly into the pipeline does not preserve feathered edges. To make `mask_blur`
+    meaningful, we keep a binary generation mask for the pipeline and create a separate
+    blurred blend mask for the final composite.
     """
     if mask_image.mode != "L":
         mask_image = mask_image.convert("L")
 
-    mask_arr = np.array(mask_image, dtype=np.uint8)
-    hard_mask = Image.fromarray(np.where(mask_arr >= threshold, 255, 0).astype(np.uint8), mode="L")
+    base_mask = _binarize_mask(mask_image, threshold)
 
     if mask_padding > 0:
-        hard_mask = hard_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_padding)))
-        
-    soft_mask = hard_mask
+        base_mask = base_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_padding)))
+
+    generation_mask = base_mask
+    # Approximate A1111-style "blur expands the rewritten area a bit" behavior even though
+    # diffusers will still binarize the mask internally.
+    blur_growth_radius = max(0, round(mask_blur / 2))
+    if blur_growth_radius > 0:
+        generation_mask = generation_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(blur_growth_radius)))
+
+    blend_mask = base_mask
     if mask_blur > 0:
-        soft_mask = hard_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
-        
-    return hard_mask, soft_mask
+        blend_mask = base_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
+
+    # Keep the original masked region fully opaque in the final composite.
+    blend_mask = _combine_masks_max(blend_mask, base_mask)
+
+    return generation_mask, blend_mask
 
 def feather_blend(
     original_image: Image.Image,
     generated_image: Image.Image,
-    soft_mask: Image.Image,
-    hard_mask: Image.Image | None = None
+    blend_mask: Image.Image,
+    generation_mask: Image.Image | None = None,
 ) -> Image.Image:
     """
-    Blends the generated image back into the original image using the soft mask as an alpha channel.
-    This creates a seamless transition between AI pixels and original pixels.
+    Blend the generated image back into the untouched source image.
+
+    `blend_mask` controls the feathered transition near the border.
+    `generation_mask`, when present, keeps the original edited region fully generated.
     """
-    if original_image.size != generated_image.size or original_image.size != soft_mask.size:
+    if original_image.size != generated_image.size or original_image.size != blend_mask.size:
         return generated_image # Fallback if sizes mismatch somehow
         
     orig = np.array(original_image.convert("RGB"), dtype=np.float32)
     gen = np.array(generated_image.convert("RGB"), dtype=np.float32)
-    alpha = np.array(soft_mask.convert("L"), dtype=np.float32) / 255.0
-    if hard_mask is not None:
-        hard_alpha = (np.array(hard_mask.convert("L"), dtype=np.float32) >= 127.0).astype(np.float32)
-        alpha = np.maximum(alpha, hard_alpha * 0.98)
-
+    alpha = np.array(blend_mask.convert("L"), dtype=np.float32) / 255.0
+    if generation_mask is not None and generation_mask.size == blend_mask.size:
+        generation_alpha = np.array(generation_mask.convert("L"), dtype=np.float32) / 255.0
+        alpha = np.maximum(alpha, generation_alpha)
     alpha_3 = alpha[..., None]
 
     blended = (orig * (1.0 - alpha_3)) + (gen * alpha_3)
     return Image.fromarray(np.clip(blended, 0, 255).astype(np.uint8), mode="RGB")
 
 def merge_generation_masks(
-    manual_hard_mask: Image.Image | None,
-    manual_soft_mask: Image.Image | None,
-    outpaint_hard_mask: Image.Image | None,
-    outpaint_soft_mask: Image.Image | None,
+    manual_generation_mask: Image.Image | None,
+    manual_blend_mask: Image.Image | None,
+    outpaint_generation_mask: Image.Image | None,
+    outpaint_blend_mask: Image.Image | None,
 ) -> tuple[Image.Image | None, Image.Image | None]:
     """
     Combines user mask and transparency-derived outpainting mask.
     """
     return (
-        _combine_masks_max(manual_hard_mask, outpaint_hard_mask),
-        _combine_masks_max(manual_soft_mask, outpaint_soft_mask),
+        _combine_masks_max(manual_generation_mask, outpaint_generation_mask),
+        _combine_masks_max(manual_blend_mask, outpaint_blend_mask),
     )
 
 def prepare_image_for_outpainting(
@@ -152,10 +174,10 @@ def prepare_image_for_outpainting(
     final_image.paste(image, mask=alpha)
     
     # 5. Process Mask (Feathering)
-    hard_mask, soft_mask = process_mask_for_inpainting(
+    generation_mask, blend_mask = process_mask_for_inpainting(
         mask,
         mask_padding=mask_padding,
         mask_blur=mask_blur
     )
     
-    return final_image, hard_mask, soft_mask
+    return final_image, generation_mask, blend_mask

@@ -3,6 +3,7 @@
     width: 100%;
     height: 100%;
     position: relative;
+    overflow: hidden;
     background-color: #0c0c12;
     /* Checkerboard transparency pattern */
     background-image:
@@ -31,6 +32,89 @@
     letter-spacing: 0.05em;
     border: var(--glass-border);
     box-shadow: var(--shadow-inset);
+}
+
+.editor-object-resolution-badge {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(10, 16, 24, 0.82);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    color: #f5fbff;
+    padding: 6px 12px;
+    border-radius: var(--radius-md);
+    pointer-events: none;
+    font-weight: 600;
+    font-size: var(--font-sm);
+    letter-spacing: 0.05em;
+    border: var(--glass-border);
+    box-shadow: var(--shadow-inset);
+}
+
+.editor-live-preview {
+    position: absolute;
+    z-index: 22;
+    pointer-events: none;
+    overflow: hidden;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+}
+
+.editor-live-preview__image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    image-rendering: auto;
+}
+
+.editor-live-preview__hud {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background: linear-gradient(180deg, rgba(4, 8, 14, 0.5) 0%, rgba(4, 8, 14, 0.04) 22%, rgba(4, 8, 14, 0.08) 76%, rgba(4, 8, 14, 0.54) 100%);
+}
+
+.editor-live-preview__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px 0;
+}
+
+.editor-live-preview__title {
+    color: #8fe3ff;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.editor-live-preview__step {
+    color: rgba(245, 250, 255, 0.92);
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.editor-live-preview__progress {
+    height: 8px;
+    margin: 0 12px 12px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.14);
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.26);
+}
+
+.editor-live-preview__progress-bar {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #7be1ff, #ffb55a);
+    transition: width 0.18s ease;
 }
 
 /* ===== Staging Overlay ===== */
@@ -77,4 +161,14 @@
 
 .editor-staging-btn--discard {
     background: var(--danger);
+}
+
+.editor-staging-btn--mask {
+    background: rgba(255, 255, 255, 0.14);
+    color: var(--text-primary);
+}
+
+.editor-staging-btn--mask-active {
+    background: rgba(255, 96, 96, 0.88);
+    color: white;
 }

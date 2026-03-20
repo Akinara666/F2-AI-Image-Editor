@@ -1,5 +1,6 @@
 import asyncio
 import time
+import threading
 import unittest
 
 from core.llm_adapter import BasePromptLLMAdapter
@@ -33,6 +34,28 @@ class SlowAdapter(BasePromptLLMAdapter):
             "negative_prompt_extra": "",
             "style_tags": [],
         }
+
+
+class SlowUnloadAwareAdapter(BasePromptLLMAdapter):
+    def __init__(self):
+        super().__init__()
+        self.finished = threading.Event()
+        self.unload_count = 0
+        self.unloaded_while_active = False
+
+    def transform_to_sd(self, prompt: str, context=None) -> dict:
+        time.sleep(0.2)
+        self.finished.set()
+        return {
+            "positive_prompt": f"slow::{prompt}",
+            "negative_prompt_extra": "",
+            "style_tags": [],
+        }
+
+    def _unload_now_locked(self) -> None:
+        if self._active_calls > 0:
+            self.unloaded_while_active = True
+        self.unload_count += 1
 
 
 class PromptTransformerTests(unittest.TestCase):
@@ -143,6 +166,44 @@ class PromptTransformerTests(unittest.TestCase):
 
         self.assertEqual(result.transform_status, "fallback_error")
         self.assertEqual(result.transformed_prompt, "")
+
+    def test_timeout_defers_unload_until_background_call_finishes(self):
+        adapter = SlowUnloadAwareAdapter()
+        transformer = PromptTransformer(
+            enabled=True,
+            timeout_ms=30,
+            provider_name="stub",
+            adapter=adapter,
+        )
+
+        result = asyncio.run(transformer.transform_prompt("hello world", use_prompt_transform=True))
+
+        self.assertEqual(result.transform_status, "fallback_error")
+        self.assertEqual(adapter.unload_count, 0)
+        self.assertFalse(adapter.unloaded_while_active)
+
+        self.assertTrue(adapter.finished.wait(timeout=1.0))
+        time.sleep(0.05)
+
+        self.assertEqual(adapter.unload_count, 1)
+        self.assertFalse(adapter.unloaded_while_active)
+
+    def test_busy_transform_requests_are_rejected_while_slot_is_occupied(self):
+        transformer = PromptTransformer(
+            enabled=True,
+            timeout_ms=5000,
+            provider_name="stub",
+            adapter=StructuredAdapter(),
+        )
+        self.assertTrue(transformer._try_acquire_transform_slot())
+        try:
+            result = asyncio.run(transformer.transform_prompt("second", use_prompt_transform=True))
+        finally:
+            transformer._release_transform_slot()
+
+        self.assertEqual(result.transform_status, "busy")
+        self.assertEqual(result.transformed_prompt, "")
+        self.assertEqual(result.error, "Prompt transformer is busy with a previous request.")
 
 
 if __name__ == "__main__":

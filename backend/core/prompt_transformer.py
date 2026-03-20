@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -102,6 +104,7 @@ class PromptTransformer:
         timeout_ms: int,
         provider_name: str,
         negative_merge_policy: str = "append",
+        unload_after_call: bool = True,
         adapter: Optional[BasePromptLLMAdapter] = None,
         logger: Optional[logging.Logger] = None,
     ):
@@ -109,8 +112,26 @@ class PromptTransformer:
         self.timeout_ms = timeout_ms
         self.provider_name = provider_name
         self.negative_merge_policy = negative_merge_policy
+        self.unload_after_call = unload_after_call
         self.adapter = adapter or build_llm_adapter(provider_name)
         self.logger = logger or logging.getLogger("PromptTransformer")
+        self._transform_slot_lock = threading.Lock()
+        self._transform_inflight = False
+
+    def _try_acquire_transform_slot(self) -> bool:
+        with self._transform_slot_lock:
+            if self._transform_inflight:
+                return False
+            self._transform_inflight = True
+            return True
+
+    def _release_transform_slot(self) -> None:
+        with self._transform_slot_lock:
+            self._transform_inflight = False
+
+    def _is_transform_busy(self) -> bool:
+        with self._transform_slot_lock:
+            return self._transform_inflight
 
     async def transform_prompt(
         self,
@@ -118,10 +139,24 @@ class PromptTransformer:
         use_prompt_transform: Optional[bool] = None,
         context: Optional[dict[str, Any]] = None,
     ) -> PromptTransformResult:
+        transform_id = uuid.uuid4().hex[:8]
         prompt_clean = _clean_text(raw_prompt)
-        user_negative_prompt = _clean_text((context or {}).get("user_negative_prompt"))
+        context = context or {}
+        user_negative_prompt = _clean_text(context.get("user_negative_prompt"))
+        self.logger.info(
+            "Prompt transform request received: transform_id=%s provider=%s prompt_len=%s negative_len=%s timeout_ms=%s busy=%s mode=%s model_id=%s",
+            transform_id,
+            self.provider_name,
+            len(prompt_clean),
+            len(user_negative_prompt),
+            self.timeout_ms,
+            self._is_transform_busy(),
+            context.get("mode") or "<none>",
+            context.get("model_id") or "<none>",
+        )
 
         if not prompt_clean:
+            self.logger.info("Prompt transform skipped because prompt is empty: transform_id=%s", transform_id)
             return PromptTransformResult(
                 raw_prompt="",
                 transformed_prompt="",
@@ -133,6 +168,7 @@ class PromptTransformer:
 
         should_transform = self.enabled if use_prompt_transform is None else (self.enabled and use_prompt_transform)
         if not should_transform:
+            self.logger.info("Prompt transform disabled for request: transform_id=%s", transform_id)
             return PromptTransformResult(
                 raw_prompt=prompt_clean,
                 transformed_prompt=prompt_clean,
@@ -142,10 +178,36 @@ class PromptTransformer:
                 latency_ms=0,
             )
 
+        if not self._try_acquire_transform_slot():
+            self.logger.info(
+                "Prompt transform rejected because previous request is still running: transform_id=%s",
+                transform_id,
+            )
+            return PromptTransformResult(
+                raw_prompt=prompt_clean,
+                transformed_prompt="",
+                transformed_negative_prompt=user_negative_prompt,
+                transform_status="busy",
+                provider=self.provider_name,
+                latency_ms=0,
+                error="Prompt transformer is busy with a previous request.",
+            )
+
         started = time.perf_counter()
+        worker_started = threading.Event()
+
+        def run_transform_call() -> dict[str, Any]:
+            worker_started.set()
+            self.logger.info("Prompt transform worker started: transform_id=%s", transform_id)
+            try:
+                return self.adapter.run_transform(prompt_clean, context)
+            finally:
+                self._release_transform_slot()
+                self.logger.info("Prompt transform worker finished: transform_id=%s", transform_id)
+
         try:
             raw_payload = await asyncio.wait_for(
-                asyncio.to_thread(self.adapter.transform_to_sd, prompt_clean, context or {}),
+                asyncio.to_thread(run_transform_call),
                 timeout=max(0.1, self.timeout_ms / 1000.0),
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
@@ -159,6 +221,14 @@ class PromptTransformer:
                 payload["negative_prompt_extra"],
                 self.negative_merge_policy,
             )
+            self.logger.info(
+                "Prompt transform completed successfully: transform_id=%s latency_ms=%s transformed_len=%s negative_len=%s style_tags=%s",
+                transform_id,
+                latency_ms,
+                len(positive_prompt),
+                len(transformed_negative_prompt),
+                len(payload["style_tags"]),
+            )
 
             return PromptTransformResult(
                 raw_prompt=prompt_clean,
@@ -169,8 +239,19 @@ class PromptTransformer:
                 latency_ms=latency_ms,
             )
         except Exception as exc:
+            if not worker_started.is_set():
+                self._release_transform_slot()
             latency_ms = int((time.perf_counter() - started) * 1000)
-            self.logger.warning("Prompt transform fallback: %s", exc)
+            if isinstance(exc, asyncio.TimeoutError):
+                error_message = f"Prompt transform timed out after {self.timeout_ms} ms."
+            else:
+                error_message = str(exc) or type(exc).__name__
+            self.logger.warning(
+                "Prompt transform fallback: transform_id=%s latency_ms=%s error=%s",
+                transform_id,
+                latency_ms,
+                error_message,
+            )
             return PromptTransformResult(
                 raw_prompt=prompt_clean,
                 transformed_prompt="",
@@ -178,13 +259,17 @@ class PromptTransformer:
                 transform_status="fallback_error",
                 provider=self.provider_name,
                 latency_ms=latency_ms,
-                error=str(exc),
+                error=error_message,
             )
         finally:
-            try:
-                self.adapter.unload()
-            except Exception as e:
-                self.logger.warning("Failed to unload adapter: %s", e)
+            if self.unload_after_call:
+                try:
+                    self.logger.info("Prompt transform requesting adapter unload: transform_id=%s", transform_id)
+                    self.adapter.unload()
+                except Exception as e:
+                    self.logger.warning("Failed to unload adapter: %s", e)
+            else:
+                self.logger.info("Prompt transform leaving adapter loaded in memory: transform_id=%s", transform_id)
 
     #_____________апдейт_______ Health for operational checks
     def health(self) -> dict[str, Any]:
@@ -193,6 +278,8 @@ class PromptTransformer:
             "provider": self.provider_name,
             "timeout_ms": self.timeout_ms,
             "negative_merge_policy": self.negative_merge_policy,
+            "unload_after_call": self.unload_after_call,
+            "busy": self._is_transform_busy(),
         }
         try:
             data["adapter"] = self.adapter.health()
@@ -210,4 +297,5 @@ prompt_transformer = PromptTransformer(
     timeout_ms=settings.PROMPT_TRANSFORM_TIMEOUT_MS,
     provider_name=settings.PROMPT_TRANSFORM_PROVIDER,
     negative_merge_policy=settings.PROMPT_NEGATIVE_MERGE_POLICY,
+    unload_after_call=settings.PROMPT_TRANSFORM_UNLOAD_AFTER_CALL,
 )

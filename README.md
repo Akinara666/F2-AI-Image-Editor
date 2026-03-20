@@ -84,8 +84,8 @@ export PROMPT_NEGATIVE_MERGE_POLICY=append
 
 ```bash
 export PROMPT_TRANSFORM_PROVIDER=qwen_gguf
-export LLM_MODEL_PATH=/abs/path/to/qwen3-1.7b.gguf
-export LLM_LORA_PATH=/abs/path/to/your_adapter.gguf
+export LLM_MODEL_PATH=./backend/models/llm/model.gguf
+export LLM_LORA_PATH=./backend/models/llm/adapter.gguf
 export LLM_LORA_SCALE=1.0
 export LLM_CTX_SIZE=4096
 export LLM_THREADS=6
@@ -107,6 +107,9 @@ export LLM_TOP_P=0.9
     *   Картинка появится поверх холста.
     *   Нажмите **GENERATE** еще раз, чтобы заменить вариант, или **ACCEPT**, чтобы вклеить его в холст.
     *   Нажмите **DISCARD**, чтобы удалить.
+
+## Удаленный сервер
+Сценарии с `SSH`-туннелем, `trycloudflare.com`, `ngrok` и настройкой `CORS_ALLOW_ORIGINS` / `VITE_API_BASE_URL` описаны в `REMOTE_SERVER.md`.
 
 ## 📂 Структура проекта
 ```
