@@ -1,6 +1,9 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createClientId } from '../constants';
+import './ToastProvider.css';
 
 const ToastContext = createContext(null);
+const TOAST_DURATION_MS = 5000;
 
 export const useToast = () => {
     const context = useContext(ToastContext);
@@ -12,19 +15,36 @@ export const useToast = () => {
 
 export const ToastProvider = ({ children }) => {
     const [toasts, setToasts] = useState([]);
+    const timersRef = useRef(new Map());
 
-    const addToast = useCallback((message, type = 'info') => {
-        const id = Date.now();
-        setToasts(prev => [...prev, { id, message, type }]);
-
-        // Auto-remove after 3 seconds
-        setTimeout(() => {
-            removeToast(id);
-        }, 5000);
+    const clearToastTimer = useCallback((id) => {
+        const timerId = timersRef.current.get(id);
+        if (timerId) {
+            window.clearTimeout(timerId);
+            timersRef.current.delete(id);
+        }
     }, []);
 
     const removeToast = useCallback((id) => {
+        clearToastTimer(id);
         setToasts(prev => prev.filter(t => t.id !== id));
+    }, [clearToastTimer]);
+
+    const addToast = useCallback((message, type = 'info') => {
+        const id = createClientId('toast');
+        setToasts(prev => [...prev, { id, message, type }]);
+
+        const timerId = window.setTimeout(() => {
+            removeToast(id);
+        }, TOAST_DURATION_MS);
+        timersRef.current.set(id, timerId);
+    }, [removeToast]);
+
+    useEffect(() => () => {
+        timersRef.current.forEach((timerId) => {
+            window.clearTimeout(timerId);
+        });
+        timersRef.current.clear();
     }, []);
 
     const showSuccess = (msg) => addToast(msg, 'success');
@@ -34,44 +54,20 @@ export const ToastProvider = ({ children }) => {
     return (
         <ToastContext.Provider value={{ showSuccess, showError, showInfo }}>
             {children}
-            <div style={{
-                position: 'fixed',
-                bottom: '20px',
-                right: '20px',
-                zIndex: 9999,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px'
-            }}>
+            <div className="toast-container">
                 {toasts.map(toast => (
-                    <div key={toast.id} style={{
-                        background: toast.type === 'error' ? '#e63946' : toast.type === 'success' ? '#2a9d8f' : '#457b9d',
-                        color: 'white',
-                        padding: '12px 20px',
-                        borderRadius: '4px',
-                        boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-                        minWidth: '250px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        animation: 'fadeIn 0.3s ease-in'
-                    }}>
-                        <span>{toast.message}</span>
+                    <div key={toast.id} className={`toast toast--${toast.type}`}>
+                        <span className="toast__message">{toast.message}</span>
                         <button
+                            className="toast__close"
                             onClick={() => removeToast(toast.id)}
-                            style={{ background: 'transparent', border: 'none', color: 'white', cursor: 'pointer', marginLeft: '10px' }}
                         >
                             ✕
                         </button>
+                        <div className="toast__progress" />
                     </div>
                 ))}
             </div>
-            <style>{`
-                @keyframes fadeIn {
-                    from { opacity: 0; transform: translateY(10px); }
-                    to { opacity: 1; transform: translateY(0); }
-                }
-            `}</style>
         </ToastContext.Provider>
     );
 };

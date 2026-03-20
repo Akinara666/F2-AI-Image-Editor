@@ -1,5 +1,17 @@
-image_generation/.env
-frontend/node_modules
-backend/venv
-__pycache__
+# Environment
+backend/.env
+backend/venv/
+frontend/node_modules/
+
+# Build artifacts
+frontend/dist/
+__pycache__/
+
+# Generated outputs
 backend/static/outputs/
+
+.env
+.vite
+
+*.gguf
+*.safetensors

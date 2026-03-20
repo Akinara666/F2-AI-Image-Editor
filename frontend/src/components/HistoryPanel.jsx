@@ -1,99 +1,146 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { resolveApiUrl } from '../constants';
+import './HistoryPanel.css';
 
-const HistoryPanel = ({ history, onSelect }) => {
+const HistoryPanel = ({
+    history,
+    onSelect,
+    onMissing,
+    onDelete,
+    onDownload,
+    onCopyPrompt,
+    isBusy = false
+}) => {
+    const [openMenuId, setOpenMenuId] = useState(null);
+    const rootRef = useRef(null);
+
+    useEffect(() => {
+        const handlePointerDown = (event) => {
+            if (!rootRef.current?.contains(event.target)) {
+                setOpenMenuId(null);
+            }
+        };
+
+        document.addEventListener('pointerdown', handlePointerDown);
+        return () => {
+            document.removeEventListener('pointerdown', handlePointerDown);
+        };
+    }, []);
+
     return (
-        <div className="panel history-panel" style={{
-            width: '18rem',
-            minWidth: '200px',
-            borderLeft: '1px solid var(--border)',
-            borderRight: 'none',
-            animation: 'slideInRight 0.3s ease'
-        }}>
+        <div className="panel history-panel" ref={rootRef}>
             {/* Fixed Header */}
-            <div style={{
-                padding: 'var(--spacing-md)',
-                borderBottom: '1px solid var(--border)',
-                background: 'var(--bg-panel)',
-                zIndex: 10,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-            }}>
-                <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--primary)' }}>
-                    History
+            <div className="history-panel__header">
+                <h3 className="history-panel__title">
+                    История
                 </h3>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', background: 'var(--bg-dark)', padding: '2px 8px', borderRadius: '10px' }}>
+                <span className="history-panel__count">
                     {history.length}
                 </span>
             </div>
 
             {/* Scrollable List */}
-            <div className="custom-scrollbar" style={{
-                flex: 1,
-                overflowY: 'auto',
-                padding: 'var(--spacing-md)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--spacing-md)'
-            }}>
+            <div className="custom-scrollbar history-panel__list">
                 {history.length === 0 && (
-                    <div style={{
-                        color: 'var(--text-muted)',
-                        fontSize: '0.9rem',
-                        textAlign: 'center',
-                        marginTop: '2rem',
-                        opacity: 0.7
-                    }}>
-                        No generations yet.<br />Time to create!
+                    <div className="history-panel__empty">
+                        Пока нет генераций.<br />Самое время создать первую.
                     </div>
                 )}
 
                 {history.map((item, index) => (
                     <div
                         key={item.id}
-                        onClick={() => onSelect(item)}
-                        style={{
-                            cursor: 'pointer',
-                            background: 'var(--bg-dark)',
-                            borderRadius: 'var(--radius-md)',
-                            overflow: 'hidden',
-                            border: '1px solid var(--border)',
-                            transition: 'all var(--trans-fast)',
-                            flexShrink: 0,
-                            animation: `fadeIn 0.3s ease ${index * 0.05}s backwards`
+                        className={`history-panel__card ${isBusy ? 'history-panel__card--disabled' : ''}`}
+                        onClick={() => {
+                            if (!isBusy) {
+                                void onSelect(item);
+                            }
                         }}
-                        onMouseEnter={e => {
-                            e.currentTarget.style.borderColor = 'var(--primary)';
-                            e.currentTarget.style.transform = 'translateY(-2px)';
-                            e.currentTarget.style.boxShadow = 'var(--shadow-md)';
-                        }}
-                        onMouseLeave={e => {
-                            e.currentTarget.style.borderColor = 'var(--border)';
-                            e.currentTarget.style.transform = 'translateY(0)';
-                            e.currentTarget.style.boxShadow = 'none';
-                        }}
+                        aria-disabled={isBusy}
+                        style={{ animationDelay: `${index * 0.05}s`, animation: `fadeIn 0.3s ease ${index * 0.05}s backwards` }}
                     >
-                        <div style={{ position: 'relative', width: '100%', paddingTop: '100%' }}>
+                        <div className="history-panel__thumb">
+                            <button
+                                type="button"
+                                className="history-panel__menu-trigger"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setOpenMenuId((currentId) => (
+                                        currentId === item.id ? null : item.id
+                                    ));
+                                }}
+                                aria-label="Действия с элементом истории"
+                                aria-expanded={openMenuId === item.id}
+                            >
+                                ⋯
+                            </button>
+                            {openMenuId === item.id && (
+                                <div
+                                    className="history-panel__menu"
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                    }}
+                                >
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onCopyPrompt) {
+                                                void onCopyPrompt(item);
+                                            }
+                                        }}
+                                    >
+                                        Копировать промпт
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onDownload) {
+                                                void onDownload(item);
+                                            }
+                                        }}
+                                    >
+                                        Скачать
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="history-panel__menu-item history-panel__menu-item--danger"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            if (onDelete) {
+                                                void onDelete(item);
+                                            }
+                                        }}
+                                    >
+                                        Удалить
+                                    </button>
+                                </div>
+                            )}
                             <img
-                                src={item.url}
+                                src={resolveApiUrl(item.url)}
                                 alt={item.meta.prompt}
                                 loading="lazy"
-                                style={{
-                                    position: 'absolute',
-                                    top: 0,
-                                    left: 0,
-                                    width: '100%',
-                                    height: '100%',
-                                    objectFit: 'cover',
-                                    transition: 'transform 0.5s ease'
+                                crossOrigin="anonymous"
+                                onError={() => {
+                                    if (onMissing) {
+                                        onMissing(item);
+                                    }
                                 }}
                             />
                         </div>
-                        <div style={{ padding: 'var(--spacing-sm)' }}>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                Seed: {item.meta.seed}
+                        <div className="history-panel__meta">
+                            <div className="history-panel__seed">
+                                Сид: {item.meta.seed}
                             </div>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-main)', opacity: 0.8 }}>
+                            {item.meta.prompt && (
+                                <div className="history-panel__prompt">
+                                    {item.meta.prompt.length > 40 ? item.meta.prompt.slice(0, 40) + '…' : item.meta.prompt}
+                                </div>
+                            )}
+                            <div className="history-panel__time">
                                 {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </div>
                         </div>

@@ -5,10 +5,6 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    proxy: {
-      '/generate': 'http://localhost:8000',
-      '/outputs': 'http://localhost:8000',
-      '/models': 'http://localhost:8000',
-    }
+    // API calls now use VITE_API_BASE_URL from .env
   }
 })

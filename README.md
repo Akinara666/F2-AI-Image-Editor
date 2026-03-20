@@ -30,6 +30,7 @@
 ## 🛠 Технический стек
 *   **Frontend**: React, Pure Fabric.js (Canvas Logic), Vite.
 *   **Backend**: Python, FastAPI, Diffusers, Torch.
+*   **Prompt Transformer**: backend-модуль для интеграции локальной LLM перед SD.
 *   **Оптимизация**:
     *   Автоматическая выгрузка моделей из VRAM.
     *   Оффлайн-режим (попытка загрузки локальных кэшированных моделей).
@@ -61,6 +62,41 @@ npm install
 npm run dev
 ```
 
+### 3. Prompt Transformer (подготовка под локальную LLM)
+По умолчанию трансформер выключен и не влияет на текущий pipeline.
+
+```bash
+export PROMPT_TRANSFORM_ENABLED=true
+export PROMPT_TRANSFORM_TIMEOUT_MS=1500
+export PROMPT_TRANSFORM_PROVIDER=stub
+export PROMPT_TRANSFORM_STRICT=true
+export PROMPT_NEGATIVE_MERGE_POLICY=append
+```
+
+Полезные endpoint-ы:
+- `POST /prompt/transform` — превью трансформации промпта без запуска SD.
+- `GET /prompt/health` — статус загрузки prompt-transformer и LLM-адаптера.
+- `POST /generate` — поддерживает поля `raw_prompt` и `use_prompt_transform`.
+- Если трансформация включена и не удалась, backend вернет `422` и не запустит SD.
+
+### 4. Qwen GGUF + LoRA (runtime)
+Для провайдера `qwen_gguf` подготовлены env-параметры:
+
+```bash
+export PROMPT_TRANSFORM_PROVIDER=qwen_gguf
+export LLM_MODEL_PATH=./backend/models/llm/model.gguf
+export LLM_LORA_PATH=./backend/models/llm/adapter.gguf
+export LLM_LORA_SCALE=1.0
+export LLM_CTX_SIZE=4096
+export LLM_THREADS=6
+export LLM_GPU_LAYERS=0
+export LLM_MAX_NEW_TOKENS=220
+export LLM_TEMPERATURE=0.2
+export LLM_TOP_P=0.9
+```
+
+Примечание: для `qwen_gguf` нужен установленный `llama-cpp-python`.
+
 ## 🎮 Как пользоваться
 1.  **Навигация**: Зажмите `Пробел` и тяните мышкой для перемещения. Колесико — зум.
 2.  **Генерация**:
@@ -72,12 +108,17 @@ npm run dev
     *   Нажмите **GENERATE** еще раз, чтобы заменить вариант, или **ACCEPT**, чтобы вклеить его в холст.
     *   Нажмите **DISCARD**, чтобы удалить.
 
+## Удаленный сервер
+Сценарии с `SSH`-туннелем, `trycloudflare.com`, `ngrok` и настройкой `CORS_ALLOW_ORIGINS` / `VITE_API_BASE_URL` описаны в `REMOTE_SERVER.md`.
+
 ## 📂 Структура проекта
 ```
 .
 ├── backend/
 │   ├── core/
 │   │   ├── manager.py   # Model Manager (VRAM logic)
+│   │   ├── llm_adapter.py # GGUF/LoRA adapter layer
+│   │   ├── prompt_transformer.py # Prompt -> SD prompt service (LLM hook)
 │   │   └── utils.py     # Image processing helpers
 │   └── main.py          # FastAPI Endpoints
 └── frontend/

@@ -1,0 +1,90 @@
+/* ===== Toast Container ===== */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+/* ===== Toast Item ===== */
+.toast {
+    position: relative;
+    color: white;
+    padding: 12px 20px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    min-width: 280px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    pointer-events: auto;
+    animation: toastSlideIn 0.35s cubic-bezier(0.21, 1.02, 0.73, 1) forwards;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: var(--glass-border);
+}
+
+.toast--success {
+    background: linear-gradient(135deg, rgba(42, 157, 143, 0.85), rgba(33, 134, 122, 0.85));
+}
+
+.toast--error {
+    background: linear-gradient(135deg, rgba(230, 57, 70, 0.85), rgba(197, 45, 57, 0.85));
+}
+
+.toast--info {
+    background: linear-gradient(135deg, rgba(69, 123, 157, 0.85), rgba(58, 106, 136, 0.85));
+}
+
+.toast__message {
+    flex: 1;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.toast__close {
+    background: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    margin-left: 10px;
+    padding: 4px;
+    font-size: 1rem;
+    transition: color var(--trans-fast);
+}
+
+.toast__close:hover {
+    color: white;
+}
+
+/* ===== Auto-close Progress Bar ===== */
+.toast__progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.35);
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    animation: toastProgress 5s linear forwards;
+}
+
+@keyframes toastProgress {
+    from { width: 100%; }
+    to { width: 0%; }
+}
+
+/* ===== Animations ===== */
+@keyframes toastSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(100%) scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
