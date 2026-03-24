@@ -326,15 +326,6 @@
     box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
-.sidebar__tool-btn--eraser-block {
-    width: 100%;
-    margin-top: var(--spacing-xs);
-    min-height: 44px;
-    justify-content: center;
-    flex-direction: row;
-    gap: 8px;
-}
-
 .sidebar__brush-options {
     animation: fadeIn 0.2s;
 }

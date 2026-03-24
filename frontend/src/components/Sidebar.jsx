@@ -357,20 +357,20 @@ const Sidebar = ({
                             <div className="sidebar__tool-bar">
                                 {[
                                     {
-                                        id: 'quick_select', label: 'Select (W)', color: 'var(--primary)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M3 5h6" />
-                                                <path d="M3 12h4" />
-                                                <path d="M3 19h8" />
-                                                <rect x="12" y="7" width="9" height="10" rx="2" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
                                         id: 'none', label: 'Курсор', color: 'var(--primary)', icon: (
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
                                                 <path d="M13 13l6 6" />
+                                            </svg>
+                                        )
+                                    },
+                                    {
+                                        id: 'hand', label: 'Рука', color: 'var(--accent)', icon: (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M18 11V6a2 2 0 0 0-4 0v5" />
+                                                <path d="M14 10V4a2 2 0 0 0-4 0v6" />
+                                                <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+                                                <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
                                             </svg>
                                         )
                                     },
@@ -390,12 +390,12 @@ const Sidebar = ({
                                         )
                                     },
                                     {
-                                        id: 'hand', label: 'Рука', color: 'var(--accent)', icon: (
+                                        id: 'quick_select', label: 'Select (W)', color: 'var(--primary)', icon: (
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M18 11V6a2 2 0 0 0-4 0v5" />
-                                                <path d="M14 10V4a2 2 0 0 0-4 0v6" />
-                                                <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
-                                                <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+                                                <path d="M3 5h6" />
+                                                <path d="M3 12h4" />
+                                                <path d="M3 19h8" />
+                                                <rect x="12" y="7" width="9" height="10" rx="2" />
                                             </svg>
                                         )
                                     },
@@ -417,6 +417,15 @@ const Sidebar = ({
                                             </svg>
                                         )
                                     },
+                                    {
+                                        id: 'eraser', label: 'Ластик', color: 'var(--warning)', icon: (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+                                                <path d="M22 21H7" />
+                                                <path d="m5 11 9 9" />
+                                            </svg>
+                                        )
+                                    },
                                 ].map(tool => (
                                     <button
                                         key={tool.id}
@@ -435,7 +444,11 @@ const Sidebar = ({
                                                         : (
                                                             tool.id === 'quick_select'
                                                                 ? 'Быстрое выделение (W)'
-                                                                : tool.label
+                                                                : (
+                                                                    tool.id === 'eraser'
+                                                                        ? 'Ластик'
+                                                                        : tool.label
+                                                                )
                                                         )
                                                 )
                                         }
@@ -445,22 +458,6 @@ const Sidebar = ({
                                     </button>
                                 ))}
                             </div>
-                            <button
-                                className={`btn sidebar__tool-btn sidebar__tool-btn--eraser-block ${brushMode === 'eraser' ? 'sidebar__tool-btn--active' : ''}`}
-                                onClick={() => setBrushMode('eraser')}
-                                style={{
-                                    background: brushMode === 'eraser' ? 'var(--warning)' : 'var(--bg-hover)',
-                                    color: brushMode === 'eraser' ? 'white' : 'var(--text-muted)'
-                                }}
-                                title="Ластик"
-                            >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
-                                    <path d="M22 21H7" />
-                                    <path d="m5 11 9 9" />
-                                </svg>
-                                <span className="sidebar__tool-label">Ластик</span>
-                            </button>
                         </div>
 
                         {brushMode !== 'none' && (
