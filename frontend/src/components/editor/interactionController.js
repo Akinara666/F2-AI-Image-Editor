@@ -1,6 +1,7 @@
 import { fabric } from 'fabric';
 
 const CLONE_STAMP_MODE = 'clone_stamp';
+const SPOT_HEAL_MODE = 'spot_heal';
 
 const getObjectWorldBounds = (object) => ({
     left: object.left ?? 0,
@@ -117,7 +118,11 @@ export const applyCanvasInteractionMode = ({
         brush.width = brushMode === 'eraser' ? brushSize * 2 : brushSize;
         brush.color = brushMode === 'mask'
             ? 'rgba(255, 0, 0, 1.0)'
-            : (brushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : brushColor);
+            : (
+                brushMode === SPOT_HEAL_MODE
+                    ? 'rgba(82, 240, 190, 1.0)'
+                    : (brushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : brushColor)
+            );
         canvas.freeDrawingBrush = brush;
     }
 
@@ -182,10 +187,11 @@ export const setupPathCreationHandling = ({
         const currentMode = brushModeRef.current;
         if (!path) return;
 
-        if (currentMode === 'mask') {
+        if (currentMode === 'mask' || currentMode === SPOT_HEAL_MODE) {
             path.set({
                 editorRole: canvasObjectRoles.MASK,
                 isMask: true,
+                isSpotHeal: currentMode === SPOT_HEAL_MODE,
                 selectable: false,
                 evented: false,
                 opacity: 1.0

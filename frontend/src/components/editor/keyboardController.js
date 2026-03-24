@@ -36,6 +36,12 @@ export const setupEditorKeyboardShortcuts = ({
             return;
         }
 
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyJ') {
+            event.preventDefault();
+            setBrushModeRef.current?.('spot_heal');
+            return;
+        }
+
         if (event.code === 'Space' && !event.repeat && brushModeRef.current !== 'hand') {
             event.preventDefault();
             fabricCanvas.isSpacePanning = true;

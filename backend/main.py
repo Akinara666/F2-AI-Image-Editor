@@ -118,7 +118,7 @@ MAX_MASK_BLUR = 128
 MIN_MASK_PADDING = 0
 MAX_MASK_PADDING = 128
 #_____________апдейт_______ Supported editor tools metadata
-ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp"}
+ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp", "spot_heal"}
 
 
 def _validation_error(detail: str) -> HTTPException:
@@ -808,6 +808,8 @@ async def generate_image(
         resolved_preview_method = _resolve_preview_method(preview_method)
         preview_interval_steps = settings.LIVE_PREVIEW_INTERVAL_STEPS
         configured_clip_skip, diffusers_clip_skip = _resolve_clip_skip_for_diffusers()
+        #_____________апдейт_______ Spot-heal profile flag (tool-aware generation behavior)
+        spot_heal_profile_applied = False
         nsfw_negative_prompt_applied = False
         if nsfw_filter_active and nsfw_negative_prompt_extra:
             merged_negative_prompt = _merge_negative_prompt_terms(
@@ -891,6 +893,15 @@ async def generate_image(
                      actual_mode = "img2img"
              else:
                  actual_mode = "text2img"
+
+        #_____________апдейт_______ Spot-heal tool profile for small-defect retouch
+        if active_tool == "spot_heal" and actual_mode == "inpainting":
+            final_negative_prompt = _merge_negative_prompt_terms(
+                final_negative_prompt,
+                "acne, pimples, dust, scratches, blemish, stain, artifact",
+            )
+            denoising_strength = min(denoising_strength, 0.55)
+            spot_heal_profile_applied = True
 
         # 2. Load Model
         pipeline_type = actual_mode
@@ -1117,6 +1128,8 @@ async def generate_image(
                 "preview_interval_steps": preview_interval_steps,
                 #_____________апдейт_______ Active editor tool trace from frontend
                 "active_tool": active_tool,
+                #_____________апдейт_______ Spot-heal profile telemetry
+                "spot_heal_profile_applied": spot_heal_profile_applied,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
