@@ -102,12 +102,12 @@ export const applyCanvasInteractionMode = ({
 }) => {
     if (!canvas || !frameObject) return;
 
-    const isDrawing = !['none', 'hand', CLONE_STAMP_MODE].includes(brushMode);
+    const isDrawing = !['none', 'hand', CLONE_STAMP_MODE, SPOT_HEAL_MODE].includes(brushMode);
     canvas.isDrawingMode = isDrawing;
     canvas.selection = brushMode === 'none';
     canvas.defaultCursor = brushMode === 'hand'
         ? 'grab'
-        : (brushMode === CLONE_STAMP_MODE ? 'crosshair' : 'default');
+        : ((brushMode === CLONE_STAMP_MODE || brushMode === SPOT_HEAL_MODE) ? 'crosshair' : 'default');
 
     if (brushMode !== 'none' && canvas.getActiveObject()) {
         canvas.discardActiveObject();
@@ -118,11 +118,7 @@ export const applyCanvasInteractionMode = ({
         brush.width = brushMode === 'eraser' ? brushSize * 2 : brushSize;
         brush.color = brushMode === 'mask'
             ? 'rgba(255, 0, 0, 1.0)'
-            : (
-                brushMode === SPOT_HEAL_MODE
-                    ? 'rgba(82, 240, 190, 1.0)'
-                    : (brushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : brushColor)
-            );
+            : (brushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : brushColor);
         canvas.freeDrawingBrush = brush;
     }
 
@@ -187,11 +183,10 @@ export const setupPathCreationHandling = ({
         const currentMode = brushModeRef.current;
         if (!path) return;
 
-        if (currentMode === 'mask' || currentMode === SPOT_HEAL_MODE) {
+        if (currentMode === 'mask') {
             path.set({
                 editorRole: canvasObjectRoles.MASK,
                 isMask: true,
-                isSpotHeal: currentMode === SPOT_HEAL_MODE,
                 selectable: false,
                 evented: false,
                 opacity: 1.0
@@ -260,6 +255,46 @@ export const setupPathCreationHandling = ({
 
     return () => {
         canvas.off('path:created', handlePathCreated);
+    };
+};
+
+export const setupSpotHealInstantHandling = ({
+    canvas,
+    brushModeRef,
+    brushSizeRef,
+    onSpotHealPoint
+}) => {
+    if (!canvas) {
+        return () => {};
+    }
+
+    const handleMouseDown = (event) => {
+        if (brushModeRef.current !== SPOT_HEAL_MODE) {
+            return;
+        }
+        if (event.e.button !== 0) {
+            return;
+        }
+
+        const pointer = canvas.getPointer(event.e);
+        if (!pointer) {
+            return;
+        }
+
+        event.e.preventDefault();
+        event.e.stopPropagation();
+        const radius = Math.max(4, Number(brushSizeRef.current || 1) / 2);
+        onSpotHealPoint?.({
+            x: pointer.x,
+            y: pointer.y,
+            radius
+        });
+    };
+
+    canvas.on('mouse:down', handleMouseDown);
+
+    return () => {
+        canvas.off('mouse:down', handleMouseDown);
     };
 };
 

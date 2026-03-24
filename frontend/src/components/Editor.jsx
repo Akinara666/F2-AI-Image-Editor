@@ -32,7 +32,8 @@ import {
 import {
     applyCanvasInteractionMode,
     setupCloneStampHandling,
-    setupPathCreationHandling
+    setupPathCreationHandling,
+    setupSpotHealInstantHandling
 } from './editor/interactionController';
 import { setupEditorKeyboardShortcuts } from './editor/keyboardController';
 import { setupCanvasViewportAndTransform } from './editor/transformController';
@@ -40,7 +41,7 @@ import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
 
-const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview }, ref) => {
+const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
@@ -424,6 +425,83 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         getUndoSnapshotParams
     });
 
+    const canSpotHeal = () => {
+        if (!fabricCanvas || !genFrame) {
+            return false;
+        }
+        return fabricCanvas.getObjects().some((object) => (
+            isBaseRasterObject(object, genFrame) || isCandidateObject(object, genFrame)
+        ));
+    };
+
+    const exportForSpotHeal = async ({ x, y, radius }) => {
+        if (!fabricCanvas || !genFrame) {
+            throw new Error('Canvas is not ready for spot heal.');
+        }
+
+        const frameWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+        const frameHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+        const frameLeft = genFrame.left ?? 0;
+        const frameTop = genFrame.top ?? 0;
+        const safeRadius = Math.max(4, Math.min(192, Number(radius || (brushSizeRef.current || 8) / 2)));
+        const safeX = Math.min(frameLeft + frameWidth - 1, Math.max(frameLeft, Number(x ?? frameLeft)));
+        const safeY = Math.min(frameTop + frameHeight - 1, Math.max(frameTop, Number(y ?? frameTop)));
+
+        let maskGroup = getMaskGroupFromCanvas(fabricCanvas);
+        let createdMaskGroup = false;
+
+        if (!maskGroup) {
+            maskGroup = new fabric.Group([], {
+                id: 'maskGroup',
+                editorRole: CANVAS_OBJECT_ROLES.MASK,
+                selectable: false,
+                evented: false,
+                opacity: 0.5,
+                objectCaching: true
+            });
+            fabricCanvas.add(maskGroup);
+            createdMaskGroup = true;
+        }
+
+        const tempSpotMask = new fabric.Circle({
+            left: safeX - safeRadius,
+            top: safeY - safeRadius,
+            radius: safeRadius,
+            originX: 'left',
+            originY: 'top',
+            fill: 'rgba(255, 0, 0, 1.0)',
+            stroke: 'rgba(255, 0, 0, 1.0)',
+            strokeWidth: 0,
+            selectable: false,
+            evented: false,
+            editorRole: CANVAS_OBJECT_ROLES.MASK,
+            isMask: true,
+            isSpotHeal: true
+        });
+
+        maskGroup.addWithUpdate(tempSpotMask);
+        enforceCanvasLayerOrder(fabricCanvas, genFrame);
+        fabricCanvas.requestRenderAll();
+
+        try {
+            return await exportCanvasState(fabricCanvas, genFrame);
+        } finally {
+            if (typeof maskGroup.removeWithUpdate === 'function') {
+                maskGroup.removeWithUpdate(tempSpotMask);
+            } else {
+                maskGroup.remove(tempSpotMask);
+            }
+
+            if (createdMaskGroup && maskGroup.getObjects().length === 0) {
+                fabricCanvas.remove(maskGroup);
+            }
+
+            syncMaskStateFromCanvas(fabricCanvas);
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
+            fabricCanvas.requestRenderAll();
+        }
+    };
+
     useImperativeHandle(ref, () => ({
         setGenFrameSize: (width, height) => setGenerationFrameSize({
             width,
@@ -459,11 +537,17 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             void performAccept();
         },
 
+        acceptCandidateAsync: async () => performAccept(),
+
         discardCandidate: () => {
             discardCandidateHelper();
         },
 
         exportForGeneration: async () => exportCanvasState(fabricCanvas, genFrame),
+
+        exportForSpotHeal,
+
+        canSpotHeal,
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
@@ -543,6 +627,16 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             getUndoSnapshotParams
         });
     }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        if (!fabricCanvas) return undefined;
+        return setupSpotHealInstantHandling({
+            canvas: fabricCanvas,
+            brushModeRef,
+            brushSizeRef,
+            onSpotHealPoint
+        });
+    }, [fabricCanvas, onSpotHealPoint]);
 
     return (
         <div ref={wrapperRef} className="editor-canvas-wrapper">

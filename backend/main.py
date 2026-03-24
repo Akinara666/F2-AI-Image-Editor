@@ -1157,6 +1157,79 @@ async def generate_image(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+
+#_____________апдейт_______ Fast spot-heal endpoint (click -> instant local inpaint)
+@app.post("/spot-heal")
+async def spot_heal(
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(...),
+    request_id: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
+    negative_prompt: Optional[str] = Form(default=None),
+    width: int = Form(default=512),
+    height: int = Form(default=512),
+    steps: int = Form(default=12),
+    cfg: float = Form(default=6.0),
+    seed: int = Form(default=-1),
+    model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    model_family: Optional[str] = Form(default=None),
+    sampler: str = Form(default="Euler a"),
+    denoising_strength: float = Form(default=0.45),
+    mask_blur: int = Form(default=8),
+    mask_padding: int = Form(default=16),
+):
+    #_____________апдейт_______ Spot-heal safe defaults with strict caps for responsiveness
+    spot_prompt = (prompt or "").strip() or (
+        "clean seamless local retouch, preserve original composition, preserve lighting, preserve texture"
+    )
+    spot_negative_prompt = (negative_prompt or "").strip() or (
+        "artifact, blur, smudge, overprocessed, oversmoothed, distorted details"
+    )
+    spot_steps = max(4, min(24, int(steps)))
+    spot_cfg = max(3.0, min(12.0, float(cfg)))
+    spot_denoising_strength = max(0.2, min(0.65, float(denoising_strength)))
+    spot_mask_blur = max(0, min(64, int(mask_blur)))
+    spot_mask_padding = max(0, min(64, int(mask_padding)))
+
+    logger.info(
+        "Spot-heal request received: request_id=%s model_id=%s size=%sx%s steps=%s cfg=%s denoise=%s mask_blur=%s mask_padding=%s",
+        request_id,
+        model_id,
+        width,
+        height,
+        spot_steps,
+        spot_cfg,
+        spot_denoising_strength,
+        spot_mask_blur,
+        spot_mask_padding,
+    )
+
+    #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
+    return await generate_image(
+        prompt=spot_prompt,
+        request_id=request_id,
+        raw_prompt=spot_prompt,
+        use_prompt_transform=False,
+        negative_prompt=spot_negative_prompt,
+        width=width,
+        height=height,
+        steps=spot_steps,
+        cfg=spot_cfg,
+        seed=seed,
+        model_id=model_id,
+        model_family=model_family,
+        sampler=sampler,
+        mode="inpainting",
+        style_preset=None,
+        preview_method=None,
+        denoising_strength=spot_denoising_strength,
+        mask_blur=spot_mask_blur,
+        mask_padding=spot_mask_padding,
+        init_image=init_image,
+        mask_image=mask_image,
+        active_tool="spot_heal",
+    )
+
 @app.post("/upscale")
 async def upscale_image(
     image: UploadFile = File(...),

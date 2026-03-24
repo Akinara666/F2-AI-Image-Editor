@@ -364,6 +364,7 @@ function App() {
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
   const currentGenerationRequestIdRef = React.useRef(null);
+  const spotHealInFlightRef = React.useRef(false);
   const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
   const setGenerationLifecycleStatus = (nextStatus) => {
     generationStatusRef.current = nextStatus;
@@ -565,6 +566,79 @@ function App() {
     }
   };
 
+  const handleSpotHealPoint = async ({ x, y, radius }) => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (spotHealInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.canSpotHeal?.()) {
+      showInfo("Сначала добавь изображение на холст, затем используй Spot Healing.");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    spotHealInFlightRef.current = true;
+    try {
+      await editorRef.current.acceptCandidateAsync?.();
+
+      const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForSpotHeal({
+        x,
+        y,
+        radius
+      });
+
+      if (!initImageBlob || !maskImageBlob) {
+        throw new Error("Не удалось подготовить область для точечной ретуши.");
+      }
+
+      const formData = new FormData();
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('active_tool', 'spot_heal');
+      formData.append('width', String(width));
+      formData.append('height', String(height));
+      formData.append('init_image', initImageBlob, 'spot-heal-init.png');
+      formData.append('mask_image', maskImageBlob, 'spot-heal-mask.png');
+
+      const response = await axios.post(API_ENDPOINTS.SPOT_HEAL, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Точечная ретушь применена.");
+      } else {
+        throw new Error("Сервер не вернул результат точечной ретуши.");
+      }
+    } catch (error) {
+      console.error("Spot heal failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Spot Healing: ${errorMsg}`);
+    } finally {
+      spotHealInFlightRef.current = false;
+    }
+  };
+
   const handleRestore = async (item) => {
     if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) {
       return;
@@ -708,6 +782,7 @@ function App() {
           brushColor={brushColor}
           brushSize={brushSize}
           generationPreview={generationPreview}
+          onSpotHealPoint={handleSpotHealPoint}
         />
       </div>
       <HistoryPanel
