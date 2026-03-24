@@ -713,6 +713,9 @@ function App() {
       formData.append('selection_height', String(payload.selection.height));
       formData.append('active_tool', 'quick_select');
       formData.append('init_image', payload.image, 'quick-select-init.png');
+      if (payload.mask) {
+        formData.append('mask_image', payload.mask, 'quick-select-mask.png');
+      }
 
       const response = await axios.post(API_ENDPOINTS.QUICK_SELECT_REFINE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }

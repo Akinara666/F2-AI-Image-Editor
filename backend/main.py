@@ -1202,6 +1202,7 @@ async def generate_image(
 @app.post("/quick-select/refine")
 async def quick_select_refine(
     init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(None),
     request_id: Optional[str] = Form(default=None),
     prompt: Optional[str] = Form(default=None),
     negative_prompt: Optional[str] = Form(default=None),
@@ -1216,10 +1217,10 @@ async def quick_select_refine(
     denoising_strength: float = Form(default=0.62),
     mask_blur: int = Form(default=12),
     mask_padding: int = Form(default=20),
-    selection_left: int = Form(...),
-    selection_top: int = Form(...),
-    selection_width: int = Form(...),
-    selection_height: int = Form(...),
+    selection_left: Optional[int] = Form(default=None),
+    selection_top: Optional[int] = Form(default=None),
+    selection_width: Optional[int] = Form(default=None),
+    selection_height: Optional[int] = Form(default=None),
     selection_feather: int = Form(default=10),
 ):
     #_____________апдейт_______ Quick-select prompt defaults and safety caps
@@ -1236,31 +1237,37 @@ async def quick_select_refine(
     quick_mask_padding = max(0, min(96, int(mask_padding)))
     quick_selection_feather = max(0, min(64, int(selection_feather)))
 
-    #_____________апдейт_______ Build mask from selection rectangle for inpaint pipeline
-    selection_mask = _build_quick_select_mask(
-        width=width,
-        height=height,
-        selection_left=selection_left,
-        selection_top=selection_top,
-        selection_width=selection_width,
-        selection_height=selection_height,
-        feather=quick_selection_feather,
-    )
-    mask_buffer = io.BytesIO()
-    selection_mask.save(mask_buffer, format="PNG")
-    mask_buffer.seek(0)
-    mask_upload = UploadFile(filename="quick-select-mask.png", file=mask_buffer)
+    #_____________апдейт_______ Build mask from contour upload or rectangle fallback
+    if mask_image is not None:
+        mask_upload = mask_image
+        selection_log = "custom_mask"
+    else:
+        if None in (selection_left, selection_top, selection_width, selection_height):
+            raise _validation_error(
+                "quick-select refine requires either mask_image or selection_left/top/width/height."
+            )
+        selection_mask = _build_quick_select_mask(
+            width=width,
+            height=height,
+            selection_left=selection_left,
+            selection_top=selection_top,
+            selection_width=selection_width,
+            selection_height=selection_height,
+            feather=quick_selection_feather,
+        )
+        mask_buffer = io.BytesIO()
+        selection_mask.save(mask_buffer, format="PNG")
+        mask_buffer.seek(0)
+        mask_upload = UploadFile(filename="quick-select-mask.png", file=mask_buffer)
+        selection_log = f"{selection_left},{selection_top},{selection_width},{selection_height}"
 
     logger.info(
-        "Quick-select refine request: request_id=%s model_id=%s size=%sx%s selection=(%s,%s,%s,%s) steps=%s cfg=%s denoise=%s",
+        "Quick-select refine request: request_id=%s model_id=%s size=%sx%s selection=%s steps=%s cfg=%s denoise=%s",
         request_id,
         model_id,
         width,
         height,
-        selection_left,
-        selection_top,
-        selection_width,
-        selection_height,
+        selection_log,
         quick_steps,
         quick_cfg,
         quick_denoising_strength,

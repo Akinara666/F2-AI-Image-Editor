@@ -66,8 +66,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const [activeImageResolution, setActiveImageResolution] = useState(null);
     const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
     const previewFrameBoundsRef = useRef(null);
-    const quickSelectionRectRef = useRef(null);
-    const quickSelectionBoundsRef = useRef(null);
+    const quickSelectionOverlayRef = useRef(null);
+    const quickSelectionRef = useRef(null);
+    const quickSelectionDraftPointsRef = useRef([]);
     const quickClipboardRef = useRef(null);
 
     const brushModeRef = useRef(brushMode);
@@ -472,72 +473,119 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         };
     };
 
-    const ensureQuickSelectionRect = () => {
+    const canvasToBlob = (canvasElement, type = 'image/png') => (
+        new Promise((resolve, reject) => {
+            canvasElement.toBlob((blob) => {
+                if (!blob) {
+                    reject(new Error('Failed to build selection blob.'));
+                    return;
+                }
+                resolve(blob);
+            }, type);
+        })
+    );
+
+    const calculateQuickSelectionBounds = (points) => {
+        if (!points || points.length < 3) {
+            return null;
+        }
+        const left = Math.min(...points.map((point) => point.x));
+        const top = Math.min(...points.map((point) => point.y));
+        const right = Math.max(...points.map((point) => point.x));
+        const bottom = Math.max(...points.map((point) => point.y));
+        return {
+            left: Math.round(left),
+            top: Math.round(top),
+            width: Math.max(1, Math.round(right - left)),
+            height: Math.max(1, Math.round(bottom - top))
+        };
+    };
+
+    const ensureQuickSelectionOverlay = () => {
         if (!fabricCanvas || !genFrame) {
             return null;
         }
-        if (quickSelectionRectRef.current) {
-            return quickSelectionRectRef.current;
+        if (quickSelectionOverlayRef.current) {
+            return quickSelectionOverlayRef.current;
         }
 
-        const rect = new fabric.Rect({
-            left: genFrame.left ?? 0,
-            top: genFrame.top ?? 0,
-            width: 1,
-            height: 1,
-            fill: 'rgba(0, 212, 255, 0.08)',
-            stroke: '#00d4ff',
-            strokeWidth: 1.5,
-            strokeDashArray: [6, 4],
-            selectable: false,
-            evented: false,
-            hasControls: false,
-            hasBorders: false,
-            excludeFromExport: true,
-            editorRole: 'quick-select-overlay'
-        });
+        const polygon = new fabric.Polygon(
+            [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }],
+            {
+                fill: 'rgba(0, 212, 255, 0.08)',
+                stroke: '#00d4ff',
+                strokeWidth: 1.5,
+                strokeDashArray: [6, 4],
+                selectable: false,
+                evented: false,
+                hasControls: false,
+                hasBorders: false,
+                objectCaching: false,
+                excludeFromExport: true,
+                visible: false,
+                editorRole: 'quick-select-overlay'
+            }
+        );
 
-        fabricCanvas.add(rect);
-        quickSelectionRectRef.current = rect;
-        rect.bringToFront();
-        return rect;
+        fabricCanvas.add(polygon);
+        quickSelectionOverlayRef.current = polygon;
+        polygon.bringToFront();
+        return polygon;
     };
 
-    const updateQuickSelectionOverlay = (bounds) => {
-        const rect = ensureQuickSelectionRect();
-        if (!rect) {
+    const updateQuickSelectionOverlay = (points, isDraft = false) => {
+        const overlay = ensureQuickSelectionOverlay();
+        if (!overlay || !Array.isArray(points) || points.length < 2) {
             return;
         }
 
-        rect.set({
-            left: bounds.left,
-            top: bounds.top,
-            width: bounds.width,
-            height: bounds.height,
+        const overlayPoints = points.map((point) => ({ x: point.x, y: point.y }));
+        if (overlayPoints.length < 3) {
+            overlayPoints.push({ ...overlayPoints[overlayPoints.length - 1] });
+        }
+        overlay.set({
+            points: overlayPoints,
+            fill: isDraft ? 'rgba(0, 212, 255, 0.03)' : 'rgba(0, 212, 255, 0.08)',
             visible: brushModeRef.current === QUICK_SELECT_MODE
         });
-        rect.setCoords();
-        rect.bringToFront();
+        overlay.setCoords();
+        overlay.bringToFront();
         fabricCanvas?.requestRenderAll();
     };
 
-    const setQuickSelectionBounds = (bounds) => {
-        quickSelectionBoundsRef.current = bounds;
+    const clearQuickSelectionDraft = () => {
+        quickSelectionDraftPointsRef.current = [];
+    };
+
+    const setQuickSelection = (points) => {
+        const normalizedPoints = Array.isArray(points)
+            ? points.map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) }))
+            : [];
+        const bounds = calculateQuickSelectionBounds(normalizedPoints);
+
         if (!bounds) {
-            if (quickSelectionRectRef.current) {
-                quickSelectionRectRef.current.set({ visible: false });
+            quickSelectionRef.current = null;
+            const overlay = quickSelectionOverlayRef.current;
+            if (overlay) {
+                overlay.set({ visible: false });
                 fabricCanvas?.requestRenderAll();
             }
             return;
         }
-        updateQuickSelectionOverlay(bounds);
+
+        quickSelectionRef.current = {
+            points: normalizedPoints,
+            bounds
+        };
+        updateQuickSelectionOverlay(normalizedPoints, false);
     };
 
-    const renderQuickSelectionCanvas = (bounds) => {
-        if (!fabricCanvas || !genFrame) {
+    const renderQuickSelectionCanvas = (selection) => {
+        if (!fabricCanvas || !genFrame || !selection?.bounds || !selection?.points?.length) {
             return null;
         }
 
+        const bounds = selection.bounds;
         const exportCanvas = fabric.util.createCanvasElement();
         exportCanvas.width = bounds.width;
         exportCanvas.height = bounds.height;
@@ -546,11 +594,26 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             return null;
         }
 
+        context.save();
+        context.beginPath();
+        selection.points.forEach((point, index) => {
+            const localX = point.x - bounds.left;
+            const localY = point.y - bounds.top;
+            if (index === 0) {
+                context.moveTo(localX, localY);
+            } else {
+                context.lineTo(localX, localY);
+            }
+        });
+        context.closePath();
+        context.clip();
+
         const rasterObjects = fabricCanvas.getObjects().filter((object) => (
             object.visible !== false
             && (isBaseRasterObject(object, genFrame) || isCandidateObject(object, genFrame))
         ));
         if (rasterObjects.length === 0) {
+            context.restore();
             return null;
         }
 
@@ -569,24 +632,25 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             }
         });
 
+        context.restore();
         return hasVisiblePixels(exportCanvas) ? exportCanvas : null;
     };
 
     const copyQuickSelection = async () => {
-        const bounds = quickSelectionBoundsRef.current;
-        if (!bounds) {
+        const selection = quickSelectionRef.current;
+        if (!selection) {
             return false;
         }
 
-        const selectionCanvas = renderQuickSelectionCanvas(bounds);
+        const selectionCanvas = renderQuickSelectionCanvas(selection);
         if (!selectionCanvas) {
             return false;
         }
 
         quickClipboardRef.current = {
             dataUrl: selectionCanvas.toDataURL('image/png'),
-            width: bounds.width,
-            height: bounds.height
+            width: selection.bounds.width,
+            height: selection.bounds.height
         };
         return true;
     };
@@ -597,7 +661,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         }
 
         const clipboard = quickClipboardRef.current;
-        const sourceBounds = quickSelectionBoundsRef.current;
+        const sourceSelection = quickSelectionRef.current;
         const frameBounds = getFrameBounds();
         if (!frameBounds) {
             return false;
@@ -613,8 +677,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
                 const width = Math.max(1, clipboard.width || image.width || 1);
                 const height = Math.max(1, clipboard.height || image.height || 1);
                 const offset = 28;
-                const leftBase = sourceBounds?.left ?? frameBounds.left;
-                const topBase = sourceBounds?.top ?? frameBounds.top;
+                const leftBase = sourceSelection?.bounds?.left ?? frameBounds.left;
+                const topBase = sourceSelection?.bounds?.top ?? frameBounds.top;
                 const left = Math.max(frameBounds.left, Math.min(frameBounds.right - width, leftBase + offset));
                 const top = Math.max(frameBounds.top, Math.min(frameBounds.bottom - height, topBase + offset));
 
@@ -656,7 +720,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     };
 
     const exportForQuickSelectRefine = async () => {
-        if (!fabricCanvas || !genFrame || !quickSelectionBoundsRef.current) {
+        if (!fabricCanvas || !genFrame || !quickSelectionRef.current) {
             return null;
         }
 
@@ -664,15 +728,40 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         const frameTop = genFrame.top ?? 0;
         const frameWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
         const frameHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
-        const rawSelection = quickSelectionBoundsRef.current;
+        const rawSelection = quickSelectionRef.current.bounds;
         const selectionLeft = Math.max(0, Math.min(frameWidth - 1, Math.round(rawSelection.left - frameLeft)));
         const selectionTop = Math.max(0, Math.min(frameHeight - 1, Math.round(rawSelection.top - frameTop)));
         const selectionWidth = Math.max(1, Math.min(frameWidth - selectionLeft, Math.round(rawSelection.width)));
         const selectionHeight = Math.max(1, Math.min(frameHeight - selectionTop, Math.round(rawSelection.height)));
         const { image, width, height } = await exportCanvasState(fabricCanvas, genFrame);
 
+        const maskCanvas = fabric.util.createCanvasElement();
+        maskCanvas.width = frameWidth;
+        maskCanvas.height = frameHeight;
+        const maskContext = maskCanvas.getContext('2d');
+        if (!maskContext) {
+            throw new Error('Failed to build quick-select mask.');
+        }
+        maskContext.fillStyle = 'black';
+        maskContext.fillRect(0, 0, frameWidth, frameHeight);
+        maskContext.fillStyle = 'white';
+        maskContext.beginPath();
+        quickSelectionRef.current.points.forEach((point, index) => {
+            const localX = point.x - frameLeft;
+            const localY = point.y - frameTop;
+            if (index === 0) {
+                maskContext.moveTo(localX, localY);
+            } else {
+                maskContext.lineTo(localX, localY);
+            }
+        });
+        maskContext.closePath();
+        maskContext.fill();
+        const mask = await canvasToBlob(maskCanvas, 'image/png');
+
         return {
             image,
+            mask,
             width,
             height,
             selection: {
@@ -812,7 +901,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         pasteQuickSelection,
 
-        hasQuickSelection: () => Boolean(quickSelectionBoundsRef.current),
+        hasQuickSelection: () => Boolean(quickSelectionRef.current),
 
         hasQuickClipboard: () => Boolean(quickClipboardRef.current),
 
@@ -909,20 +998,6 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         }
 
         let isSelecting = false;
-        let startPoint = null;
-
-        const normalizeBounds = (firstPoint, secondPoint) => {
-            const left = Math.min(firstPoint.x, secondPoint.x);
-            const top = Math.min(firstPoint.y, secondPoint.y);
-            const width = Math.max(1, Math.abs(secondPoint.x - firstPoint.x));
-            const height = Math.max(1, Math.abs(secondPoint.y - firstPoint.y));
-            return {
-                left: Math.round(left),
-                top: Math.round(top),
-                width: Math.round(width),
-                height: Math.round(height)
-            };
-        };
 
         const handleMouseDown = (event) => {
             if (brushModeRef.current !== QUICK_SELECT_MODE || event.e.button !== 0) {
@@ -935,40 +1010,42 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
             event.e.preventDefault();
             event.e.stopPropagation();
-            startPoint = pointer;
             isSelecting = true;
-            updateQuickSelectionOverlay(normalizeBounds(pointer, pointer));
+            clearQuickSelectionDraft();
+            quickSelectionDraftPointsRef.current.push(pointer);
+            updateQuickSelectionOverlay(quickSelectionDraftPointsRef.current, true);
         };
 
         const handleMouseMove = (event) => {
-            if (!isSelecting || brushModeRef.current !== QUICK_SELECT_MODE || !startPoint) {
+            if (!isSelecting || brushModeRef.current !== QUICK_SELECT_MODE) {
                 return;
             }
             const pointer = clampPointToFrame(fabricCanvas.getPointer(event.e));
             if (!pointer) {
                 return;
             }
-            updateQuickSelectionOverlay(normalizeBounds(startPoint, pointer));
+            quickSelectionDraftPointsRef.current.push(pointer);
+            updateQuickSelectionOverlay(quickSelectionDraftPointsRef.current, true);
         };
 
-        const handleMouseUp = (event) => {
-            if (!isSelecting || !startPoint) {
+        const handleMouseUp = () => {
+            if (!isSelecting) {
                 return;
             }
             isSelecting = false;
-            const pointer = clampPointToFrame(fabricCanvas.getPointer(event.e));
-            if (!pointer) {
-                startPoint = null;
+            const points = quickSelectionDraftPointsRef.current;
+            clearQuickSelectionDraft();
+            if (!Array.isArray(points) || points.length < 6) {
+                setQuickSelection(null);
                 return;
             }
 
-            const bounds = normalizeBounds(startPoint, pointer);
-            startPoint = null;
+            const bounds = calculateQuickSelectionBounds(points);
             if (bounds.width < 6 || bounds.height < 6) {
-                setQuickSelectionBounds(null);
+                setQuickSelection(null);
                 return;
             }
-            setQuickSelectionBounds(bounds);
+            setQuickSelection(points);
         };
 
         fabricCanvas.on('mouse:down', handleMouseDown);
@@ -983,15 +1060,15 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     }, [fabricCanvas, genFrame]);
 
     useEffect(() => {
-        const rect = quickSelectionRectRef.current;
-        if (!rect) {
+        const overlay = quickSelectionOverlayRef.current;
+        if (!overlay) {
             return;
         }
-        rect.set({
-            visible: brushMode === QUICK_SELECT_MODE && Boolean(quickSelectionBoundsRef.current)
+        overlay.set({
+            visible: brushMode === QUICK_SELECT_MODE && Boolean(quickSelectionRef.current)
         });
-        if (rect.visible) {
-            rect.bringToFront();
+        if (overlay.visible) {
+            overlay.bringToFront();
         }
         fabricCanvas?.requestRenderAll();
     }, [brushMode, fabricCanvas]);

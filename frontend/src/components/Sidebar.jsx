@@ -487,7 +487,7 @@ const Sidebar = ({
                                 {brushMode === 'quick_select' && (
                                     <>
                                         <small className="sidebar__hint">
-                                            Quick Select (W): протяни рамку по объекту, затем скопируй и вставь рядом.
+                                            Quick Select (W): зажми ЛКМ и обведи контур объекта, затем скопируй и вставь рядом.
                                         </small>
                                         <div className="sidebar__actions">
                                             <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionCopy}>

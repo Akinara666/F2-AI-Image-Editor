@@ -38,6 +38,9 @@ const getRole = (object, genFrame) => {
     if (object.editorRole === CANVAS_OBJECT_ROLES.FRAME_HIT_AREA) {
         return CANVAS_OBJECT_ROLES.FRAME_HIT_AREA;
     }
+    if (object.editorRole === 'quick-select-overlay') {
+        return CANVAS_OBJECT_ROLES.FRAME;
+    }
     if (object.isCandidate || object.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) {
         return CANVAS_OBJECT_ROLES.CANDIDATE;
     }
