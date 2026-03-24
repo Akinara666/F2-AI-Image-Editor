@@ -365,6 +365,7 @@ function App() {
   const abortControllerRef = React.useRef(null);
   const currentGenerationRequestIdRef = React.useRef(null);
   const spotHealInFlightRef = React.useRef(false);
+  const quickSelectRefineInFlightRef = React.useRef(false);
   const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
   const setGenerationLifecycleStatus = (nextStatus) => {
     generationStatusRef.current = nextStatus;
@@ -663,6 +664,76 @@ function App() {
     showSuccess("Копия вставлена рядом как новый слой.");
   };
 
+  const handleQuickSelectionRefine = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (quickSelectRefineInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.hasQuickSelection?.()) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    quickSelectRefineInFlightRef.current = true;
+    try {
+      await editorRef.current.acceptCandidateAsync?.();
+      const payload = await editorRef.current.exportForQuickSelectRefine?.();
+      if (!payload?.image || !payload?.selection) {
+        throw new Error("Не удалось подготовить выделение для перегенерации.");
+      }
+
+      const formData = new FormData();
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('width', String(payload.width));
+      formData.append('height', String(payload.height));
+      formData.append('selection_left', String(payload.selection.left));
+      formData.append('selection_top', String(payload.selection.top));
+      formData.append('selection_width', String(payload.selection.width));
+      formData.append('selection_height', String(payload.selection.height));
+      formData.append('active_tool', 'quick_select');
+      formData.append('init_image', payload.image, 'quick-select-init.png');
+
+      const response = await axios.post(API_ENDPOINTS.QUICK_SELECT_REFINE, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Выделенная область перегенерирована.");
+      } else {
+        throw new Error("Сервер не вернул результат quick-select refine.");
+      }
+    } catch (error) {
+      console.error("Quick-select refine failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Quick Select refine: ${errorMsg}`);
+    } finally {
+      quickSelectRefineInFlightRef.current = false;
+    }
+  };
+
   const handleRestore = async (item) => {
     if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) {
       return;
@@ -785,6 +856,7 @@ function App() {
           setBrushSize={setBrushSize}
           onQuickSelectionCopy={handleQuickSelectionCopy}
           onQuickSelectionPaste={handleQuickSelectionPaste}
+          onQuickSelectionRefine={handleQuickSelectionRefine}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}

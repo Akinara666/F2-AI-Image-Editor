@@ -655,6 +655,35 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         });
     };
 
+    const exportForQuickSelectRefine = async () => {
+        if (!fabricCanvas || !genFrame || !quickSelectionBoundsRef.current) {
+            return null;
+        }
+
+        const frameLeft = genFrame.left ?? 0;
+        const frameTop = genFrame.top ?? 0;
+        const frameWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+        const frameHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+        const rawSelection = quickSelectionBoundsRef.current;
+        const selectionLeft = Math.max(0, Math.min(frameWidth - 1, Math.round(rawSelection.left - frameLeft)));
+        const selectionTop = Math.max(0, Math.min(frameHeight - 1, Math.round(rawSelection.top - frameTop)));
+        const selectionWidth = Math.max(1, Math.min(frameWidth - selectionLeft, Math.round(rawSelection.width)));
+        const selectionHeight = Math.max(1, Math.min(frameHeight - selectionTop, Math.round(rawSelection.height)));
+        const { image, width, height } = await exportCanvasState(fabricCanvas, genFrame);
+
+        return {
+            image,
+            width,
+            height,
+            selection: {
+                left: selectionLeft,
+                top: selectionTop,
+                width: selectionWidth,
+                height: selectionHeight
+            }
+        };
+    };
+
     const canSpotHeal = () => {
         if (!fabricCanvas || !genFrame) {
             return false;
@@ -786,6 +815,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         hasQuickSelection: () => Boolean(quickSelectionBoundsRef.current),
 
         hasQuickClipboard: () => Boolean(quickClipboardRef.current),
+
+        exportForQuickSelectRefine,
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 

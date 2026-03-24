@@ -30,7 +30,7 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
-    onQuickSelectionCopy, onQuickSelectionPaste,
+    onQuickSelectionCopy, onQuickSelectionPaste, onQuickSelectionRefine,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
@@ -495,6 +495,11 @@ const Sidebar = ({
                                             </button>
                                             <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionPaste}>
                                                 Вставить
+                                            </button>
+                                        </div>
+                                        <div className="sidebar__actions">
+                                            <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionRefine}>
+                                                Перегенерировать выделение
                                             </button>
                                         </div>
                                     </>

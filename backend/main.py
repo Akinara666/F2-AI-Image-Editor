@@ -16,7 +16,7 @@ import threading
 from time import monotonic
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 import torch
 from pydantic import BaseModel
 from compel import CompelForSD, CompelForSDXL
@@ -167,6 +167,33 @@ def _normalize_active_tool(active_tool: Optional[str]) -> str:
     if value in ALLOWED_EDITOR_TOOLS:
         return value
     return "none"
+
+
+#_____________апдейт_______ Build rectangular selection mask for quick-select refine
+def _build_quick_select_mask(
+    *,
+    width: int,
+    height: int,
+    selection_left: int,
+    selection_top: int,
+    selection_width: int,
+    selection_height: int,
+    feather: int = 0,
+) -> Image.Image:
+    left = max(0, min(width - 1, int(selection_left)))
+    top = max(0, min(height - 1, int(selection_top)))
+    right = max(left + 1, min(width, left + max(1, int(selection_width))))
+    bottom = max(top + 1, min(height, top + max(1, int(selection_height))))
+
+    if right <= left or bottom <= top:
+        raise _validation_error("Selection bounds are invalid for quick-select refine.")
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle([left, top, right, bottom], fill=255)
+    if feather > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
+    return mask
 
 
 def _resolve_clip_skip_for_diffusers() -> tuple[int, Optional[int]]:
@@ -810,6 +837,8 @@ async def generate_image(
         configured_clip_skip, diffusers_clip_skip = _resolve_clip_skip_for_diffusers()
         #_____________апдейт_______ Spot-heal profile flag (tool-aware generation behavior)
         spot_heal_profile_applied = False
+        #_____________апдейт_______ Quick-select profile flag (selection blend refinement)
+        quick_select_profile_applied = False
         nsfw_negative_prompt_applied = False
         if nsfw_filter_active and nsfw_negative_prompt_extra:
             merged_negative_prompt = _merge_negative_prompt_terms(
@@ -902,6 +931,15 @@ async def generate_image(
             )
             denoising_strength = min(denoising_strength, 0.55)
             spot_heal_profile_applied = True
+
+        #_____________апдейт_______ Quick-select refine profile for pasted-object seam cleanup
+        if active_tool == "quick_select" and actual_mode == "inpainting":
+            final_negative_prompt = _merge_negative_prompt_terms(
+                final_negative_prompt,
+                "cutout edge, hard seam, duplicate artifact, mismatched texture, ghosting",
+            )
+            denoising_strength = max(denoising_strength, 0.62)
+            quick_select_profile_applied = True
 
         # 2. Load Model
         pipeline_type = actual_mode
@@ -1130,6 +1168,8 @@ async def generate_image(
                 "active_tool": active_tool,
                 #_____________апдейт_______ Spot-heal profile telemetry
                 "spot_heal_profile_applied": spot_heal_profile_applied,
+                #_____________апдейт_______ Quick-select profile telemetry
+                "quick_select_profile_applied": quick_select_profile_applied,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
@@ -1156,6 +1196,101 @@ async def generate_image(
         logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+#_____________апдейт_______ Fast quick-select refine endpoint (selection -> local inpaint)
+@app.post("/quick-select/refine")
+async def quick_select_refine(
+    init_image: UploadFile = File(...),
+    request_id: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
+    negative_prompt: Optional[str] = Form(default=None),
+    width: int = Form(default=512),
+    height: int = Form(default=512),
+    steps: int = Form(default=16),
+    cfg: float = Form(default=7.0),
+    seed: int = Form(default=-1),
+    model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    model_family: Optional[str] = Form(default=None),
+    sampler: str = Form(default="Euler a"),
+    denoising_strength: float = Form(default=0.62),
+    mask_blur: int = Form(default=12),
+    mask_padding: int = Form(default=20),
+    selection_left: int = Form(...),
+    selection_top: int = Form(...),
+    selection_width: int = Form(...),
+    selection_height: int = Form(...),
+    selection_feather: int = Form(default=10),
+):
+    #_____________апдейт_______ Quick-select prompt defaults and safety caps
+    quick_prompt = (prompt or "").strip() or (
+        "blend duplicated object naturally, preserve scene lighting, preserve perspective, seamless composition"
+    )
+    quick_negative_prompt = (negative_prompt or "").strip() or (
+        "hard seam, cutout edge, duplicate artifact, ghosting, blurry edge, mismatch texture"
+    )
+    quick_steps = max(6, min(28, int(steps)))
+    quick_cfg = max(4.0, min(14.0, float(cfg)))
+    quick_denoising_strength = max(0.45, min(0.8, float(denoising_strength)))
+    quick_mask_blur = max(0, min(96, int(mask_blur)))
+    quick_mask_padding = max(0, min(96, int(mask_padding)))
+    quick_selection_feather = max(0, min(64, int(selection_feather)))
+
+    #_____________апдейт_______ Build mask from selection rectangle for inpaint pipeline
+    selection_mask = _build_quick_select_mask(
+        width=width,
+        height=height,
+        selection_left=selection_left,
+        selection_top=selection_top,
+        selection_width=selection_width,
+        selection_height=selection_height,
+        feather=quick_selection_feather,
+    )
+    mask_buffer = io.BytesIO()
+    selection_mask.save(mask_buffer, format="PNG")
+    mask_buffer.seek(0)
+    mask_upload = UploadFile(filename="quick-select-mask.png", file=mask_buffer)
+
+    logger.info(
+        "Quick-select refine request: request_id=%s model_id=%s size=%sx%s selection=(%s,%s,%s,%s) steps=%s cfg=%s denoise=%s",
+        request_id,
+        model_id,
+        width,
+        height,
+        selection_left,
+        selection_top,
+        selection_width,
+        selection_height,
+        quick_steps,
+        quick_cfg,
+        quick_denoising_strength,
+    )
+
+    #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
+    return await generate_image(
+        prompt=quick_prompt,
+        request_id=request_id,
+        raw_prompt=quick_prompt,
+        use_prompt_transform=False,
+        negative_prompt=quick_negative_prompt,
+        width=width,
+        height=height,
+        steps=quick_steps,
+        cfg=quick_cfg,
+        seed=seed,
+        model_id=model_id,
+        model_family=model_family,
+        sampler=sampler,
+        mode="inpainting",
+        style_preset=None,
+        preview_method=None,
+        denoising_strength=quick_denoising_strength,
+        mask_blur=quick_mask_blur,
+        mask_padding=quick_mask_padding,
+        init_image=init_image,
+        mask_image=mask_upload,
+        active_tool="quick_select",
+    )
 
 
 #_____________апдейт_______ Fast spot-heal endpoint (click -> instant local inpaint)
