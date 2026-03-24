@@ -639,6 +639,30 @@ function App() {
     }
   };
 
+  const handleQuickSelectionCopy = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const copied = await editorRef.current.copyQuickSelection?.();
+    if (!copied) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+    showSuccess("Выделенная область скопирована.");
+  };
+
+  const handleQuickSelectionPaste = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const pasted = await editorRef.current.pasteQuickSelection?.();
+    if (!pasted) {
+      showInfo("Буфер пуст. Сначала скопируй выделение.");
+      return;
+    }
+    showSuccess("Копия вставлена рядом как новый слой.");
+  };
+
   const handleRestore = async (item) => {
     if (!editorRef.current || generationStatusRef.current !== GENERATION_STATUS.IDLE) {
       return;
@@ -759,6 +783,8 @@ function App() {
           setBrushColor={setBrushColor}
           brushSize={brushSize}
           setBrushSize={setBrushSize}
+          onQuickSelectionCopy={handleQuickSelectionCopy}
+          onQuickSelectionPaste={handleQuickSelectionPaste}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}

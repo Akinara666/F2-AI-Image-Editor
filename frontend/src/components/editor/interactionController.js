@@ -2,6 +2,7 @@ import { fabric } from 'fabric';
 
 const CLONE_STAMP_MODE = 'clone_stamp';
 const SPOT_HEAL_MODE = 'spot_heal';
+const QUICK_SELECT_MODE = 'quick_select';
 
 const getObjectWorldBounds = (object) => ({
     left: object.left ?? 0,
@@ -102,12 +103,12 @@ export const applyCanvasInteractionMode = ({
 }) => {
     if (!canvas || !frameObject) return;
 
-    const isDrawing = !['none', 'hand', CLONE_STAMP_MODE, SPOT_HEAL_MODE].includes(brushMode);
+    const isDrawing = !['none', 'hand', CLONE_STAMP_MODE, SPOT_HEAL_MODE, QUICK_SELECT_MODE].includes(brushMode);
     canvas.isDrawingMode = isDrawing;
     canvas.selection = brushMode === 'none';
     canvas.defaultCursor = brushMode === 'hand'
         ? 'grab'
-        : ((brushMode === CLONE_STAMP_MODE || brushMode === SPOT_HEAL_MODE) ? 'crosshair' : 'default');
+        : ((brushMode === CLONE_STAMP_MODE || brushMode === SPOT_HEAL_MODE || brushMode === QUICK_SELECT_MODE) ? 'crosshair' : 'default');
 
     if (brushMode !== 'none' && canvas.getActiveObject()) {
         canvas.discardActiveObject();

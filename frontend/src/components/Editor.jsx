@@ -41,6 +41,23 @@ import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
 
+const QUICK_SELECT_MODE = 'quick_select';
+
+const hasVisiblePixels = (canvasElement) => {
+    const context = canvasElement.getContext('2d', { willReadFrequently: true });
+    if (!context) {
+        return false;
+    }
+
+    const { data } = context.getImageData(0, 0, canvasElement.width, canvasElement.height);
+    for (let index = 3; index < data.length; index += 4) {
+        if (data[index] !== 0) {
+            return true;
+        }
+    }
+    return false;
+};
+
 const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
@@ -49,6 +66,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const [activeImageResolution, setActiveImageResolution] = useState(null);
     const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
     const previewFrameBoundsRef = useRef(null);
+    const quickSelectionRectRef = useRef(null);
+    const quickSelectionBoundsRef = useRef(null);
+    const quickClipboardRef = useRef(null);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -425,6 +445,216 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         getUndoSnapshotParams
     });
 
+    const getFrameBounds = () => {
+        if (!genFrame) {
+            return null;
+        }
+        const left = genFrame.left ?? 0;
+        const top = genFrame.top ?? 0;
+        const width = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+        const height = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+        return {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height
+        };
+    };
+
+    const clampPointToFrame = (point) => {
+        const frameBounds = getFrameBounds();
+        if (!frameBounds || !point) {
+            return point;
+        }
+        return {
+            x: Math.max(frameBounds.left, Math.min(frameBounds.right, point.x)),
+            y: Math.max(frameBounds.top, Math.min(frameBounds.bottom, point.y))
+        };
+    };
+
+    const ensureQuickSelectionRect = () => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        if (quickSelectionRectRef.current) {
+            return quickSelectionRectRef.current;
+        }
+
+        const rect = new fabric.Rect({
+            left: genFrame.left ?? 0,
+            top: genFrame.top ?? 0,
+            width: 1,
+            height: 1,
+            fill: 'rgba(0, 212, 255, 0.08)',
+            stroke: '#00d4ff',
+            strokeWidth: 1.5,
+            strokeDashArray: [6, 4],
+            selectable: false,
+            evented: false,
+            hasControls: false,
+            hasBorders: false,
+            excludeFromExport: true,
+            editorRole: 'quick-select-overlay'
+        });
+
+        fabricCanvas.add(rect);
+        quickSelectionRectRef.current = rect;
+        rect.bringToFront();
+        return rect;
+    };
+
+    const updateQuickSelectionOverlay = (bounds) => {
+        const rect = ensureQuickSelectionRect();
+        if (!rect) {
+            return;
+        }
+
+        rect.set({
+            left: bounds.left,
+            top: bounds.top,
+            width: bounds.width,
+            height: bounds.height,
+            visible: brushModeRef.current === QUICK_SELECT_MODE
+        });
+        rect.setCoords();
+        rect.bringToFront();
+        fabricCanvas?.requestRenderAll();
+    };
+
+    const setQuickSelectionBounds = (bounds) => {
+        quickSelectionBoundsRef.current = bounds;
+        if (!bounds) {
+            if (quickSelectionRectRef.current) {
+                quickSelectionRectRef.current.set({ visible: false });
+                fabricCanvas?.requestRenderAll();
+            }
+            return;
+        }
+        updateQuickSelectionOverlay(bounds);
+    };
+
+    const renderQuickSelectionCanvas = (bounds) => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+
+        const exportCanvas = fabric.util.createCanvasElement();
+        exportCanvas.width = bounds.width;
+        exportCanvas.height = bounds.height;
+        const context = exportCanvas.getContext('2d');
+        if (!context) {
+            return null;
+        }
+
+        const rasterObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && (isBaseRasterObject(object, genFrame) || isCandidateObject(object, genFrame))
+        ));
+        if (rasterObjects.length === 0) {
+            return null;
+        }
+
+        rasterObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-bounds.left, -bounds.top);
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        return hasVisiblePixels(exportCanvas) ? exportCanvas : null;
+    };
+
+    const copyQuickSelection = async () => {
+        const bounds = quickSelectionBoundsRef.current;
+        if (!bounds) {
+            return false;
+        }
+
+        const selectionCanvas = renderQuickSelectionCanvas(bounds);
+        if (!selectionCanvas) {
+            return false;
+        }
+
+        quickClipboardRef.current = {
+            dataUrl: selectionCanvas.toDataURL('image/png'),
+            width: bounds.width,
+            height: bounds.height
+        };
+        return true;
+    };
+
+    const pasteQuickSelection = async () => {
+        if (!fabricCanvas || !genFrame || !quickClipboardRef.current) {
+            return false;
+        }
+
+        const clipboard = quickClipboardRef.current;
+        const sourceBounds = quickSelectionBoundsRef.current;
+        const frameBounds = getFrameBounds();
+        if (!frameBounds) {
+            return false;
+        }
+
+        return await new Promise((resolve, reject) => {
+            fabric.Image.fromURL(clipboard.dataUrl, (image) => {
+                if (!image) {
+                    reject(new Error('Failed to decode copied selection.'));
+                    return;
+                }
+
+                const width = Math.max(1, clipboard.width || image.width || 1);
+                const height = Math.max(1, clipboard.height || image.height || 1);
+                const offset = 28;
+                const leftBase = sourceBounds?.left ?? frameBounds.left;
+                const topBase = sourceBounds?.top ?? frameBounds.top;
+                const left = Math.max(frameBounds.left, Math.min(frameBounds.right - width, leftBase + offset));
+                const top = Math.max(frameBounds.top, Math.min(frameBounds.bottom - height, topBase + offset));
+
+                image.set({
+                    left,
+                    top,
+                    originX: 'left',
+                    originY: 'top',
+                    scaleX: width / Math.max(1, image.width || width),
+                    scaleY: height / Math.max(1, image.height || height),
+                    objectCaching: false,
+                    noScaleCache: false,
+                    selectable: true,
+                    evented: true,
+                    hasControls: true,
+                    lockRotation: true,
+                    isCandidate: true,
+                    editorRole: CANVAS_OBJECT_ROLES.CANDIDATE,
+                    candidateSourceUrl: null,
+                    stroke: CANVAS_DEFAULTS.CANDIDATE_BORDER_COLOR,
+                    strokeWidth: 4,
+                    hoverCursor: 'move'
+                });
+
+                if (candidateRef.current) {
+                    fabricCanvas.remove(candidateRef.current);
+                    setCandidateState(null, null);
+                }
+
+                image.setCoords();
+                fabricCanvas.add(image);
+                fabricCanvas.setActiveObject(image);
+                setCandidateState(image, null);
+                syncCanvasInteractionMode();
+                commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+                resolve(true);
+            }, { crossOrigin: 'anonymous' });
+        });
+    };
+
     const canSpotHeal = () => {
         if (!fabricCanvas || !genFrame) {
             return false;
@@ -549,6 +779,14 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         canSpotHeal,
 
+        copyQuickSelection,
+
+        pasteQuickSelection,
+
+        hasQuickSelection: () => Boolean(quickSelectionBoundsRef.current),
+
+        hasQuickClipboard: () => Boolean(quickClipboardRef.current),
+
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
         restoreHistoryDocument: async (url) => restoreHistoryDocument({
@@ -586,11 +824,15 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
     const performUndoRef = useRef(performUndo);
     const setBrushModeRef = useRef(setBrushMode);
+    const copyQuickSelectionRef = useRef(copyQuickSelection);
+    const pasteQuickSelectionRef = useRef(pasteQuickSelection);
     const performDeleteActiveObjectRef = useRef(performDeleteActiveObject);
     const syncCanvasInteractionModeRef = useRef(syncCanvasInteractionMode);
     useEffect(() => {
         performUndoRef.current = performUndo;
         setBrushModeRef.current = setBrushMode;
+        copyQuickSelectionRef.current = copyQuickSelection;
+        pasteQuickSelectionRef.current = pasteQuickSelection;
         performDeleteActiveObjectRef.current = performDeleteActiveObject;
         syncCanvasInteractionModeRef.current = syncCanvasInteractionMode;
     });
@@ -606,6 +848,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             fabricCanvas,
             brushModeRef,
             setBrushModeRef,
+            copyQuickSelectionRef,
+            pasteQuickSelectionRef,
             performUndoRef,
             performDeleteActiveObjectRef,
             syncCanvasInteractionModeRef
@@ -627,6 +871,99 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             getUndoSnapshotParams
         });
     }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+
+        let isSelecting = false;
+        let startPoint = null;
+
+        const normalizeBounds = (firstPoint, secondPoint) => {
+            const left = Math.min(firstPoint.x, secondPoint.x);
+            const top = Math.min(firstPoint.y, secondPoint.y);
+            const width = Math.max(1, Math.abs(secondPoint.x - firstPoint.x));
+            const height = Math.max(1, Math.abs(secondPoint.y - firstPoint.y));
+            return {
+                left: Math.round(left),
+                top: Math.round(top),
+                width: Math.round(width),
+                height: Math.round(height)
+            };
+        };
+
+        const handleMouseDown = (event) => {
+            if (brushModeRef.current !== QUICK_SELECT_MODE || event.e.button !== 0) {
+                return;
+            }
+            const pointer = clampPointToFrame(fabricCanvas.getPointer(event.e));
+            if (!pointer) {
+                return;
+            }
+
+            event.e.preventDefault();
+            event.e.stopPropagation();
+            startPoint = pointer;
+            isSelecting = true;
+            updateQuickSelectionOverlay(normalizeBounds(pointer, pointer));
+        };
+
+        const handleMouseMove = (event) => {
+            if (!isSelecting || brushModeRef.current !== QUICK_SELECT_MODE || !startPoint) {
+                return;
+            }
+            const pointer = clampPointToFrame(fabricCanvas.getPointer(event.e));
+            if (!pointer) {
+                return;
+            }
+            updateQuickSelectionOverlay(normalizeBounds(startPoint, pointer));
+        };
+
+        const handleMouseUp = (event) => {
+            if (!isSelecting || !startPoint) {
+                return;
+            }
+            isSelecting = false;
+            const pointer = clampPointToFrame(fabricCanvas.getPointer(event.e));
+            if (!pointer) {
+                startPoint = null;
+                return;
+            }
+
+            const bounds = normalizeBounds(startPoint, pointer);
+            startPoint = null;
+            if (bounds.width < 6 || bounds.height < 6) {
+                setQuickSelectionBounds(null);
+                return;
+            }
+            setQuickSelectionBounds(bounds);
+        };
+
+        fabricCanvas.on('mouse:down', handleMouseDown);
+        fabricCanvas.on('mouse:move', handleMouseMove);
+        fabricCanvas.on('mouse:up', handleMouseUp);
+
+        return () => {
+            fabricCanvas.off('mouse:down', handleMouseDown);
+            fabricCanvas.off('mouse:move', handleMouseMove);
+            fabricCanvas.off('mouse:up', handleMouseUp);
+        };
+    }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        const rect = quickSelectionRectRef.current;
+        if (!rect) {
+            return;
+        }
+        rect.set({
+            visible: brushMode === QUICK_SELECT_MODE && Boolean(quickSelectionBoundsRef.current)
+        });
+        if (rect.visible) {
+            rect.bringToFront();
+        }
+        fabricCanvas?.requestRenderAll();
+    }, [brushMode, fabricCanvas]);
 
     useEffect(() => {
         if (!fabricCanvas) return undefined;

@@ -118,7 +118,7 @@ MAX_MASK_BLUR = 128
 MIN_MASK_PADDING = 0
 MAX_MASK_PADDING = 128
 #_____________апдейт_______ Supported editor tools metadata
-ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp", "spot_heal"}
+ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp", "spot_heal", "quick_select"}
 
 
 def _validation_error(detail: str) -> HTTPException:

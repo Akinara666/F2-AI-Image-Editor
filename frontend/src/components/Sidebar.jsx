@@ -30,6 +30,7 @@ const Sidebar = ({
     brushMode, setBrushMode,
     brushColor, setBrushColor,
     brushSize, setBrushSize,
+    onQuickSelectionCopy, onQuickSelectionPaste,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
@@ -356,6 +357,16 @@ const Sidebar = ({
                             <div className="sidebar__tool-bar">
                                 {[
                                     {
+                                        id: 'quick_select', label: 'Select (W)', color: 'var(--primary)', icon: (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M3 5h6" />
+                                                <path d="M3 12h4" />
+                                                <path d="M3 19h8" />
+                                                <rect x="12" y="7" width="9" height="10" rx="2" />
+                                            </svg>
+                                        )
+                                    },
+                                    {
                                         id: 'none', label: 'Курсор', color: 'var(--primary)', icon: (
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                 <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
@@ -421,7 +432,11 @@ const Sidebar = ({
                                                 : (
                                                     tool.id === 'spot_heal'
                                                         ? 'Spot Healing Brush / Точечная восстановительная кисть (J)'
-                                                        : tool.label
+                                                        : (
+                                                            tool.id === 'quick_select'
+                                                                ? 'Быстрое выделение (W)'
+                                                                : tool.label
+                                                        )
                                                 )
                                         }
                                     >
@@ -468,6 +483,21 @@ const Sidebar = ({
                                     <small className="sidebar__hint">
                                         Точечная кисть (J): закрась мелкий дефект маской и запусти генерацию для локальной ретуши.
                                     </small>
+                                )}
+                                {brushMode === 'quick_select' && (
+                                    <>
+                                        <small className="sidebar__hint">
+                                            Quick Select (W): протяни рамку по объекту, затем скопируй и вставь рядом.
+                                        </small>
+                                        <div className="sidebar__actions">
+                                            <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionCopy}>
+                                                Копировать
+                                            </button>
+                                            <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionPaste}>
+                                                Вставить
+                                            </button>
+                                        </div>
+                                    </>
                                 )}
                             </>
                         )}
