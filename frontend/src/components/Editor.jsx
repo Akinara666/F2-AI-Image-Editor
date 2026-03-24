@@ -42,6 +42,12 @@ import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
 
 const QUICK_SELECT_MODE = 'quick_select';
+const LAYER_KIND_LABELS = {
+    [CANVAS_OBJECT_ROLES.BASE]: 'Raster',
+    [CANVAS_OBJECT_ROLES.CANDIDATE]: 'Candidate',
+    [CANVAS_OBJECT_ROLES.SKETCH]: 'Sketch',
+    [CANVAS_OBJECT_ROLES.MASK]: 'Mask'
+};
 
 const hasVisiblePixels = (canvasElement) => {
     const context = canvasElement.getContext('2d', { willReadFrequently: true });
@@ -58,7 +64,21 @@ const hasVisiblePixels = (canvasElement) => {
     return false;
 };
 
-const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint }, ref) => {
+const resolveLayerKind = (object) => {
+    if (!object) return CANVAS_OBJECT_ROLES.BASE;
+    if (object.id === 'maskGroup' || object.isMask || object.editorRole === CANVAS_OBJECT_ROLES.MASK) {
+        return CANVAS_OBJECT_ROLES.MASK;
+    }
+    if (object.isCandidate || object.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) {
+        return CANVAS_OBJECT_ROLES.CANDIDATE;
+    }
+    if (object.editorRole === CANVAS_OBJECT_ROLES.SKETCH) {
+        return CANVAS_OBJECT_ROLES.SKETCH;
+    }
+    return CANVAS_OBJECT_ROLES.BASE;
+};
+
+const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
@@ -70,6 +90,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const quickSelectionRef = useRef(null);
     const quickSelectionDraftPointsRef = useRef([]);
     const quickClipboardRef = useRef(null);
+    const layerCounterRef = useRef(1);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -154,11 +175,141 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         return task;
     };
 
+    const isLayerPanelObject = (object) => (
+        Boolean(object)
+        && object !== genFrame
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+        && object.editorRole !== 'quick-select-overlay'
+    );
+
+    const ensureLayerId = (object) => {
+        if (!object) return null;
+        if (!object.editorLayerId) {
+            object.editorLayerId = `layer-${layerCounterRef.current++}`;
+        }
+        return object.editorLayerId;
+    };
+
+    const getLayerDisplayName = (object, index) => {
+        const customName = typeof object?.editorLayerName === 'string' ? object.editorLayerName.trim() : '';
+        if (customName) return customName;
+        const kind = resolveLayerKind(object);
+        const baseName = kind === CANVAS_OBJECT_ROLES.CANDIDATE
+            ? 'Candidate'
+            : (kind === CANVAS_OBJECT_ROLES.MASK ? 'Mask' : (kind === CANVAS_OBJECT_ROLES.SKETCH ? 'Sketch' : 'Layer'));
+        return `${baseName} ${index}`;
+    };
+
+    const buildLayersSnapshot = React.useCallback(() => {
+        if (!fabricCanvas || !genFrame) {
+            return [];
+        }
+
+        const layerObjects = fabricCanvas
+            .getObjects()
+            .filter((object) => isLayerPanelObject(object));
+        const activeObject = fabricCanvas.getActiveObject();
+        const visualOrderTopFirst = [...layerObjects].reverse();
+
+        return visualOrderTopFirst.map((object, index) => {
+            const kind = resolveLayerKind(object);
+            return {
+                id: ensureLayerId(object),
+                name: getLayerDisplayName(object, visualOrderTopFirst.length - index),
+                kind,
+                kindLabel: LAYER_KIND_LABELS[kind] || 'Layer',
+                visible: object.visible !== false,
+                isActive: object === activeObject
+            };
+        });
+    }, [fabricCanvas, genFrame]);
+
+    const emitLayersSnapshot = React.useCallback(() => {
+        if (typeof onLayersChange !== 'function') {
+            return;
+        }
+        onLayersChange(buildLayersSnapshot());
+    }, [onLayersChange, buildLayersSnapshot]);
+
+    const findLayerObjectById = (layerId) => {
+        if (!fabricCanvas || !layerId) {
+            return null;
+        }
+
+        return fabricCanvas
+            .getObjects()
+            .find((object) => isLayerPanelObject(object) && ensureLayerId(object) === layerId) || null;
+    };
+
+    const selectLayer = (layerId) => {
+        if (!fabricCanvas) {
+            return false;
+        }
+        const target = findLayerObjectById(layerId);
+        if (!target || target.visible === false) {
+            return false;
+        }
+
+        fabricCanvas.setActiveObject(target);
+        fabricCanvas.requestRenderAll();
+        emitLayersSnapshot();
+        return true;
+    };
+
+    const toggleLayerVisibility = (layerId) => {
+        if (!fabricCanvas) {
+            return false;
+        }
+        const target = findLayerObjectById(layerId);
+        if (!target) {
+            return false;
+        }
+
+        target.set({ visible: target.visible === false });
+        if (target.visible === false && fabricCanvas.getActiveObject() === target) {
+            fabricCanvas.discardActiveObject();
+        }
+        fabricCanvas.requestRenderAll();
+        emitLayersSnapshot();
+        return true;
+    };
+
     useEffect(() => {
         brushModeRef.current = brushMode;
         brushColorRef.current = brushColor;
         brushSizeRef.current = brushSize;
     }, [brushMode, brushColor, brushSize]);
+
+    useEffect(() => {
+        if (!fabricCanvas) {
+            return undefined;
+        }
+
+        const handleLayerRelevantEvent = () => {
+            emitLayersSnapshot();
+        };
+
+        const events = [
+            'object:added',
+            'object:removed',
+            'object:modified',
+            'selection:created',
+            'selection:updated',
+            'selection:cleared'
+        ];
+
+        events.forEach((eventName) => {
+            fabricCanvas.on(eventName, handleLayerRelevantEvent);
+        });
+        handleLayerRelevantEvent();
+
+        return () => {
+            events.forEach((eventName) => {
+                fabricCanvas.off(eventName, handleLayerRelevantEvent);
+            });
+        };
+    }, [fabricCanvas, emitLayersSnapshot]);
 
     useEffect(() => {
         if (!canvasRef.current || !wrapperRef.current) return;
@@ -906,6 +1057,12 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         hasQuickClipboard: () => Boolean(quickClipboardRef.current),
 
         exportForQuickSelectRefine,
+
+        getLayers: () => buildLayersSnapshot(),
+
+        selectLayer,
+
+        toggleLayerVisibility,
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 

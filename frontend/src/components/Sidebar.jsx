@@ -10,6 +10,19 @@ import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
 const TEXT_NUMBER_FIELDS = ['seed', 'steps'];
+const LAYER_BLEND_MODES = [
+    { id: 'normal', label: 'Обычный' },
+    { id: 'multiply', label: 'Умножение' },
+    { id: 'screen', label: 'Экран' },
+    { id: 'overlay', label: 'Перекрытие' }
+];
+
+const LAYER_KIND_BG = {
+    Raster: 'linear-gradient(135deg, rgba(44, 173, 150, 0.35), rgba(28, 94, 87, 0.6))',
+    Candidate: 'linear-gradient(135deg, rgba(84, 110, 255, 0.32), rgba(53, 41, 120, 0.7))',
+    Sketch: 'linear-gradient(135deg, rgba(255, 174, 66, 0.32), rgba(131, 78, 44, 0.72))',
+    Mask: 'linear-gradient(135deg, rgba(140, 150, 170, 0.28), rgba(58, 63, 90, 0.58))'
+};
 const getPromptTransformStageLabel = (elapsedMs) => {
     if (elapsedMs < 1200) {
         return 'Отправляем запрос в AI-модуль';
@@ -31,6 +44,7 @@ const Sidebar = ({
     brushColor, setBrushColor,
     brushSize, setBrushSize,
     onQuickSelectionCopy, onQuickSelectionPaste, onQuickSelectionRefine,
+    layers, onLayerSelect, onLayerToggleVisibility,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
@@ -41,6 +55,8 @@ const Sidebar = ({
         seed: String(params.seed),
         steps: String(params.steps)
     });
+    const [layerViewMode, setLayerViewMode] = useState('list');
+    const [layerUiSettings, setLayerUiSettings] = useState({});
 
     useEffect(() => {
         setNumberDrafts({
@@ -64,6 +80,26 @@ const Sidebar = ({
             window.clearInterval(intervalId);
         };
     }, [isTransformingPrompt]);
+
+    useEffect(() => {
+        if (!Array.isArray(layers) || layers.length === 0) {
+            setLayerUiSettings({});
+            return;
+        }
+
+        setLayerUiSettings((prev) => {
+            const next = {};
+            layers.forEach((layer) => {
+                const current = prev[layer.id];
+                next[layer.id] = current || {
+                    opacity: 100,
+                    fill: 100,
+                    blendMode: 'normal'
+                };
+            });
+            return next;
+        });
+    }, [layers]);
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
@@ -164,6 +200,31 @@ const Sidebar = ({
         } finally {
             setIsTransformingPrompt(false);
         }
+    };
+
+    const selectedLayer = Array.isArray(layers) ? (layers.find((layer) => layer.isActive) || layers[0] || null) : null;
+    const selectedLayerSettings = selectedLayer ? (layerUiSettings[selectedLayer.id] || {
+        opacity: 100,
+        fill: 100,
+        blendMode: 'normal'
+    }) : null;
+
+    const updateSelectedLayerSettings = (patch) => {
+        if (!selectedLayer) return;
+        setLayerUiSettings((prev) => ({
+            ...prev,
+            [selectedLayer.id]: {
+                opacity: 100,
+                fill: 100,
+                blendMode: 'normal',
+                ...(prev[selectedLayer.id] || {}),
+                ...patch
+            }
+        }));
+    };
+
+    const handleAddLayerClick = () => {
+        showToastInfo?.("UI-режим: кнопка 'Добавить слой' пока без привязки к Canvas.");
     };
 
     return (
@@ -503,6 +564,149 @@ const Sidebar = ({
                                 )}
                             </>
                         )}
+
+                        <div className="input-group sidebar__layers-panel">
+                            <h4 className="sidebar__layers-title">Слои</h4>
+                            <div className="sidebar__layers-toolbar">
+                                <button
+                                    type="button"
+                                    className="btn sidebar__layers-add-btn"
+                                    onClick={handleAddLayerClick}
+                                >
+                                    <span className="sidebar__layers-add-icon" aria-hidden="true">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M12 5v14" />
+                                            <path d="M5 12h14" />
+                                        </svg>
+                                    </span>
+                                    <span>Добавить слой</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn sidebar__layers-view-btn"
+                                    onClick={() => setLayerViewMode((prev) => (prev === 'list' ? 'compact' : 'list'))}
+                                    title={layerViewMode === 'list' ? 'Компактный вид слоёв' : 'Обычный вид слоёв'}
+                                >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <rect x="3" y="3" width="7" height="7" rx="1.5" />
+                                        <rect x="14" y="3" width="7" height="7" rx="1.5" />
+                                        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+                                        <rect x="14" y="14" width="7" height="7" rx="1.5" />
+                                    </svg>
+                                </button>
+                            </div>
+                            {!Array.isArray(layers) || layers.length === 0 ? (
+                                <small className="sidebar__hint">Слои появятся после добавления/рисования на холсте.</small>
+                            ) : (
+                                <div className={`sidebar__layers-list ${layerViewMode === 'compact' ? 'sidebar__layers-list--compact' : ''}`}>
+                                    {layers.map((layer) => (
+                                        <div
+                                            key={layer.id}
+                                            className={`sidebar__layer-row ${layer.isActive ? 'sidebar__layer-row--active' : ''}`}
+                                        >
+                                            <span className="sidebar__layer-grip" aria-hidden="true">
+                                                <span />
+                                                <span />
+                                                <span />
+                                            </span>
+                                            <span
+                                                className="sidebar__layer-thumb"
+                                                style={{ background: LAYER_KIND_BG[layer.kindLabel] || LAYER_KIND_BG.Raster }}
+                                                aria-hidden="true"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="btn sidebar__layer-select-btn"
+                                                onClick={() => onLayerSelect?.(layer.id)}
+                                                title={`Выбрать слой: ${layer.name}`}
+                                            >
+                                                <span className="sidebar__layer-content">
+                                                    <span className="sidebar__layer-name">{layer.name}</span>
+                                                    <span className="sidebar__layer-meta">
+                                                        {(layerUiSettings[layer.id]?.blendMode
+                                                            ? (LAYER_BLEND_MODES.find((mode) => mode.id === layerUiSettings[layer.id].blendMode)?.label || 'Обычный')
+                                                            : 'Обычный')}
+                                                        {' · '}
+                                                        {layerUiSettings[layer.id]?.opacity ?? 100}%
+                                                    </span>
+                                                </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn sidebar__layer-visibility-btn"
+                                                onClick={() => onLayerToggleVisibility?.(layer.id)}
+                                                title={layer.visible ? 'Скрыть слой' : 'Показать слой'}
+                                            >
+                                                {layer.visible ? (
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+                                                        <circle cx="12" cy="12" r="3" />
+                                                    </svg>
+                                                ) : (
+                                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a21.77 21.77 0 0 1 5.06-5.94" />
+                                                        <path d="M10.58 10.58a2 2 0 1 0 2.83 2.83" />
+                                                        <path d="M22 12s-1.42 2.84-4.06 4.94" />
+                                                        <path d="M2 2l20 20" />
+                                                    </svg>
+                                                )}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn sidebar__layer-lock-btn"
+                                                onClick={() => showToastInfo?.('UI-режим: блокировка слоя будет подключена позже.')}
+                                                title="Блокировка слоя (пока только UI)"
+                                            >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <rect x="5" y="11" width="14" height="10" rx="2" />
+                                                    <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {selectedLayer && selectedLayerSettings && (
+                                <div className="sidebar__layer-controls">
+                                    <div className="sidebar__layer-control-row">
+                                        <label className="input-label">Непроз.</label>
+                                        <input
+                                            type="range"
+                                            className="sidebar__range sidebar__range--primary"
+                                            min="0"
+                                            max="100"
+                                            value={selectedLayerSettings.opacity}
+                                            onChange={(event) => updateSelectedLayerSettings({ opacity: Number(event.target.value) })}
+                                        />
+                                        <span className="sidebar__layer-control-value">{selectedLayerSettings.opacity}</span>
+                                    </div>
+                                    <div className="sidebar__layer-control-row">
+                                        <label className="input-label">Заливка</label>
+                                        <input
+                                            type="range"
+                                            className="sidebar__range sidebar__range--primary"
+                                            min="0"
+                                            max="100"
+                                            value={selectedLayerSettings.fill}
+                                            onChange={(event) => updateSelectedLayerSettings({ fill: Number(event.target.value) })}
+                                        />
+                                        <span className="sidebar__layer-control-value">{selectedLayerSettings.fill}</span>
+                                    </div>
+                                    <div className="sidebar__layer-mode-row">
+                                        <label className="input-label">Режим</label>
+                                        <select
+                                            className="input-field"
+                                            value={selectedLayerSettings.blendMode}
+                                            onChange={(event) => updateSelectedLayerSettings({ blendMode: event.target.value })}
+                                        >
+                                            {LAYER_BLEND_MODES.map((mode) => (
+                                                <option key={mode.id} value={mode.id}>{mode.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
 
                         {brushMode === 'mask' && (
                             <div className="input-group sidebar__mask-panel">

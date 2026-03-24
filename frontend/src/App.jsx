@@ -345,6 +345,7 @@ function App() {
   const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
   const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
   const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
+  const [layers, setLayers] = useState([]);
 
   React.useEffect(() => {
     try {
@@ -836,6 +837,18 @@ function App() {
     event.preventDefault();
   };
 
+  const handleLayersChange = React.useCallback((nextLayers) => {
+    setLayers(Array.isArray(nextLayers) ? nextLayers : []);
+  }, []);
+
+  const handleLayerSelect = React.useCallback((layerId) => {
+    editorRef.current?.selectLayer?.(layerId);
+  }, []);
+
+  const handleLayerToggleVisibility = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerVisibility?.(layerId);
+  }, []);
+
   return (
     <div
       ref={appContainerRef}
@@ -860,6 +873,9 @@ function App() {
           onQuickSelectionCopy={handleQuickSelectionCopy}
           onQuickSelectionPaste={handleQuickSelectionPaste}
           onQuickSelectionRefine={handleQuickSelectionRefine}
+          layers={layers}
+          onLayerSelect={handleLayerSelect}
+          onLayerToggleVisibility={handleLayerToggleVisibility}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}
@@ -884,6 +900,7 @@ function App() {
           brushSize={brushSize}
           generationPreview={generationPreview}
           onSpotHealPoint={handleSpotHealPoint}
+          onLayersChange={handleLayersChange}
         />
       </div>
       <HistoryPanel
