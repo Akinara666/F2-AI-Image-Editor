@@ -117,6 +117,8 @@ MIN_MASK_BLUR = 0
 MAX_MASK_BLUR = 128
 MIN_MASK_PADDING = 0
 MAX_MASK_PADDING = 128
+#_____________апдейт_______ Supported editor tools metadata
+ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp"}
 
 
 def _validation_error(detail: str) -> HTTPException:
@@ -155,6 +157,16 @@ def _resolve_preview_method(preview_method: Optional[str]) -> str:
             f"preview_method must be one of: server_default, {', '.join(LIVE_PREVIEW_METHOD_CHOICES)}."
         )
     return raw_value
+
+
+#_____________апдейт_______ Normalize optional active tool from frontend
+def _normalize_active_tool(active_tool: Optional[str]) -> str:
+    value = str(active_tool or "").strip().lower()
+    if not value:
+        return "none"
+    if value in ALLOWED_EDITOR_TOOLS:
+        return value
+    return "none"
 
 
 def _resolve_clip_skip_for_diffusers() -> tuple[int, Optional[int]]:
@@ -584,6 +596,8 @@ async def save_history_snapshot(
     raw_prompt: Optional[str] = Form(default=None),
     negative_prompt: Optional[str] = Form(default=None),
     seed: Optional[int] = Form(default=None),
+    #_____________апдейт_______ Persist active editor tool in history metadata
+    active_tool: Optional[str] = Form(default=None),
     generated_url: Optional[str] = Form(default=None),
 ):
     try:
@@ -604,6 +618,8 @@ async def save_history_snapshot(
         "raw_prompt": raw_prompt,
         "negative_prompt": negative_prompt,
         "seed": seed,
+        #_____________апдейт_______ Keep active tool in saved history png metadata
+        "active_tool": _normalize_active_tool(active_tool),
         "generated_url": generated_url,
         "history_kind": "document_snapshot",
     }
@@ -710,11 +726,15 @@ async def generate_image(
     denoising_strength: float = Form(default=0.75),
     mask_blur: int = Form(default=4),
     mask_padding: int = Form(default=32),
+    #_____________апдейт_______ Active editor tool from frontend for traceability
+    active_tool: Optional[str] = Form(default=None),
     init_image: UploadFile = File(None),
     mask_image: UploadFile = File(None),
 ):
     try:
         request_id = (request_id or "").strip() or uuid.uuid4().hex
+        #_____________апдейт_______ Normalize active tool once per request
+        active_tool = _normalize_active_tool(active_tool)
 
         validated = _validate_generation_inputs(
             width=width,
@@ -1095,6 +1115,8 @@ async def generate_image(
                 "diffusers_clip_skip": diffusers_clip_skip,
                 "preview_method": resolved_preview_method,
                 "preview_interval_steps": preview_interval_steps,
+                #_____________апдейт_______ Active editor tool trace from frontend
+                "active_tool": active_tool,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:

@@ -31,6 +31,7 @@ import {
 } from './editor/commands';
 import {
     applyCanvasInteractionMode,
+    setupCloneStampHandling,
     setupPathCreationHandling
 } from './editor/interactionController';
 import { setupEditorKeyboardShortcuts } from './editor/keyboardController';
@@ -39,7 +40,7 @@ import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
 
-const Editor = forwardRef(({ brushMode, brushColor, brushSize, generationPreview }, ref) => {
+const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
@@ -500,10 +501,12 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize, generationPreview
     }));
 
     const performUndoRef = useRef(performUndo);
+    const setBrushModeRef = useRef(setBrushMode);
     const performDeleteActiveObjectRef = useRef(performDeleteActiveObject);
     const syncCanvasInteractionModeRef = useRef(syncCanvasInteractionMode);
     useEffect(() => {
         performUndoRef.current = performUndo;
+        setBrushModeRef.current = setBrushMode;
         performDeleteActiveObjectRef.current = performDeleteActiveObject;
         syncCanvasInteractionModeRef.current = syncCanvasInteractionMode;
     });
@@ -518,9 +521,26 @@ const Editor = forwardRef(({ brushMode, brushColor, brushSize, generationPreview
         return setupEditorKeyboardShortcuts({
             fabricCanvas,
             brushModeRef,
+            setBrushModeRef,
             performUndoRef,
             performDeleteActiveObjectRef,
             syncCanvasInteractionModeRef
+        });
+    }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) return undefined;
+        return setupCloneStampHandling({
+            canvas: fabricCanvas,
+            frameObject: genFrame,
+            brushModeRef,
+            brushSizeRef,
+            candidateRef,
+            isBaseRasterObject,
+            isCandidateObject,
+            markUndoDirty,
+            commitUndoSnapshot,
+            getUndoSnapshotParams
         });
     }, [fabricCanvas, genFrame]);
 

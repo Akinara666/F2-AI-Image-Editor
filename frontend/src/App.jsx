@@ -446,6 +446,7 @@ function App() {
       formData.append('mask_padding', normalizedParams.mask_padding);
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
+      formData.append('active_tool', brushMode);
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
 
@@ -494,6 +495,7 @@ function App() {
           historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
           historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
           historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+          historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
           historyFormData.append('generated_url', response.data.url);
 
           const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
@@ -702,6 +704,7 @@ function App() {
         <Editor
           ref={editorRef}
           brushMode={brushMode}
+          setBrushMode={setBrushMode}
           brushColor={brushColor}
           brushSize={brushSize}
           generationPreview={generationPreview}

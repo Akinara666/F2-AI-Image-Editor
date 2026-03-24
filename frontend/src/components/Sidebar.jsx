@@ -397,6 +397,15 @@ const Sidebar = ({
                                             </svg>
                                         )
                                     },
+                                    {
+                                        id: 'clone_stamp', label: 'Штамп (S)', color: 'var(--accent)', icon: (
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                <rect x="4" y="9" width="16" height="10" rx="2" />
+                                                <path d="M9 9V6a3 3 0 0 1 6 0v3" />
+                                                <path d="M12 14h.01" />
+                                            </svg>
+                                        )
+                                    },
                                 ].map(tool => (
                                     <button
                                         key={tool.id}
@@ -416,15 +425,22 @@ const Sidebar = ({
                         </div>
 
                         {brushMode !== 'none' && (
-                            <div className="input-group sidebar__brush-options">
-                                <div className="sidebar__brush-row">
-                                    <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
-                                    <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
-                                    {brushMode === 'sketch' && (
-                                        <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                    )}
+                            <>
+                                <div className="input-group sidebar__brush-options">
+                                    <div className="sidebar__brush-row">
+                                        <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
+                                        <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
+                                        {brushMode === 'sketch' && (
+                                            <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
+                                {brushMode === 'clone_stamp' && (
+                                    <small className="sidebar__hint">
+                                        Штамп: зажми Alt и кликни по источнику, затем рисуй в зоне назначения.
+                                    </small>
+                                )}
+                            </>
                         )}
 
                         {brushMode === 'mask' && (

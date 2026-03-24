@@ -10,6 +10,7 @@ const isTextInputTarget = (target) => {
 export const setupEditorKeyboardShortcuts = ({
     fabricCanvas,
     brushModeRef,
+    setBrushModeRef,
     performUndoRef,
     performDeleteActiveObjectRef,
     syncCanvasInteractionModeRef
@@ -26,6 +27,12 @@ export const setupEditorKeyboardShortcuts = ({
         if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
             event.preventDefault();
             void performUndoRef.current?.();
+            return;
+        }
+
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyS') {
+            event.preventDefault();
+            setBrushModeRef.current?.('clone_stamp');
             return;
         }
 
