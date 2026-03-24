@@ -389,16 +389,7 @@ const Sidebar = ({
                                         )
                                     },
                                     {
-                                        id: 'eraser', label: 'Ластик', color: 'var(--warning)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
-                                                <path d="M22 21H7" />
-                                                <path d="m5 11 9 9" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'clone_stamp', label: 'Штамп (S)', color: 'var(--accent)', icon: (
+                                        id: 'clone_stamp', label: 'Штамп', color: 'var(--accent)', icon: (
                                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                 <rect x="4" y="9" width="16" height="10" rx="2" />
                                                 <path d="M9 9V6a3 3 0 0 1 6 0v3" />
@@ -415,13 +406,29 @@ const Sidebar = ({
                                             background: brushMode === tool.id ? tool.color : 'var(--bg-hover)',
                                             color: brushMode === tool.id ? 'white' : 'var(--text-muted)'
                                         }}
-                                        title={tool.label}
+                                        title={tool.id === 'clone_stamp' ? 'Штамп (S)' : tool.label}
                                     >
                                         {tool.icon}
                                         <span className="sidebar__tool-label">{tool.label}</span>
                                     </button>
                                 ))}
                             </div>
+                            <button
+                                className={`btn sidebar__tool-btn sidebar__tool-btn--eraser-block ${brushMode === 'eraser' ? 'sidebar__tool-btn--active' : ''}`}
+                                onClick={() => setBrushMode('eraser')}
+                                style={{
+                                    background: brushMode === 'eraser' ? 'var(--warning)' : 'var(--bg-hover)',
+                                    color: brushMode === 'eraser' ? 'white' : 'var(--text-muted)'
+                                }}
+                                title="Ластик"
+                            >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+                                    <path d="M22 21H7" />
+                                    <path d="m5 11 9 9" />
+                                </svg>
+                                <span className="sidebar__tool-label">Ластик</span>
+                            </button>
                         </div>
 
                         {brushMode !== 'none' && (
