@@ -127,7 +127,8 @@ export const applyCanvasInteractionMode = ({
         const isFrame = object === frameObject;
         const isBaseRaster = isBaseRasterObject(object, frameObject);
         const isCurrentCandidate = object === currentCandidate || isCandidateObject(object, frameObject);
-        const interactive = brushMode === 'none' && (isFrame || isCurrentCandidate || isBaseRaster);
+        const isLayerLocked = object?.editorLayerLocked === true;
+        const interactive = brushMode === 'none' && (isFrame || ((isCurrentCandidate || isBaseRaster) && !isLayerLocked));
 
         object.selectable = interactive;
         object.evented = interactive;
@@ -143,10 +144,10 @@ export const applyCanvasInteractionMode = ({
                 selectable: interactive,
                 evented: interactive,
                 hasControls: interactive,
-                lockMovementX: !interactive,
-                lockMovementY: !interactive,
-                lockScalingX: !interactive,
-                lockScalingY: !interactive,
+                lockMovementX: !interactive || isLayerLocked,
+                lockMovementY: !interactive || isLayerLocked,
+                lockScalingX: !interactive || isLayerLocked,
+                lockScalingY: !interactive || isLayerLocked,
                 lockRotation: true,
                 hoverCursor: interactive ? 'move' : 'default'
             });

@@ -583,6 +583,10 @@ function App() {
       showInfo("Сначала добавь изображение на холст, затем используй Spot Healing.");
       return;
     }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Spot Healing.");
+      return;
+    }
 
     const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
     if (invalidFields.length > 0) {
@@ -591,9 +595,14 @@ function App() {
     }
 
     spotHealInFlightRef.current = true;
-    try {
-      await editorRef.current.acceptCandidateAsync?.();
+    const controller = new AbortController();
+    const requestId = createClientId('spot-heal');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
 
+    try {
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForSpotHeal({
         x,
         y,
@@ -605,6 +614,7 @@ function App() {
       }
 
       const formData = new FormData();
+      formData.append('request_id', requestId);
       formData.append('prompt', normalizedParams.prompt);
       formData.append('negative_prompt', normalizedParams.negative_prompt);
       formData.append('seed', String(normalizedParams.seed));
@@ -622,7 +632,8 @@ function App() {
       formData.append('mask_image', maskImageBlob, 'spot-heal-mask.png');
 
       const response = await axios.post(API_ENDPOINTS.SPOT_HEAL, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
@@ -633,11 +644,23 @@ function App() {
         throw new Error("Сервер не вернул результат точечной ретуши.");
       }
     } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Spot Healing отменён.");
+        return;
+      }
       console.error("Spot heal failed", error);
       const errorMsg = error.response?.data?.detail || error.message;
       showError(`Ошибка Spot Healing: ${errorMsg}`);
     } finally {
       spotHealInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
     }
   };
 
@@ -680,6 +703,10 @@ function App() {
       showInfo("Сначала выдели область инструментом Quick Select (W).");
       return;
     }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Quick Select refine.");
+      return;
+    }
 
     const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
     if (invalidFields.length > 0) {
@@ -688,14 +715,21 @@ function App() {
     }
 
     quickSelectRefineInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = createClientId('quick-select-refine');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
+
     try {
-      await editorRef.current.acceptCandidateAsync?.();
       const payload = await editorRef.current.exportForQuickSelectRefine?.();
       if (!payload?.image || !payload?.selection) {
         throw new Error("Не удалось подготовить выделение для перегенерации.");
       }
 
       const formData = new FormData();
+      formData.append('request_id', requestId);
       formData.append('prompt', normalizedParams.prompt);
       formData.append('negative_prompt', normalizedParams.negative_prompt);
       formData.append('seed', String(normalizedParams.seed));
@@ -719,7 +753,8 @@ function App() {
       }
 
       const response = await axios.post(API_ENDPOINTS.QUICK_SELECT_REFINE, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
@@ -730,11 +765,23 @@ function App() {
         throw new Error("Сервер не вернул результат quick-select refine.");
       }
     } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Quick Select refine отменён.");
+        return;
+      }
       console.error("Quick-select refine failed", error);
       const errorMsg = error.response?.data?.detail || error.message;
       showError(`Ошибка Quick Select refine: ${errorMsg}`);
     } finally {
       quickSelectRefineInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
     }
   };
 
@@ -849,6 +896,23 @@ function App() {
     editorRef.current?.toggleLayerVisibility?.(layerId);
   }, []);
 
+  const handleLayerAdd = React.useCallback(async () => {
+    const added = await editorRef.current?.addLayer?.();
+    if (!added) {
+      showInfo("Не удалось создать слой: выбери объект на холсте или сначала сгенерируй изображение.");
+    } else {
+      showSuccess("Новый слой создан.");
+    }
+  }, [showInfo, showSuccess]);
+
+  const handleLayerToggleLock = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerLock?.(layerId);
+  }, []);
+
+  const handleLayerStyleChange = React.useCallback((layerId, patch) => {
+    editorRef.current?.updateLayerStyle?.(layerId, patch);
+  }, []);
+
   return (
     <div
       ref={appContainerRef}
@@ -875,7 +939,10 @@ function App() {
           onQuickSelectionRefine={handleQuickSelectionRefine}
           layers={layers}
           onLayerSelect={handleLayerSelect}
+          onLayerAdd={handleLayerAdd}
           onLayerToggleVisibility={handleLayerToggleVisibility}
+          onLayerToggleLock={handleLayerToggleLock}
+          onLayerStyleChange={handleLayerStyleChange}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}

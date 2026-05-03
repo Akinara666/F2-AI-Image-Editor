@@ -48,6 +48,15 @@ const LAYER_KIND_LABELS = {
     [CANVAS_OBJECT_ROLES.SKETCH]: 'Sketch',
     [CANVAS_OBJECT_ROLES.MASK]: 'Mask'
 };
+const BLEND_MODE_TO_COMPOSITE = {
+    normal: 'source-over',
+    multiply: 'multiply',
+    screen: 'screen',
+    overlay: 'overlay'
+};
+const COMPOSITE_TO_BLEND_MODE = Object.fromEntries(
+    Object.entries(BLEND_MODE_TO_COMPOSITE).map(([blendMode, composite]) => [composite, blendMode])
+);
 
 const hasVisiblePixels = (canvasElement) => {
     const context = canvasElement.getContext('2d', { willReadFrequently: true });
@@ -76,6 +85,14 @@ const resolveLayerKind = (object) => {
         return CANVAS_OBJECT_ROLES.SKETCH;
     }
     return CANVAS_OBJECT_ROLES.BASE;
+};
+
+const clampLayerPercent = (value, fallback = 100) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return fallback;
+    }
+    return Math.max(0, Math.min(100, Math.round(numeric)));
 };
 
 const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange }, ref) => {
@@ -183,12 +200,78 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         && object.editorRole !== 'quick-select-overlay'
     );
 
+    const cloneCanvasObject = (source) => (
+        new Promise((resolve, reject) => {
+            source.clone((cloned) => {
+                if (!cloned) {
+                    reject(new Error('Failed to clone layer object.'));
+                    return;
+                }
+                resolve(cloned);
+            });
+        })
+    );
+
     const ensureLayerId = (object) => {
         if (!object) return null;
         if (!object.editorLayerId) {
             object.editorLayerId = `layer-${layerCounterRef.current++}`;
         }
         return object.editorLayerId;
+    };
+
+    const getLayerStyle = (object) => {
+        const baseOpacity = clampLayerPercent(
+            object?.editorLayerOpacity,
+            clampLayerPercent(((object?.opacity ?? 1) * 100), 100)
+        );
+        const fillOpacity = clampLayerPercent(object?.editorLayerFillOpacity, 100);
+        const blendMode = object?.editorLayerBlendMode
+            || COMPOSITE_TO_BLEND_MODE[object?.globalCompositeOperation]
+            || 'normal';
+        const locked = object?.editorLayerLocked === true;
+        return {
+            opacity: baseOpacity,
+            fill: fillOpacity,
+            blendMode,
+            locked
+        };
+    };
+
+    const applyLayerStyle = (object, patch = {}) => {
+        if (!object) {
+            return null;
+        }
+
+        const current = getLayerStyle(object);
+        const nextOpacity = clampLayerPercent(patch.opacity, current.opacity);
+        const nextFill = clampLayerPercent(patch.fill, current.fill);
+        const nextBlendMode = BLEND_MODE_TO_COMPOSITE[patch.blendMode] ? patch.blendMode : current.blendMode;
+        const nextLocked = typeof patch.locked === 'boolean' ? patch.locked : current.locked;
+        const composite = BLEND_MODE_TO_COMPOSITE[nextBlendMode] || BLEND_MODE_TO_COMPOSITE.normal;
+        const effectiveOpacity = Math.max(0, Math.min(1, (nextOpacity / 100) * (nextFill / 100)));
+
+        object.set({
+            opacity: effectiveOpacity,
+            globalCompositeOperation: composite,
+            lockMovementX: nextLocked,
+            lockMovementY: nextLocked,
+            lockRotation: nextLocked,
+            lockScalingX: nextLocked,
+            lockScalingY: nextLocked
+        });
+        object.editorLayerOpacity = nextOpacity;
+        object.editorLayerFillOpacity = nextFill;
+        object.editorLayerBlendMode = nextBlendMode;
+        object.editorLayerLocked = nextLocked;
+        object.setCoords();
+
+        return {
+            opacity: nextOpacity,
+            fill: nextFill,
+            blendMode: nextBlendMode,
+            locked: nextLocked
+        };
     };
 
     const getLayerDisplayName = (object, index) => {
@@ -214,13 +297,18 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         return visualOrderTopFirst.map((object, index) => {
             const kind = resolveLayerKind(object);
+            const style = getLayerStyle(object);
             return {
                 id: ensureLayerId(object),
                 name: getLayerDisplayName(object, visualOrderTopFirst.length - index),
                 kind,
                 kindLabel: LAYER_KIND_LABELS[kind] || 'Layer',
                 visible: object.visible !== false,
-                isActive: object === activeObject
+                isActive: object === activeObject,
+                opacity: style.opacity,
+                fill: style.fill,
+                blendMode: style.blendMode,
+                locked: style.locked
             };
         });
     }, [fabricCanvas, genFrame]);
@@ -247,7 +335,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             return false;
         }
         const target = findLayerObjectById(layerId);
-        if (!target || target.visible === false) {
+        if (!target || target.visible === false || target.editorLayerLocked === true) {
             return false;
         }
 
@@ -266,10 +354,90 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             return false;
         }
 
+        markUndoDirty(target);
         target.set({ visible: target.visible === false });
         if (target.visible === false && fabricCanvas.getActiveObject() === target) {
             fabricCanvas.discardActiveObject();
         }
+        syncCanvasInteractionMode();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+        emitLayersSnapshot();
+        return true;
+    };
+
+    const addLayer = async () => {
+        if (!fabricCanvas || !genFrame) {
+            return false;
+        }
+
+        const source = fabricCanvas.getActiveObject()
+            || [...fabricCanvas.getObjects()].reverse().find((object) => isLayerPanelObject(object) && object.visible !== false);
+        if (!source) {
+            return false;
+        }
+
+        const cloned = await cloneCanvasObject(source);
+        const left = Number(source.left ?? 0) + 20;
+        const top = Number(source.top ?? 0) + 20;
+        cloned.set({
+            left,
+            top,
+            visible: true,
+            selectable: true,
+            evented: true
+        });
+        cloned.editorLayerName = `${getLayerDisplayName(source, 1)} copy`;
+        ensureLayerId(cloned);
+        applyLayerStyle(cloned, {
+            ...getLayerStyle(source),
+            locked: false
+        });
+        cloned.setCoords();
+
+        fabricCanvas.add(cloned);
+        fabricCanvas.setActiveObject(cloned);
+        syncCanvasInteractionMode();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+        emitLayersSnapshot();
+        return true;
+    };
+
+    const toggleLayerLock = (layerId) => {
+        if (!fabricCanvas) {
+            return false;
+        }
+        const target = findLayerObjectById(layerId);
+        if (!target) {
+            return false;
+        }
+
+        markUndoDirty(target);
+        applyLayerStyle(target, { locked: target.editorLayerLocked !== true });
+        if (target.editorLayerLocked === true && fabricCanvas.getActiveObject() === target) {
+            fabricCanvas.discardActiveObject();
+        }
+        syncCanvasInteractionMode();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+        emitLayersSnapshot();
+        return true;
+    };
+
+    const updateLayerStyle = (layerId, patch) => {
+        if (!fabricCanvas) {
+            return false;
+        }
+        const target = findLayerObjectById(layerId);
+        if (!target) {
+            return false;
+        }
+
+        markUndoDirty(target);
+        applyLayerStyle(target, patch);
+        syncCanvasInteractionMode();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
         fabricCanvas.requestRenderAll();
         emitLayersSnapshot();
         return true;
@@ -924,6 +1092,52 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         };
     };
 
+    const exportBaseRasterFrameImage = async () => {
+        if (!fabricCanvas || !genFrame) {
+            throw new Error('Canvas is not ready for export.');
+        }
+
+        const frameLeft = genFrame.left ?? 0;
+        const frameTop = genFrame.top ?? 0;
+        const frameWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+        const frameHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+
+        const exportCanvas = fabric.util.createCanvasElement();
+        exportCanvas.width = frameWidth;
+        exportCanvas.height = frameHeight;
+        const context = exportCanvas.getContext('2d');
+        if (!context) {
+            throw new Error('Failed to create export context.');
+        }
+
+        const rasterObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && isBaseRasterObject(object, genFrame)
+        ));
+
+        rasterObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-frameLeft, -frameTop);
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        const image = await canvasToBlob(exportCanvas, 'image/png');
+        return {
+            image,
+            width: frameWidth,
+            height: frameHeight
+        };
+    };
+
     const canSpotHeal = () => {
         if (!fabricCanvas || !genFrame) {
             return false;
@@ -938,67 +1152,38 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             throw new Error('Canvas is not ready for spot heal.');
         }
 
-        const frameWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
-        const frameHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+        const { image, width, height } = await exportBaseRasterFrameImage();
+        const frameWidth = width;
+        const frameHeight = height;
         const frameLeft = genFrame.left ?? 0;
         const frameTop = genFrame.top ?? 0;
         const safeRadius = Math.max(4, Math.min(192, Number(radius || (brushSizeRef.current || 8) / 2)));
         const safeX = Math.min(frameLeft + frameWidth - 1, Math.max(frameLeft, Number(x ?? frameLeft)));
         const safeY = Math.min(frameTop + frameHeight - 1, Math.max(frameTop, Number(y ?? frameTop)));
+        const localX = safeX - frameLeft;
+        const localY = safeY - frameTop;
 
-        let maskGroup = getMaskGroupFromCanvas(fabricCanvas);
-        let createdMaskGroup = false;
-
-        if (!maskGroup) {
-            maskGroup = new fabric.Group([], {
-                id: 'maskGroup',
-                editorRole: CANVAS_OBJECT_ROLES.MASK,
-                selectable: false,
-                evented: false,
-                opacity: 0.5,
-                objectCaching: true
-            });
-            fabricCanvas.add(maskGroup);
-            createdMaskGroup = true;
+        const maskCanvas = fabric.util.createCanvasElement();
+        maskCanvas.width = frameWidth;
+        maskCanvas.height = frameHeight;
+        const maskContext = maskCanvas.getContext('2d');
+        if (!maskContext) {
+            throw new Error('Failed to build spot-heal mask.');
         }
+        maskContext.fillStyle = 'black';
+        maskContext.fillRect(0, 0, frameWidth, frameHeight);
+        maskContext.fillStyle = 'white';
+        maskContext.beginPath();
+        maskContext.arc(localX, localY, safeRadius, 0, Math.PI * 2);
+        maskContext.fill();
 
-        const tempSpotMask = new fabric.Circle({
-            left: safeX - safeRadius,
-            top: safeY - safeRadius,
-            radius: safeRadius,
-            originX: 'left',
-            originY: 'top',
-            fill: 'rgba(255, 0, 0, 1.0)',
-            stroke: 'rgba(255, 0, 0, 1.0)',
-            strokeWidth: 0,
-            selectable: false,
-            evented: false,
-            editorRole: CANVAS_OBJECT_ROLES.MASK,
-            isMask: true,
-            isSpotHeal: true
-        });
-
-        maskGroup.addWithUpdate(tempSpotMask);
-        enforceCanvasLayerOrder(fabricCanvas, genFrame);
-        fabricCanvas.requestRenderAll();
-
-        try {
-            return await exportCanvasState(fabricCanvas, genFrame);
-        } finally {
-            if (typeof maskGroup.removeWithUpdate === 'function') {
-                maskGroup.removeWithUpdate(tempSpotMask);
-            } else {
-                maskGroup.remove(tempSpotMask);
-            }
-
-            if (createdMaskGroup && maskGroup.getObjects().length === 0) {
-                fabricCanvas.remove(maskGroup);
-            }
-
-            syncMaskStateFromCanvas(fabricCanvas);
-            enforceCanvasLayerOrder(fabricCanvas, genFrame);
-            fabricCanvas.requestRenderAll();
-        }
+        const mask = await canvasToBlob(maskCanvas, 'image/png');
+        return {
+            image,
+            mask,
+            width: frameWidth,
+            height: frameHeight
+        };
     };
 
     useImperativeHandle(ref, () => ({
@@ -1062,7 +1247,15 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         selectLayer,
 
+        addLayer,
+
         toggleLayerVisibility,
+
+        toggleLayerLock,
+
+        updateLayerStyle,
+
+        hasPendingCandidate: () => Boolean(candidateRef.current),
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 

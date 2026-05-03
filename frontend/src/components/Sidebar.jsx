@@ -44,7 +44,7 @@ const Sidebar = ({
     brushColor, setBrushColor,
     brushSize, setBrushSize,
     onQuickSelectionCopy, onQuickSelectionPaste, onQuickSelectionRefine,
-    layers, onLayerSelect, onLayerToggleVisibility,
+    layers, onLayerSelect, onLayerAdd, onLayerToggleVisibility, onLayerToggleLock, onLayerStyleChange,
     onUndo, onClear, editorRef,
     showToastError, showToastSuccess, showToastInfo
 }) => {
@@ -56,7 +56,6 @@ const Sidebar = ({
         steps: String(params.steps)
     });
     const [layerViewMode, setLayerViewMode] = useState('list');
-    const [layerUiSettings, setLayerUiSettings] = useState({});
 
     useEffect(() => {
         setNumberDrafts({
@@ -80,26 +79,6 @@ const Sidebar = ({
             window.clearInterval(intervalId);
         };
     }, [isTransformingPrompt]);
-
-    useEffect(() => {
-        if (!Array.isArray(layers) || layers.length === 0) {
-            setLayerUiSettings({});
-            return;
-        }
-
-        setLayerUiSettings((prev) => {
-            const next = {};
-            layers.forEach((layer) => {
-                const current = prev[layer.id];
-                next[layer.id] = current || {
-                    opacity: 100,
-                    fill: 100,
-                    blendMode: 'normal'
-                };
-            });
-            return next;
-        });
-    }, [layers]);
 
     const handleChange = (e) => {
         const { name, value, type } = e.target;
@@ -203,28 +182,20 @@ const Sidebar = ({
     };
 
     const selectedLayer = Array.isArray(layers) ? (layers.find((layer) => layer.isActive) || layers[0] || null) : null;
-    const selectedLayerSettings = selectedLayer ? (layerUiSettings[selectedLayer.id] || {
-        opacity: 100,
-        fill: 100,
-        blendMode: 'normal'
-    }) : null;
+    const selectedLayerSettings = selectedLayer ? {
+        opacity: Number.isFinite(Number(selectedLayer.opacity)) ? Number(selectedLayer.opacity) : 100,
+        fill: Number.isFinite(Number(selectedLayer.fill)) ? Number(selectedLayer.fill) : 100,
+        blendMode: selectedLayer.blendMode || 'normal',
+        locked: selectedLayer.locked === true
+    } : null;
 
     const updateSelectedLayerSettings = (patch) => {
         if (!selectedLayer) return;
-        setLayerUiSettings((prev) => ({
-            ...prev,
-            [selectedLayer.id]: {
-                opacity: 100,
-                fill: 100,
-                blendMode: 'normal',
-                ...(prev[selectedLayer.id] || {}),
-                ...patch
-            }
-        }));
+        onLayerStyleChange?.(selectedLayer.id, patch);
     };
 
     const handleAddLayerClick = () => {
-        showToastInfo?.("UI-режим: кнопка 'Добавить слой' пока без привязки к Canvas.");
+        onLayerAdd?.();
     };
 
     return (
@@ -623,11 +594,11 @@ const Sidebar = ({
                                                 <span className="sidebar__layer-content">
                                                     <span className="sidebar__layer-name">{layer.name}</span>
                                                     <span className="sidebar__layer-meta">
-                                                        {(layerUiSettings[layer.id]?.blendMode
-                                                            ? (LAYER_BLEND_MODES.find((mode) => mode.id === layerUiSettings[layer.id].blendMode)?.label || 'Обычный')
+                                                        {(layer.blendMode
+                                                            ? (LAYER_BLEND_MODES.find((mode) => mode.id === layer.blendMode)?.label || 'Обычный')
                                                             : 'Обычный')}
                                                         {' · '}
-                                                        {layerUiSettings[layer.id]?.opacity ?? 100}%
+                                                        {layer.opacity ?? 100}%
                                                     </span>
                                                 </span>
                                             </button>
@@ -654,12 +625,16 @@ const Sidebar = ({
                                             <button
                                                 type="button"
                                                 className="btn sidebar__layer-lock-btn"
-                                                onClick={() => showToastInfo?.('UI-режим: блокировка слоя будет подключена позже.')}
-                                                title="Блокировка слоя (пока только UI)"
+                                                onClick={() => onLayerToggleLock?.(layer.id)}
+                                                title={layer.locked ? 'Разблокировать слой' : 'Заблокировать слой'}
                                             >
                                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                     <rect x="5" y="11" width="14" height="10" rx="2" />
-                                                    <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+                                                    {layer.locked ? (
+                                                        <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+                                                    ) : (
+                                                        <path d="M9 11V8a4 4 0 1 1 8 0" />
+                                                    )}
                                                 </svg>
                                             </button>
                                         </div>
