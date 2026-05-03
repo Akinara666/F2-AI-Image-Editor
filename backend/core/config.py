@@ -47,11 +47,22 @@ class Settings:
         "PROMPT_TRANSFORM_UNLOAD_AFTER_CALL",
         "true",
     ).lower() == "true"
+    NEG_PROMPT_TRANSFORM_ENABLED: bool = os.getenv("NEG_PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
+    NEG_PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("NEG_PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
+    NEG_PROMPT_TRANSFORM_PROVIDER: str = os.getenv("NEG_PROMPT_TRANSFORM_PROVIDER", "stub")
+    NEG_PROMPT_TRANSFORM_STRICT: bool = os.getenv("NEG_PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
+    NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL: bool = os.getenv("NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL", "true").lower() == "true"
+    PROMPT_TRANSFORM_QUEUE_MODE: str = os.getenv("PROMPT_TRANSFORM_QUEUE_MODE", "wait")
+    PROMPT_TRANSFORM_MAX_WAIT_MS: int = int(os.getenv("PROMPT_TRANSFORM_MAX_WAIT_MS", "20000"))
 
     #_____________апдейт_______ GGUF + LoRA LLM runtime config
     LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", str(BASE_DIR / "models" / "llm" / "model.gguf"))
     LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", str(BASE_DIR / "models" / "llm" / "adapter.gguf"))
     LLM_LORA_SCALE: float = float(os.getenv("LLM_LORA_SCALE", "1.0"))
+    LLM_POSITIVE_LORA_PATH: str = os.getenv("LLM_POSITIVE_LORA_PATH", os.getenv("LLM_LORA_PATH", ""))
+    LLM_NEGATIVE_LORA_PATH: str = os.getenv("LLM_NEGATIVE_LORA_PATH", "")
+    LLM_POSITIVE_LORA_SCALE: float = float(os.getenv("LLM_POSITIVE_LORA_SCALE", os.getenv("LLM_LORA_SCALE", "1.0")))
+    LLM_NEGATIVE_LORA_SCALE: float = float(os.getenv("LLM_NEGATIVE_LORA_SCALE", "1.0"))
     LLM_CTX_SIZE: int = int(os.getenv("LLM_CTX_SIZE", "4096"))
     LLM_THREADS: int = int(os.getenv("LLM_THREADS", "6"))
     LLM_GPU_LAYERS: int = int(os.getenv("LLM_GPU_LAYERS", "0"))
