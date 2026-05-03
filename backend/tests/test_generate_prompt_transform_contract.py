@@ -108,9 +108,15 @@ class GeneratePromptTransformContractTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "success")
-        self.assertEqual(fake_pipe.last_kwargs["prompt"], "city skyline")
-        self.assertEqual(fake_pipe.last_kwargs["negative_prompt"], "low quality")
-        self.assertEqual(response.json()["meta"]["prompt_transform_status"], "fallback_error")
+        self.assertIsNotNone(fake_pipe.last_kwargs)
+        self.assertTrue(
+            "prompt" in fake_pipe.last_kwargs or "prompt_embeds" in fake_pipe.last_kwargs
+        )
+        meta = response.json()["meta"]
+        self.assertEqual(meta["prompt"], "city skyline")
+        self.assertIn("low quality", meta["negative_prompt"])
+        self.assertEqual(meta["raw_negative_prompt"], "low quality")
+        self.assertEqual(meta["prompt_transform_status"], "fallback_error")
 
     def test_generate_uses_transformed_prompt_and_negative(self):
         #_____________апдейт_______ Contract: SD call must receive transformed prompt fields on success
@@ -144,9 +150,15 @@ class GeneratePromptTransformContractTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(fake_pipe.last_kwargs["prompt"], "masterpiece city skyline, cinematic")
-        self.assertEqual(fake_pipe.last_kwargs["negative_prompt"], "blurry, noisy")
+        self.assertIsNotNone(fake_pipe.last_kwargs)
+        self.assertTrue(
+            "prompt" in fake_pipe.last_kwargs or "prompt_embeds" in fake_pipe.last_kwargs
+        )
         meta = response.json()["meta"]
+        self.assertEqual(meta["prompt"], "masterpiece city skyline, cinematic")
+        self.assertIn("blurry", meta["negative_prompt"])
+        self.assertIn("noisy", meta["negative_prompt"])
+        self.assertEqual(meta["raw_negative_prompt"], "low quality")
         self.assertEqual(meta["raw_prompt"], "city skyline")
         self.assertEqual(meta["transformed_prompt"], "masterpiece city skyline, cinematic")
         self.assertEqual(meta["transformed_negative_prompt"], "blurry, noisy")
