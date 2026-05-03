@@ -180,10 +180,29 @@ def _build_quick_select_mask(
     selection_height: int,
     feather: int = 0,
 ) -> Image.Image:
-    left = max(0, min(width - 1, int(selection_left)))
-    top = max(0, min(height - 1, int(selection_top)))
-    right = max(left + 1, min(width, left + max(1, int(selection_width))))
-    bottom = max(top + 1, min(height, top + max(1, int(selection_height))))
+    #_____________апдейт_______ Strict selection validation for quick-select API contract
+    if int(width) <= 0 or int(height) <= 0:
+        raise _validation_error("width and height must be positive integers for quick-select refine.")
+
+    left = int(selection_left)
+    top = int(selection_top)
+    sel_width = int(selection_width)
+    sel_height = int(selection_height)
+
+    if sel_width <= 0 or sel_height <= 0:
+        raise _validation_error("selection_width and selection_height must be greater than zero.")
+
+    if left < 0 or top < 0:
+        raise _validation_error("selection_left and selection_top must be non-negative.")
+
+    if left >= width or top >= height:
+        raise _validation_error("Selection origin is outside image bounds.")
+
+    if (left + sel_width) > width or (top + sel_height) > height:
+        raise _validation_error("Selection rectangle exceeds image bounds.")
+
+    right = left + sel_width
+    bottom = top + sel_height
 
     if right <= left or bottom <= top:
         raise _validation_error("Selection bounds are invalid for quick-select refine.")
