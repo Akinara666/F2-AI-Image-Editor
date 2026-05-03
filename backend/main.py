@@ -733,6 +733,7 @@ async def generate_image(
     request_id: Optional[str] = Form(default=None),
     raw_prompt: Optional[str] = Form(default=None),
     use_prompt_transform: Optional[bool] = Form(default=None),
+    use_negative_prompt_transform: Optional[bool] = Form(default=None),
     negative_prompt: str = Form(default="low quality, bad anatomy, ugly"),
     width: int = Form(default=512),
     height: int = Form(default=512),
@@ -816,6 +817,45 @@ async def generate_image(
         if transform_result.transform_status != "success":
             final_prompt = source_prompt
             final_negative_prompt = negative_prompt
+
+        negative_transform_source = final_negative_prompt
+        negative_transform_result = await negative_prompt_transformer.transform_negative_prompt(
+            raw_negative_prompt=negative_transform_source,
+            use_negative_prompt_transform=use_negative_prompt_transform,
+            context={
+                "mode": mode,
+                "model_id": model_id,
+                "model_family": model_family,
+                "user_prompt": source_prompt,
+            },
+        )
+        logger.info(
+            "Negative prompt transform status=%s provider=%s latency_ms=%s",
+            negative_transform_result.transform_status,
+            negative_transform_result.provider,
+            negative_transform_result.latency_ms,
+        )
+        negative_transform_required = (
+            settings.NEG_PROMPT_TRANSFORM_ENABLED
+            if use_negative_prompt_transform is None
+            else use_negative_prompt_transform
+        )
+        if (
+            negative_transform_required
+            and settings.NEG_PROMPT_TRANSFORM_STRICT
+            and negative_transform_result.transform_status not in {"success", "skipped_empty"}
+        ):
+            detail = (
+                "Negative prompt was not transformed. "
+                f"status={negative_transform_result.transform_status}"
+            )
+            if negative_transform_result.error:
+                detail = f"{detail}. error={negative_transform_result.error}"
+            raise HTTPException(status_code=422, detail=detail)
+        if negative_transform_result.transform_status == "success":
+            final_negative_prompt = negative_transform_result.transformed_negative_prompt
+        else:
+            final_negative_prompt = negative_transform_source
 
         # 0. Apply Preset
         if style_preset:
@@ -1121,11 +1161,17 @@ async def generate_image(
                 #_____________апдейт_______ Prompt transformation trace
                 "raw_prompt": transform_result.raw_prompt,
                 "transformed_prompt": transform_result.transformed_prompt,
-                "transformed_negative_prompt": transform_result.transformed_negative_prompt,
+                "transformed_negative_prompt": final_negative_prompt,
+                "transformed_negative_prompt_from_positive": transform_result.transformed_negative_prompt,
                 "prompt_transform_status": transform_result.transform_status,
                 "prompt_transform_provider": transform_result.provider,
                 "prompt_transform_latency_ms": transform_result.latency_ms,
                 "prompt_transform_strict": settings.PROMPT_TRANSFORM_STRICT,
+                "negative_prompt_transform_source": negative_transform_source,
+                "negative_prompt_transform_status": negative_transform_result.transform_status,
+                "negative_prompt_transform_provider": negative_transform_result.provider,
+                "negative_prompt_transform_latency_ms": negative_transform_result.latency_ms,
+                "negative_prompt_transform_strict": settings.NEG_PROMPT_TRANSFORM_STRICT,
                 "nsfw_filter_active": nsfw_filter_active,
                 "nsfw_negative_prompt_applied": nsfw_negative_prompt_applied,
                 "nsfw_negative_prompt_extra": nsfw_negative_prompt_extra if nsfw_filter_active else "",
@@ -1137,6 +1183,8 @@ async def generate_image(
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
                 meta["prompt_transform_error"] = transform_result.error
+            if negative_transform_result.error:
+                meta["negative_prompt_transform_error"] = negative_transform_result.error
             
             filename = save_image_with_metadata(result_image, meta, str(settings.OUTPUT_DIR))
             return {
