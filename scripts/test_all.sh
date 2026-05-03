@@ -13,7 +13,7 @@ echo
 echo "==> Frontend regression tests"
 (
   cd "$ROOT_DIR"
-  node --test frontend/tests/*.test.mjs
+  node --experimental-specifier-resolution=node --test frontend/tests/*.test.mjs
 )
 
 echo

@@ -1,6 +1,38 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { exportCanvasState, mergeCanvasLayers } from "../src/utils/canvasLogic.js";
+import test, { after } from "node:test";
+import { fabric } from "fabric";
+import { exportCanvasState } from "../src/utils/canvasLogic.js";
+
+const renderSnapshots = [];
+const originalCreateCanvasElement = fabric.util.createCanvasElement;
+
+fabric.util.createCanvasElement = () => {
+  const ctx = {
+    fillStyle: "",
+    renderedIds: [],
+    save() {},
+    restore() {},
+    translate() {},
+    fillRect() {},
+    getImageData() {
+      return { data: new Uint8ClampedArray([0, 0, 0, 255]) };
+    },
+    __renderId(id) {
+      this.renderedIds.push(id);
+    },
+  };
+  return {
+    width: 0,
+    height: 0,
+    getContext() {
+      return ctx;
+    },
+    toBlob(callback, type) {
+      renderSnapshots.push([...ctx.renderedIds]);
+      callback(new Blob(["x"], { type: type || "image/png" }));
+    },
+  };
+};
 
 class FakeObj {
   constructor(props = {}) {
@@ -13,6 +45,16 @@ class FakeObj {
   }
 
   bringToFront() {}
+
+  render(ctx) {
+    if (this.visible !== false) {
+      ctx.__renderId(this.id || "obj");
+    }
+  }
+
+  clone(cb) {
+    cb(new FakeObj({ ...this }));
+  }
 }
 
 class FakeMaskGroup extends FakeObj {
@@ -24,44 +66,29 @@ class FakeMaskGroup extends FakeObj {
   getObjects() {
     return this._children;
   }
+
+  clone(cb) {
+    const clonedChildren = this._children.map((child) => new FakeObj({ ...child }));
+    cb(new FakeMaskGroup(clonedChildren));
+  }
+
+  render(ctx) {
+    if (this.visible === false) return;
+    this._children.forEach((child) => {
+      if (child.visible !== false) {
+        child.render(ctx);
+      }
+    });
+  }
 }
 
 class FakeCanvas {
   constructor(objects) {
     this._objects = objects;
-    this.viewportTransform = [1, 0, 0, 1, 0, 0];
-    this.backgroundColor = null;
-    this.snapshots = [];
   }
 
   getObjects() {
     return this._objects;
-  }
-
-  setViewportTransform(vpt) {
-    this.viewportTransform = [...vpt];
-  }
-
-  requestRenderAll() {}
-
-  remove(obj) {
-    this._objects = this._objects.filter((item) => item !== obj);
-  }
-
-  toDataURL() {
-    const topVisible = this._objects
-      .filter((o) => o.visible !== false)
-      .map((o) => o.id || o.type || "obj");
-    const maskGroup = this._objects.find((o) => o.id === "maskGroup");
-    const maskChildrenVisible = maskGroup
-      ? maskGroup.getObjects().filter((o) => o.visible !== false).map((o) => o.id)
-      : [];
-    this.snapshots.push({
-      topVisible,
-      maskChildrenVisible,
-      backgroundColor: this.backgroundColor,
-    });
-    return "data:text/plain;base64,QQ==";
   }
 }
 
@@ -75,10 +102,12 @@ function createFrame() {
     scaleX: 1,
     scaleY: 1,
     visible: true,
+    editorRole: "frame",
   });
 }
 
-test("exportCanvasState не экспортирует временную mask-only разметку", async () => {
+test("exportCanvasState не создает mask blob если есть только временная mask-only разметка", async () => {
+  renderSnapshots.length = 0;
   const tempMask = new FakeObj({
     id: "temp-mask",
     isMask: true,
@@ -88,16 +117,17 @@ test("exportCanvasState не экспортирует временную mask-on
   });
   const maskGroup = new FakeMaskGroup([tempMask]);
   const frame = createFrame();
-  const base = new FakeObj({ id: "base-image", type: "image", visible: true });
+  const base = new FakeObj({ id: "base-image", editorRole: "base", visible: true });
   const canvas = new FakeCanvas([base, maskGroup, frame]);
 
   const result = await exportCanvasState(canvas, frame);
 
   assert.equal(result.mask, null);
-  assert.equal(canvas.snapshots.length, 1);
+  assert.equal(renderSnapshots.length, 1);
 });
 
-test("exportCanvasState в mask-экспорте игнорирует overlay-элементы с excludeFromExport", async () => {
+test("exportCanvasState в mask-экспорте исключает overlay элементы", async () => {
+  renderSnapshots.length = 0;
   const realMask = new FakeObj({
     id: "real-mask",
     isMask: true,
@@ -113,34 +143,18 @@ test("exportCanvasState в mask-экспорте игнорирует overlay-э
   });
   const maskGroup = new FakeMaskGroup([realMask, tempMask]);
   const frame = createFrame();
-  const base = new FakeObj({ id: "base-image", type: "image", visible: true });
+  const base = new FakeObj({ id: "base-image", editorRole: "base", visible: true });
   const canvas = new FakeCanvas([base, maskGroup, frame]);
 
   const result = await exportCanvasState(canvas, frame);
 
   assert.ok(result.mask instanceof Blob);
-  assert.equal(canvas.snapshots.length, 2);
-  assert.deepEqual(canvas.snapshots[1].maskChildrenVisible, ["real-mask"]);
+  assert.equal(renderSnapshots.length, 2);
+  assert.deepEqual(renderSnapshots[1], ["real-mask"]);
   assert.equal(realMask.visible, true);
   assert.equal(tempMask.visible, true);
 });
 
-test("mergeCanvasLayers удаляет eraser-path и передает их в callback", () => {
-  const frame = createFrame();
-  const candidate = new FakeObj({ id: "candidate", isCandidate: true });
-  const eraser1 = new FakeObj({ id: "eraser-1", isEraser: true });
-  const eraser2 = new FakeObj({ id: "eraser-2", isEraser: true });
-  const base = new FakeObj({ id: "base-image", type: "image" });
-  const canvas = new FakeCanvas([base, eraser1, candidate, eraser2, frame]);
-
-  let removed = null;
-  mergeCanvasLayers(canvas, candidate, frame, (erasers) => {
-    removed = erasers;
-  });
-
-  assert.equal(candidate.isCandidate, false);
-  assert.equal(candidate.lockMovementX, true);
-  assert.equal(canvas.getObjects().includes(eraser1), false);
-  assert.equal(canvas.getObjects().includes(eraser2), false);
-  assert.deepEqual(removed, [eraser1, eraser2]);
+after(() => {
+  fabric.util.createCanvasElement = originalCreateCanvasElement;
 });

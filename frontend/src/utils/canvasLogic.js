@@ -1,5 +1,5 @@
 import { fabric } from 'fabric';
-import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
+import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants.js';
 
 const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.FRAME_HIT_AREA]: -1,

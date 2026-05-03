@@ -1,9 +1,11 @@
+import asyncio
 import threading
 import time
 import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -31,7 +33,9 @@ class SlowPipe:
 class GenerationRaceConditionsTests(unittest.TestCase):
     def setUp(self):
         self.main = load_app_main()
-        self.main.generation_state["cancel_requested"] = False
+        self.main.model_manager.cancel_requested = False
+        self.main.model_manager.active_request_id = None
+        self.main.model_manager.cancelled_request_ids.clear()
         self.original_strict = self.main.settings.PROMPT_TRANSFORM_STRICT
         self.main.settings.PROMPT_TRANSFORM_STRICT = True
         self.transform_ok = PromptTransformResult(
@@ -45,9 +49,11 @@ class GenerationRaceConditionsTests(unittest.TestCase):
 
     def tearDown(self):
         self.main.settings.PROMPT_TRANSFORM_STRICT = self.original_strict
-        self.main.generation_state["cancel_requested"] = False
+        self.main.model_manager.cancel_requested = False
+        self.main.model_manager.active_request_id = None
+        self.main.model_manager.cancelled_request_ids.clear()
 
-    def _form(self, prompt):
+    def _form(self, prompt, request_id):
         return {
             "prompt": prompt,
             "negative_prompt": "low quality",
@@ -60,9 +66,11 @@ class GenerationRaceConditionsTests(unittest.TestCase):
             "model_id": "runwayml/stable-diffusion-v1-5",
             "sampler": "Euler a",
             "use_prompt_transform": "true",
+            "request_id": request_id,
         }
 
     def test_cancel_during_generation_returns_499(self):
+        request_id = "race-cancel-1"
         started = threading.Event()
         pipe = SlowPipe(started)
         result_holder = {}
@@ -84,26 +92,26 @@ class GenerationRaceConditionsTests(unittest.TestCase):
                 with TestClient(self.main.app) as thread_client:
                     result_holder["response"] = thread_client.post(
                         "/generate",
-                        data=self._form("cancel me"),
+                        data=self._form("cancel me", request_id),
                     )
 
             generate_thread = threading.Thread(target=run_generate)
             generate_thread.start()
             started.wait(timeout=2)
             with TestClient(self.main.app) as control_client:
-                cancel_response = control_client.post("/cancel")
+                cancel_response = control_client.post(
+                    "/cancel",
+                    json={"request_id": request_id},
+                )
             generate_thread.join(timeout=5)
 
         response = result_holder["response"]
         self.assertEqual(cancel_response.status_code, 200)
-        self.assertEqual(cancel_response.json()["status"], "cancelled")
+        self.assertEqual(cancel_response.json()["status"], "cancelling")
         self.assertEqual(response.status_code, 499)
         self.assertIn("cancelled", response.json()["detail"].lower())
 
     def test_parallel_generate_requests_complete_without_cancel(self):
-        responses = []
-        lock = threading.Lock()
-
         async def get_pipe(*args, **kwargs):
             return SlowPipe(threading.Event())
 
@@ -120,18 +128,23 @@ class GenerationRaceConditionsTests(unittest.TestCase):
             "save_image_with_metadata",
             return_value="fake.png",
         ):
-            def run_request(prompt):
-                with TestClient(self.main.app) as thread_client:
-                    resp = thread_client.post("/generate", data=self._form(prompt))
-                with lock:
-                    responses.append(resp)
+            async def run_parallel():
+                transport = httpx.ASGITransport(app=self.main.app)
+                async with httpx.AsyncClient(
+                    transport=transport,
+                    base_url="http://testserver",
+                ) as client:
+                    req1 = client.post(
+                        "/generate",
+                        data=self._form("p1", "race-parallel-1"),
+                    )
+                    req2 = client.post(
+                        "/generate",
+                        data=self._form("p2", "race-parallel-2"),
+                    )
+                    return await asyncio.gather(req1, req2)
 
-            t1 = threading.Thread(target=run_request, args=("p1",))
-            t2 = threading.Thread(target=run_request, args=("p2",))
-            t1.start()
-            t2.start()
-            t1.join(timeout=10)
-            t2.join(timeout=10)
+            responses = asyncio.run(run_parallel())
 
         self.assertEqual(len(responses), 2)
         self.assertEqual(sorted([r.status_code for r in responses]), [200, 200])
