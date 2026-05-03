@@ -6,6 +6,7 @@ import random
 from typing import Optional
 from pathlib import Path
 import math
+import json
 import uvicorn
 import io
 import asyncio
@@ -16,7 +17,7 @@ import threading
 from time import monotonic
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
 import torch
 from pydantic import BaseModel
 from compel import CompelForSD, CompelForSDXL
@@ -496,6 +497,65 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
             "prompt_embeds": prompt_embeds,
             "negative_prompt_embeds": negative_prompt_embeds,
         }
+
+
+async def _read_upload_image(upload: UploadFile, *, mode: str) -> Image.Image:
+    content = await upload.read()
+    try:
+        image = Image.open(io.BytesIO(content))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid image in field: {upload.filename or 'upload'}")
+    return image.convert(mode)
+
+
+def _build_circle_mask(width: int, height: int, cx: int, cy: int, radius: int) -> Image.Image:
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
+    return mask
+
+
+def _parse_selection_points(raw_points: str, width: int, height: int) -> list[tuple[int, int]]:
+    try:
+        payload = json.loads(raw_points)
+    except Exception:
+        raise _validation_error("selection_points must be valid JSON.")
+
+    if not isinstance(payload, list) or len(payload) < 3:
+        raise _validation_error("selection_points must contain at least 3 points.")
+
+    points: list[tuple[int, int]] = []
+    for point in payload:
+        try:
+            if isinstance(point, dict):
+                x = int(point.get("x"))
+                y = int(point.get("y"))
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                x = int(point[0])
+                y = int(point[1])
+            else:
+                raise _validation_error("selection_points items must be [x,y] or {x,y}.")
+        except Exception:
+            raise _validation_error("selection_points items must contain integer x and y.")
+
+        if x < 0 or y < 0 or x >= width or y >= height:
+            raise _validation_error("selection_points must stay inside image bounds.")
+        points.append((x, y))
+
+    return points
+
+
+def _build_polygon_mask(width: int, height: int, points: list[tuple[int, int]]) -> Image.Image:
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(points, fill=255)
+    return mask
+
+
+def _save_tool_image(image: Image.Image, meta: dict[str, object], prompt_slug: str) -> str:
+    tool_meta = dict(meta)
+    tool_meta["prompt"] = prompt_slug
+    return save_image_with_metadata(image, tool_meta, str(settings.OUTPUT_DIR))
 
 # --- Endpoints ---
 
@@ -1207,6 +1267,225 @@ async def generate_image(
         logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/spot-heal")
+async def tool_spot_heal(
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(default=None),
+    center_x: Optional[int] = Form(default=None),
+    center_y: Optional[int] = Form(default=None),
+    radius: int = Form(default=20),
+    mask_blur: int = Form(default=8),
+    mask_padding: int = Form(default=4),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    radius = _validate_int_field("radius", radius, 1, 512)
+    mask_blur = _validate_int_field("mask_blur", mask_blur, 0, 128)
+    mask_padding = _validate_int_field("mask_padding", mask_padding, 0, 128)
+
+    if mask_image is not None:
+        raw_mask = await _read_upload_image(mask_image, mode="L")
+        raw_mask = raw_mask.resize(source.size, Image.Resampling.NEAREST)
+    else:
+        if center_x is None or center_y is None:
+            raise _validation_error("Provide mask_image or center_x/center_y.")
+        if center_x < 0 or center_y < 0 or center_x >= source.width or center_y >= source.height:
+            raise _validation_error("center_x/center_y must be inside image bounds.")
+        raw_mask = _build_circle_mask(source.width, source.height, center_x, center_y, radius)
+
+    generation_mask, blend_mask = process_mask_for_inpainting(
+        raw_mask,
+        mask_padding=mask_padding,
+        mask_blur=mask_blur,
+    )
+    healed = source.filter(ImageFilter.MedianFilter(size=5)).filter(ImageFilter.GaussianBlur(radius=1.4))
+    result = feather_blend(source, healed, blend_mask, generation_mask)
+
+    filename = _save_tool_image(
+        result,
+        {
+            "tool": "spot_heal",
+            "mask_blur": mask_blur,
+            "mask_padding": mask_padding,
+            "radius": radius,
+        },
+        "tool_spot_heal",
+    )
+    return {
+        "status": "success",
+        "url": f"/outputs/{filename}",
+        "meta": {
+            "tool": "spot_heal",
+            "width": source.width,
+            "height": source.height,
+            "mask_blur": mask_blur,
+            "mask_padding": mask_padding,
+        },
+    }
+
+
+@app.post("/tools/clone-stamp")
+async def tool_clone_stamp(
+    init_image: UploadFile = File(...),
+    source_x: int = Form(...),
+    source_y: int = Form(...),
+    target_x: int = Form(...),
+    target_y: int = Form(...),
+    radius: int = Form(default=24),
+    feather: int = Form(default=8),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    radius = _validate_int_field("radius", radius, 1, 512)
+    feather = _validate_int_field("feather", feather, 0, 128)
+
+    for field_name, x_value, y_value in (
+        ("source", source_x, source_y),
+        ("target", target_x, target_y),
+    ):
+        if x_value < 0 or y_value < 0 or x_value >= source.width or y_value >= source.height:
+            raise _validation_error(f"{field_name}_x/{field_name}_y must be inside image bounds.")
+
+    crop_box = (
+        max(0, source_x - radius),
+        max(0, source_y - radius),
+        min(source.width, source_x + radius + 1),
+        min(source.height, source_y + radius + 1),
+    )
+    patch = source.crop(crop_box)
+    patch_layer = Image.new("RGB", source.size, (0, 0, 0))
+    patch_presence = Image.new("L", source.size, 0)
+
+    target_left = target_x - patch.width // 2
+    target_top = target_y - patch.height // 2
+    patch_layer.paste(patch, (target_left, target_top))
+    patch_presence.paste(255, (target_left, target_top, target_left + patch.width, target_top + patch.height))
+
+    circle_mask = _build_circle_mask(source.width, source.height, target_x, target_y, radius)
+    composed_mask = ImageChops.multiply(circle_mask, patch_presence)
+    if feather > 0:
+        composed_mask = composed_mask.filter(ImageFilter.GaussianBlur(radius=feather))
+
+    result = Image.composite(patch_layer, source, composed_mask)
+    filename = _save_tool_image(
+        result,
+        {
+            "tool": "clone_stamp",
+            "radius": radius,
+            "feather": feather,
+            "source_x": source_x,
+            "source_y": source_y,
+            "target_x": target_x,
+            "target_y": target_y,
+        },
+        "tool_clone_stamp",
+    )
+    return {
+        "status": "success",
+        "url": f"/outputs/{filename}",
+        "meta": {
+            "tool": "clone_stamp",
+            "width": source.width,
+            "height": source.height,
+            "radius": radius,
+            "feather": feather,
+        },
+    }
+
+
+@app.post("/tools/quick-select/refine")
+async def tool_quick_select_refine(
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(default=None),
+    selection_points: Optional[str] = Form(default=None),
+    selection_left: Optional[int] = Form(default=None),
+    selection_top: Optional[int] = Form(default=None),
+    selection_width: Optional[int] = Form(default=None),
+    selection_height: Optional[int] = Form(default=None),
+    expand: int = Form(default=6),
+    feather: int = Form(default=8),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    expand = _validate_int_field("expand", expand, 0, 128)
+    feather = _validate_int_field("feather", feather, 0, 128)
+
+    if mask_image is not None:
+        raw_mask = await _read_upload_image(mask_image, mode="L")
+        raw_mask = raw_mask.resize(source.size, Image.Resampling.NEAREST)
+    elif selection_points:
+        points = _parse_selection_points(selection_points, source.width, source.height)
+        raw_mask = _build_polygon_mask(source.width, source.height, points)
+    elif (
+        selection_left is not None
+        and selection_top is not None
+        and selection_width is not None
+        and selection_height is not None
+    ):
+        if selection_width <= 0 or selection_height <= 0:
+            raise _validation_error("selection_width and selection_height must be > 0.")
+        if selection_left < 0 or selection_top < 0:
+            raise _validation_error("selection_left and selection_top must be >= 0.")
+        if selection_left + selection_width > source.width or selection_top + selection_height > source.height:
+            raise _validation_error("selection rectangle must stay inside image bounds.")
+        raw_mask = Image.new("L", source.size, 0)
+        draw = ImageDraw.Draw(raw_mask)
+        draw.rectangle(
+            (
+                selection_left,
+                selection_top,
+                selection_left + selection_width,
+                selection_top + selection_height,
+            ),
+            fill=255,
+        )
+    else:
+        raise _validation_error(
+            "Provide mask_image, selection_points, or selection_left/top/width/height."
+        )
+
+    generation_mask, blend_mask = process_mask_for_inpainting(
+        raw_mask,
+        mask_padding=expand,
+        mask_blur=feather,
+    )
+    bbox = generation_mask.getbbox()
+
+    generation_filename = _save_tool_image(
+        generation_mask,
+        {
+            "tool": "quick_select_refine_generation_mask",
+            "expand": expand,
+            "feather": feather,
+        },
+        "tool_quick_select_generation_mask",
+    )
+    blend_filename = _save_tool_image(
+        blend_mask,
+        {
+            "tool": "quick_select_refine_blend_mask",
+            "expand": expand,
+            "feather": feather,
+        },
+        "tool_quick_select_blend_mask",
+    )
+
+    return {
+        "status": "success",
+        "data": {
+            "generation_mask_url": f"/outputs/{generation_filename}",
+            "blend_mask_url": f"/outputs/{blend_filename}",
+            "bbox": {
+                "left": int(bbox[0]) if bbox else 0,
+                "top": int(bbox[1]) if bbox else 0,
+                "right": int(bbox[2]) if bbox else 0,
+                "bottom": int(bbox[3]) if bbox else 0,
+            },
+            "width": source.width,
+            "height": source.height,
+            "expand": expand,
+            "feather": feather,
+        },
+    }
 
 @app.post("/upscale")
 async def upscale_image(
