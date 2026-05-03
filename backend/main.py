@@ -32,6 +32,7 @@ from core.utils import (
 )
 from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
+from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
 from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
 import logging
@@ -635,21 +636,28 @@ class PromptTransformPreviewRequest(BaseModel):
     prompt: str
     negative_prompt: Optional[str] = None
     use_prompt_transform: Optional[bool] = None
+    use_negative_prompt_transform: Optional[bool] = None
 
 
 #_____________апдейт_______ Prompt transformer preview endpoint
 @app.post("/prompt/transform")
 async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
     logger.info(
-        "Preview prompt transform requested: prompt_len=%s negative_len=%s use_prompt_transform=%s",
+        "Preview prompt transform requested: prompt_len=%s negative_len=%s use_prompt_transform=%s use_negative_prompt_transform=%s",
         len((payload.prompt or "").strip()),
         len((payload.negative_prompt or "").strip()),
         payload.use_prompt_transform,
+        payload.use_negative_prompt_transform,
     )
     result = await prompt_transformer.transform_prompt(
         raw_prompt=payload.prompt,
         use_prompt_transform=payload.use_prompt_transform,
         context={"user_negative_prompt": payload.negative_prompt or ""},
+    )
+    negative_result = await negative_prompt_transformer.transform_negative_prompt(
+        raw_negative_prompt=payload.negative_prompt or "",
+        use_negative_prompt_transform=payload.use_negative_prompt_transform,
+        context={"user_prompt": payload.prompt or ""},
     )
     #_____________апдейт_______ Strict validation for preview endpoint
     transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
@@ -666,19 +674,49 @@ async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
             status_code=422,
             detail=detail,
         )
+    negative_transform_required = (
+        settings.NEG_PROMPT_TRANSFORM_ENABLED
+        if payload.use_negative_prompt_transform is None
+        else payload.use_negative_prompt_transform
+    )
+    if (
+        negative_transform_required
+        and settings.NEG_PROMPT_TRANSFORM_STRICT
+        and len((payload.negative_prompt or "").strip()) > 0
+        and negative_result.transform_status != "success"
+    ):
+        detail = f"Negative prompt was not transformed. status={negative_result.transform_status}"
+        if negative_result.error:
+            detail = f"{detail}. error={negative_result.error}"
+        logger.warning(
+            "Preview negative prompt transform failed in strict mode: status=%s error=%s",
+            negative_result.transform_status,
+            negative_result.error,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=detail,
+        )
     logger.info(
-        "Preview prompt transform completed: status=%s provider=%s latency_ms=%s",
+        "Preview prompt transform completed: status=%s provider=%s latency_ms=%s negative_status=%s negative_provider=%s negative_latency_ms=%s",
         result.transform_status,
         result.provider,
         result.latency_ms,
+        negative_result.transform_status,
+        negative_result.provider,
+        negative_result.latency_ms,
     )
-    return {"status": "success", "data": result.to_dict()}
+    data = result.to_dict()
+    data["negative_prompt_transform"] = negative_result.to_dict()
+    return {"status": "success", "data": data}
 
 
 #_____________апдейт_______ Prompt transformer health endpoint
 @app.get("/prompt/health")
 def prompt_transform_health():
-    return {"status": "success", "data": prompt_transformer.health()}
+    data = prompt_transformer.health()
+    data["negative_prompt_transform"] = negative_prompt_transformer.health()
+    return {"status": "success", "data": data}
 
 
 @app.get("/generate/preview/{request_id}")
