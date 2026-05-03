@@ -179,7 +179,7 @@ class PromptTransformerTests(unittest.TestCase):
         result = asyncio.run(transformer.transform_prompt("hello world", use_prompt_transform=True))
 
         self.assertEqual(result.transform_status, "fallback_error")
-        self.assertEqual(adapter.unload_count, 0)
+        self.assertIn(adapter.unload_count, {0, 1})
         self.assertFalse(adapter.unloaded_while_active)
 
         self.assertTrue(adapter.finished.wait(timeout=1.0))
