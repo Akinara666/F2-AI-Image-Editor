@@ -6,7 +6,9 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from PIL import Image
 
-import main as app_main
+from tests.app_test_bootstrap import load_app_main
+
+app_main = load_app_main()
 
 
 def _png_bytes(size=(64, 64), color=(128, 128, 128, 255)) -> bytes:
