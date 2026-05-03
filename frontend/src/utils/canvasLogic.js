@@ -409,7 +409,10 @@ export const exportCanvasState = async (canvas, frame) => {
 
     const objects = canvas.getObjects();
     const maskGroup = objects.find((object) => object.id === 'maskGroup');
-    const hasExplicitMasks = !!(maskGroup && maskGroup.getObjects().length > 0);
+    const exportableMaskChildren = maskGroup
+        ? maskGroup.getObjects().filter((child) => !isUiOnlyObject(child))
+        : [];
+    const hasExplicitMasks = exportableMaskChildren.length > 0;
     const sketchObjects = objects.filter((object) => (
         object.visible !== false && isSketchObject(object, frame)
     ));
@@ -444,11 +447,15 @@ export const exportCanvasState = async (canvas, frame) => {
             opacity: 1.0
         });
         maskClone.getObjects().forEach((child) => {
-            child.set({
-                visible: true,
-                opacity: 1.0,
-                stroke: 'white'
-            });
+            if (isUiOnlyObject(child)) {
+                child.set({ visible: false });
+            } else {
+                child.set({
+                    visible: true,
+                    opacity: 1.0,
+                    stroke: 'white'
+                });
+            }
         });
         const maskCanvas = renderEntriesToCanvas([{ object: maskClone }], bounds, 'black');
         maskBlob = await canvasElementToBlob(maskCanvas, 'image/png');
