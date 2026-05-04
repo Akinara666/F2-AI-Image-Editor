@@ -479,6 +479,36 @@ export const exportCanvasState = async (canvas, frame) => {
     };
 };
 
+const placeImageOnCanvas = (fabricCanvas, img) => {
+    const vt = fabricCanvas.viewportTransform;
+    const zoom = vt[0];
+    const viewCenterX = (-vt[4] + fabricCanvas.getWidth() / 2) / zoom;
+    const viewCenterY = (-vt[5] + fabricCanvas.getHeight() / 2) / zoom;
+    const maxW = (fabricCanvas.getWidth() * 0.8) / zoom;
+    const maxH = (fabricCanvas.getHeight() * 0.8) / zoom;
+    const scale = Math.min(1, maxW / img.width, maxH / img.height);
+    img.set({
+        left: viewCenterX - (img.width * scale) / 2,
+        top: viewCenterY - (img.height * scale) / 2,
+        scaleX: scale,
+        scaleY: scale,
+        originX: 'left',
+        originY: 'top',
+        objectCaching: false,
+        noScaleCache: false,
+        selectable: true,
+        evented: true,
+        hasControls: true,
+        lockRotation: true,
+        editorRole: CANVAS_OBJECT_ROLES.BASE,
+        hoverCursor: 'move'
+    });
+    img.setCoords();
+    fabricCanvas.add(img);
+    fabricCanvas.setActiveObject(img);
+    fabricCanvas.requestRenderAll();
+};
+
 export const importImageToCanvas = (fabricCanvas, file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -487,41 +517,23 @@ export const importImageToCanvas = (fabricCanvas, file) => new Promise((resolve,
                 reject(new Error('Failed to load image'));
                 return;
             }
-
-            const vt = fabricCanvas.viewportTransform;
-            const zoom = vt[0];
-            const viewCenterX = (-vt[4] + fabricCanvas.getWidth() / 2) / zoom;
-            const viewCenterY = (-vt[5] + fabricCanvas.getHeight() / 2) / zoom;
-
-            const maxW = (fabricCanvas.getWidth() * 0.8) / zoom;
-            const maxH = (fabricCanvas.getHeight() * 0.8) / zoom;
-            const scale = Math.min(1, maxW / img.width, maxH / img.height);
-
-            img.set({
-                left: viewCenterX - (img.width * scale) / 2,
-                top: viewCenterY - (img.height * scale) / 2,
-                scaleX: scale,
-                scaleY: scale,
-                originX: 'left',
-                originY: 'top',
-                objectCaching: false,
-                noScaleCache: false,
-                selectable: true,
-                evented: true,
-                hasControls: true,
-                lockRotation: true,
-                editorRole: CANVAS_OBJECT_ROLES.BASE,
-                hoverCursor: 'move'
-            });
-            img.setCoords();
-            fabricCanvas.add(img);
-            fabricCanvas.setActiveObject(img);
-            fabricCanvas.requestRenderAll();
+            placeImageOnCanvas(fabricCanvas, img);
             resolve(img);
         });
     };
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
+});
+
+export const importImageFromUrl = (fabricCanvas, url) => new Promise((resolve, reject) => {
+    fabric.Image.fromURL(url, (img) => {
+        if (!img || !img.width) {
+            reject(new Error('Failed to load image from URL'));
+            return;
+        }
+        placeImageOnCanvas(fabricCanvas, img);
+        resolve(img);
+    }, { crossOrigin: 'anonymous' });
 });
 
 export const exportCanvasAsFile = async (fabricCanvas, genFrame, { format = 'png', quality = 0.92, mode = 'content' } = {}) => {

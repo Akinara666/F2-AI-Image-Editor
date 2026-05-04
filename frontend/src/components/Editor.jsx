@@ -7,6 +7,7 @@ import {
     exportCanvasAsFile,
     exportDocumentSnapshot,
     exportCanvasState,
+    importImageFromUrl,
     importImageToCanvas,
     isBaseRasterObject,
     isCandidateObject,
@@ -102,6 +103,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [isMutatingCanvas, setIsMutatingCanvas] = useState(false);
+    const [isDragOver, setIsDragOver] = useState(false);
     const [activeImageResolution, setActiveImageResolution] = useState(null);
     const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
     const previewFrameBoundsRef = useRef(null);
@@ -1266,6 +1268,13 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             return img;
         },
 
+        importImageFromUrl: async (url) => {
+            const img = await importImageFromUrl(fabricCanvas, url);
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
+            commitUndoSnapshot(getUndoSnapshotParams());
+            return img;
+        },
+
         exportCanvas: (options) => exportCanvasAsFile(fabricCanvas, genFrame, options),
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
@@ -1351,6 +1360,61 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             commitUndoSnapshot,
             getUndoSnapshotParams
         });
+    }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        const wrapper = wrapperRef.current;
+        if (!wrapper || !fabricCanvas || !genFrame) return undefined;
+
+        const handleDragOver = (e) => {
+            const hasFiles = e.dataTransfer.types.includes('Files');
+            const hasUri = e.dataTransfer.types.includes('text/uri-list');
+            if (!hasFiles && !hasUri) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            setIsDragOver(true);
+        };
+
+        const handleDragLeave = (e) => {
+            if (!wrapper.contains(e.relatedTarget)) {
+                setIsDragOver(false);
+            }
+        };
+
+        const handleDrop = async (e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+
+            const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+            if (files.length > 0) {
+                for (const file of files) {
+                    await importImageToCanvas(fabricCanvas, file);
+                }
+                enforceCanvasLayerOrder(fabricCanvas, genFrame);
+                commitUndoSnapshot(getUndoSnapshotParams());
+                return;
+            }
+
+            const uriList = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+            if (uriList) {
+                const url = uriList.split('\n').find((line) => !line.startsWith('#') && line.trim());
+                if (url) {
+                    await importImageFromUrl(fabricCanvas, url.trim());
+                    enforceCanvasLayerOrder(fabricCanvas, genFrame);
+                    commitUndoSnapshot(getUndoSnapshotParams());
+                }
+            }
+        };
+
+        wrapper.addEventListener('dragover', handleDragOver);
+        wrapper.addEventListener('dragleave', handleDragLeave);
+        wrapper.addEventListener('drop', handleDrop);
+
+        return () => {
+            wrapper.removeEventListener('dragover', handleDragOver);
+            wrapper.removeEventListener('dragleave', handleDragLeave);
+            wrapper.removeEventListener('drop', handleDrop);
+        };
     }, [fabricCanvas, genFrame]);
 
     useEffect(() => {
@@ -1447,6 +1511,12 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     return (
         <div ref={wrapperRef} className="editor-canvas-wrapper">
             <canvas ref={canvasRef} />
+
+            {isDragOver && (
+                <div className="editor__drag-overlay">
+                    <span className="editor__drag-overlay__label">Отпустите для импорта</span>
+                </div>
+            )}
 
             <div className="editor-resolution-badge">
                 {genDimensions.width} x {genDimensions.height}
