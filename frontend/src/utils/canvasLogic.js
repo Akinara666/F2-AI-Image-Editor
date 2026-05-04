@@ -479,6 +479,99 @@ export const exportCanvasState = async (canvas, frame) => {
     };
 };
 
+export const importImageToCanvas = (fabricCanvas, file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        fabric.Image.fromURL(event.target.result, (img) => {
+            if (!img) {
+                reject(new Error('Failed to load image'));
+                return;
+            }
+
+            const vt = fabricCanvas.viewportTransform;
+            const zoom = vt[0];
+            const viewCenterX = (-vt[4] + fabricCanvas.getWidth() / 2) / zoom;
+            const viewCenterY = (-vt[5] + fabricCanvas.getHeight() / 2) / zoom;
+
+            const maxW = (fabricCanvas.getWidth() * 0.8) / zoom;
+            const maxH = (fabricCanvas.getHeight() * 0.8) / zoom;
+            const scale = Math.min(1, maxW / img.width, maxH / img.height);
+
+            img.set({
+                left: viewCenterX - (img.width * scale) / 2,
+                top: viewCenterY - (img.height * scale) / 2,
+                scaleX: scale,
+                scaleY: scale,
+                originX: 'left',
+                originY: 'top',
+                objectCaching: false,
+                noScaleCache: false,
+                selectable: true,
+                evented: true,
+                hasControls: true,
+                lockRotation: true,
+                editorRole: CANVAS_OBJECT_ROLES.BASE,
+                hoverCursor: 'move'
+            });
+            img.setCoords();
+            fabricCanvas.add(img);
+            fabricCanvas.setActiveObject(img);
+            fabricCanvas.requestRenderAll();
+            resolve(img);
+        });
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+});
+
+export const exportCanvasAsFile = async (fabricCanvas, genFrame, { format = 'png', quality = 0.92, mode = 'content' } = {}) => {
+    const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const backgroundColor = format === 'jpeg' ? '#ffffff' : null;
+
+    const exportableObjects = fabricCanvas.getObjects().filter((object) => (
+        object.visible !== false
+        && object !== genFrame
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+        && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && !isUiOnlyObject(object)
+        && !isMaskObject(object, genFrame)
+        && !isSketchObject(object, genFrame)
+    ));
+
+    let bounds;
+    if (mode === 'viewport') {
+        const vt = fabricCanvas.viewportTransform;
+        const zoom = vt[0];
+        bounds = {
+            left: Math.round(-vt[4] / zoom),
+            top: Math.round(-vt[5] / zoom),
+            width: Math.max(1, Math.round(fabricCanvas.getWidth() / zoom)),
+            height: Math.max(1, Math.round(fabricCanvas.getHeight() / zoom))
+        };
+    } else {
+        bounds = getDocumentSnapshotBounds(exportableObjects, genFrame);
+    }
+
+    const snapshotCanvas = renderEntriesToCanvas(
+        exportableObjects.map((object) => ({
+            object,
+            temporaryProps: isCandidateObject(object, genFrame)
+                ? { stroke: null, strokeWidth: 0 }
+                : null
+        })),
+        bounds,
+        backgroundColor
+    );
+
+    const blob = await canvasElementToBlob(snapshotCanvas, mimeType, quality);
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `canvas-export.${format === 'jpeg' ? 'jpg' : 'png'}`;
+    anchor.click();
+    URL.revokeObjectURL(objectUrl);
+};
+
 export const exportDocumentSnapshot = async (canvas, frame) => {
     if (!canvas || !frame) {
         throw new Error('Canvas invalid');

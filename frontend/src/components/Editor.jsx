@@ -4,8 +4,10 @@ import {
     applyEraserPathToCanvas,
     bakeCandidateIntoCanvas,
     enforceCanvasLayerOrder,
+    exportCanvasAsFile,
     exportDocumentSnapshot,
     exportCanvasState,
+    importImageToCanvas,
     isBaseRasterObject,
     isCandidateObject,
     isMaskObject,
@@ -1256,6 +1258,15 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         updateLayerStyle,
 
         hasPendingCandidate: () => Boolean(candidateRef.current),
+
+        importImage: async (file) => {
+            const img = await importImageToCanvas(fabricCanvas, file);
+            enforceCanvasLayerOrder(fabricCanvas, genFrame);
+            commitUndoSnapshot(getUndoSnapshotParams());
+            return img;
+        },
+
+        exportCanvas: (options) => exportCanvasAsFile(fabricCanvas, genFrame, options),
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
