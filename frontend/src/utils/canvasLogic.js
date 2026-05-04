@@ -38,6 +38,9 @@ const getRole = (object, genFrame) => {
     if (object.editorRole === CANVAS_OBJECT_ROLES.FRAME_HIT_AREA) {
         return CANVAS_OBJECT_ROLES.FRAME_HIT_AREA;
     }
+    if (object.editorRole === 'quick-select-overlay') {
+        return CANVAS_OBJECT_ROLES.FRAME;
+    }
     if (object.isCandidate || object.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) {
         return CANVAS_OBJECT_ROLES.CANDIDATE;
     }
@@ -49,6 +52,11 @@ const getRole = (object, genFrame) => {
     }
     return CANVAS_OBJECT_ROLES.BASE;
 };
+
+const isUiOnlyObject = (object) => (
+    object?.excludeFromExport === true
+    || object?.editorRole === 'quick-select-overlay'
+);
 
 const getObjectBounds = (object) => {
     const rect = object.getBoundingRect(true, true);
@@ -413,6 +421,7 @@ export const exportCanvasState = async (canvas, frame) => {
         && object !== frame
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && !isUiOnlyObject(object)
         && !isMaskObject(object, frame)
         && !isCandidateObject(object, frame)
     ));
@@ -480,6 +489,7 @@ export const exportDocumentSnapshot = async (canvas, frame) => {
         && object !== frame
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+        && !isUiOnlyObject(object)
         && !isMaskObject(object, frame)
         && !isSketchObject(object, frame)
     ));

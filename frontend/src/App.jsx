@@ -345,6 +345,7 @@ function App() {
   const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
   const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
   const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
+  const [layers, setLayers] = useState([]);
 
   React.useEffect(() => {
     try {
@@ -364,6 +365,8 @@ function App() {
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
   const currentGenerationRequestIdRef = React.useRef(null);
+  const spotHealInFlightRef = React.useRef(false);
+  const quickSelectRefineInFlightRef = React.useRef(false);
   const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
   const setGenerationLifecycleStatus = (nextStatus) => {
     generationStatusRef.current = nextStatus;
@@ -446,6 +449,7 @@ function App() {
       formData.append('mask_padding', normalizedParams.mask_padding);
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
+      formData.append('active_tool', brushMode);
       // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
       formData.append('mode', 'auto');
 
@@ -494,6 +498,7 @@ function App() {
           historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
           historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
           historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+          historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
           historyFormData.append('generated_url', response.data.url);
 
           const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
@@ -560,6 +565,223 @@ function App() {
       abortControllerRef.current = null;
       currentGenerationRequestIdRef.current = null;
       setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+    }
+  };
+
+  const handleSpotHealPoint = async ({ x, y, radius }) => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (spotHealInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.canSpotHeal?.()) {
+      showInfo("Сначала добавь изображение на холст, затем используй Spot Healing.");
+      return;
+    }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Spot Healing.");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    spotHealInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = createClientId('spot-heal');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
+
+    try {
+      const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForSpotHeal({
+        x,
+        y,
+        radius
+      });
+
+      if (!initImageBlob || !maskImageBlob) {
+        throw new Error("Не удалось подготовить область для точечной ретуши.");
+      }
+
+      const formData = new FormData();
+      formData.append('request_id', requestId);
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('active_tool', 'spot_heal');
+      formData.append('width', String(width));
+      formData.append('height', String(height));
+      formData.append('init_image', initImageBlob, 'spot-heal-init.png');
+      formData.append('mask_image', maskImageBlob, 'spot-heal-mask.png');
+
+      const response = await axios.post(API_ENDPOINTS.SPOT_HEAL, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Точечная ретушь применена.");
+      } else {
+        throw new Error("Сервер не вернул результат точечной ретуши.");
+      }
+    } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Spot Healing отменён.");
+        return;
+      }
+      console.error("Spot heal failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Spot Healing: ${errorMsg}`);
+    } finally {
+      spotHealInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
+    }
+  };
+
+  const handleQuickSelectionCopy = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const copied = await editorRef.current.copyQuickSelection?.();
+    if (!copied) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+    showSuccess("Выделенная область скопирована.");
+  };
+
+  const handleQuickSelectionPaste = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const pasted = await editorRef.current.pasteQuickSelection?.();
+    if (!pasted) {
+      showInfo("Буфер пуст. Сначала скопируй выделение.");
+      return;
+    }
+    showSuccess("Копия вставлена рядом как новый слой.");
+  };
+
+  const handleQuickSelectionRefine = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (quickSelectRefineInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.hasQuickSelection?.()) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Quick Select refine.");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    quickSelectRefineInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = createClientId('quick-select-refine');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
+
+    try {
+      const payload = await editorRef.current.exportForQuickSelectRefine?.();
+      if (!payload?.image || !payload?.selection) {
+        throw new Error("Не удалось подготовить выделение для перегенерации.");
+      }
+
+      const formData = new FormData();
+      formData.append('request_id', requestId);
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('width', String(payload.width));
+      formData.append('height', String(payload.height));
+      formData.append('selection_left', String(payload.selection.left));
+      formData.append('selection_top', String(payload.selection.top));
+      formData.append('selection_width', String(payload.selection.width));
+      formData.append('selection_height', String(payload.selection.height));
+      formData.append('active_tool', 'quick_select');
+      formData.append('init_image', payload.image, 'quick-select-init.png');
+      if (payload.mask) {
+        formData.append('mask_image', payload.mask, 'quick-select-mask.png');
+      }
+
+      const response = await axios.post(API_ENDPOINTS.QUICK_SELECT_REFINE, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Выделенная область перегенерирована.");
+      } else {
+        throw new Error("Сервер не вернул результат quick-select refine.");
+      }
+    } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Quick Select refine отменён.");
+        return;
+      }
+      console.error("Quick-select refine failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Quick Select refine: ${errorMsg}`);
+    } finally {
+      quickSelectRefineInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
     }
   };
 
@@ -662,6 +884,35 @@ function App() {
     event.preventDefault();
   };
 
+  const handleLayersChange = React.useCallback((nextLayers) => {
+    setLayers(Array.isArray(nextLayers) ? nextLayers : []);
+  }, []);
+
+  const handleLayerSelect = React.useCallback((layerId) => {
+    editorRef.current?.selectLayer?.(layerId);
+  }, []);
+
+  const handleLayerToggleVisibility = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerVisibility?.(layerId);
+  }, []);
+
+  const handleLayerAdd = React.useCallback(async () => {
+    const added = await editorRef.current?.addLayer?.();
+    if (!added) {
+      showInfo("Не удалось создать слой: выбери объект на холсте или сначала сгенерируй изображение.");
+    } else {
+      showSuccess("Новый слой создан.");
+    }
+  }, [showInfo, showSuccess]);
+
+  const handleLayerToggleLock = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerLock?.(layerId);
+  }, []);
+
+  const handleLayerStyleChange = React.useCallback((layerId, patch) => {
+    editorRef.current?.updateLayerStyle?.(layerId, patch);
+  }, []);
+
   return (
     <div
       ref={appContainerRef}
@@ -683,6 +934,15 @@ function App() {
           setBrushColor={setBrushColor}
           brushSize={brushSize}
           setBrushSize={setBrushSize}
+          onQuickSelectionCopy={handleQuickSelectionCopy}
+          onQuickSelectionPaste={handleQuickSelectionPaste}
+          onQuickSelectionRefine={handleQuickSelectionRefine}
+          layers={layers}
+          onLayerSelect={handleLayerSelect}
+          onLayerAdd={handleLayerAdd}
+          onLayerToggleVisibility={handleLayerToggleVisibility}
+          onLayerToggleLock={handleLayerToggleLock}
+          onLayerStyleChange={handleLayerStyleChange}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}
@@ -702,9 +962,12 @@ function App() {
         <Editor
           ref={editorRef}
           brushMode={brushMode}
+          setBrushMode={setBrushMode}
           brushColor={brushColor}
           brushSize={brushSize}
           generationPreview={generationPreview}
+          onSpotHealPoint={handleSpotHealPoint}
+          onLayersChange={handleLayersChange}
         />
       </div>
       <HistoryPanel
