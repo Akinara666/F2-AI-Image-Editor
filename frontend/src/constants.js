@@ -32,6 +32,8 @@ export const resolveApiUrl = (path = "") => {
 
 export const API_ENDPOINTS = {
     GENERATE: `${API_BASE_URL}/generate`,
+    SPOT_HEAL: `${API_BASE_URL}/spot-heal`,
+    QUICK_SELECT_REFINE: `${API_BASE_URL}/quick-select/refine`,
     PROMPT_TRANSFORM: `${API_BASE_URL}/prompt/transform`,
     PROMPT_HEALTH: `${API_BASE_URL}/prompt/health`,
     GENERATION_PREVIEW: (requestId) => `${API_BASE_URL}/generate/preview/${requestId}`,

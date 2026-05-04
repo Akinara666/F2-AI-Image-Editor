@@ -10,6 +10,9 @@ const isTextInputTarget = (target) => {
 export const setupEditorKeyboardShortcuts = ({
     fabricCanvas,
     brushModeRef,
+    setBrushModeRef,
+    copyQuickSelectionRef,
+    pasteQuickSelectionRef,
     performUndoRef,
     performDeleteActiveObjectRef,
     syncCanvasInteractionModeRef
@@ -26,6 +29,36 @@ export const setupEditorKeyboardShortcuts = ({
         if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
             event.preventDefault();
             void performUndoRef.current?.();
+            return;
+        }
+
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyC' && brushModeRef.current === 'quick_select') {
+            event.preventDefault();
+            void copyQuickSelectionRef.current?.();
+            return;
+        }
+
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyV' && brushModeRef.current === 'quick_select') {
+            event.preventDefault();
+            void pasteQuickSelectionRef.current?.();
+            return;
+        }
+
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyW') {
+            event.preventDefault();
+            setBrushModeRef.current?.('quick_select');
+            return;
+        }
+
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyS') {
+            event.preventDefault();
+            setBrushModeRef.current?.('clone_stamp');
+            return;
+        }
+
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyJ') {
+            event.preventDefault();
+            setBrushModeRef.current?.('spot_heal');
             return;
         }
 

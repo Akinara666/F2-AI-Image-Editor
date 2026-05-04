@@ -201,7 +201,8 @@ export const setupCanvasViewportAndTransform = ({
     const handleMouseDown = (opt) => {
         const evt = opt.e;
 
-        if (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning) {
+        const isCloneStampAltPick = brushModeRef.current === 'clone_stamp' && evt.altKey === true;
+        if (!isCloneStampAltPick && (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning)) {
             isDragging = true;
             canvas.selection = false;
             lastPosX = evt.clientX;
