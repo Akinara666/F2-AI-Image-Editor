@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
     AVAILABLE_SAMPLERS,
@@ -56,6 +56,14 @@ const Sidebar = ({
         steps: String(params.steps)
     });
     const [layerViewMode, setLayerViewMode] = useState('list');
+    const [importPanelOpen, setImportPanelOpen] = useState(false);
+    const [importUrl, setImportUrl] = useState('');
+    const [isImportingUrl, setIsImportingUrl] = useState(false);
+    const [exportPanelOpen, setExportPanelOpen] = useState(false);
+    const [exportFormat, setExportFormat] = useState('png');
+    const [exportMode, setExportMode] = useState('content');
+    const [exportQuality, setExportQuality] = useState(85);
+    const fileInputRef = useRef(null);
 
     useEffect(() => {
         setNumberDrafts({
@@ -196,6 +204,39 @@ const Sidebar = ({
 
     const handleAddLayerClick = () => {
         onLayerAdd?.();
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        setImportPanelOpen(false);
+        editorRef?.current?.importImage(file);
+    };
+
+    const handleUrlImport = async () => {
+        const url = importUrl.trim();
+        if (!url) return;
+        setIsImportingUrl(true);
+        try {
+            await editorRef?.current?.importImageFromUrl(url);
+            setImportUrl('');
+            setImportPanelOpen(false);
+            showToastSuccess('Изображение загружено');
+        } catch {
+            showToastError('Не удалось загрузить изображение по URL. Сервер может не поддерживать CORS.');
+        } finally {
+            setIsImportingUrl(false);
+        }
+    };
+
+    const handleExportDownload = () => {
+        editorRef?.current?.exportCanvas({
+            format: exportFormat,
+            mode: exportMode,
+            quality: exportQuality / 100
+        });
+        setExportPanelOpen(false);
     };
 
     return (
@@ -710,9 +751,112 @@ const Sidebar = ({
                                 Очистить
                             </button>
                         </div>
+
+                        <div className="sidebar__actions">
+                            <button
+                                className="btn btn-secondary sidebar__action-btn"
+                                onClick={() => { setImportPanelOpen((prev) => !prev); setExportPanelOpen(false); }}
+                            >
+                                ↑ Импорт
+                            </button>
+                            <button
+                                className="btn btn-secondary sidebar__action-btn"
+                                onClick={() => { setExportPanelOpen((prev) => !prev); setImportPanelOpen(false); }}
+                            >
+                                ↓ Экспорт
+                            </button>
+                        </div>
+
+                        {importPanelOpen && (
+                            <div className="input-group">
+                                <button
+                                    className="btn btn-secondary sidebar__action-btn"
+                                    onClick={() => fileInputRef.current?.click()}
+                                >
+                                    С диска
+                                </button>
+                                <label className="input-label" style={{ marginTop: '8px' }}>По URL</label>
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                    <input
+                                        type="url"
+                                        className="input-field"
+                                        placeholder="https://..."
+                                        value={importUrl}
+                                        onChange={(e) => setImportUrl(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && handleUrlImport()}
+                                        disabled={isImportingUrl}
+                                    />
+                                    <button
+                                        className="btn btn-secondary sidebar__action-btn"
+                                        onClick={handleUrlImport}
+                                        disabled={isImportingUrl || !importUrl.trim()}
+                                        style={{ flexShrink: 0 }}
+                                    >
+                                        {isImportingUrl ? '...' : 'OK'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {exportPanelOpen && (
+                            <div className="input-group">
+                                <div className="sidebar__grid-2col">
+                                    <div>
+                                        <label className="input-label">Область</label>
+                                        <select
+                                            className="input-field"
+                                            value={exportMode}
+                                            onChange={(e) => setExportMode(e.target.value)}
+                                        >
+                                            <option value="content">Весь контент</option>
+                                            <option value="viewport">Вьюпорт</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="input-label">Формат</label>
+                                        <select
+                                            className="input-field"
+                                            value={exportFormat}
+                                            onChange={(e) => setExportFormat(e.target.value)}
+                                        >
+                                            <option value="png">PNG</option>
+                                            <option value="jpeg">JPEG</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                {exportFormat === 'jpeg' && (
+                                    <div className="input-group">
+                                        <label className="input-label">Качество ({exportQuality}%)</label>
+                                        <input
+                                            type="range"
+                                            className="sidebar__range sidebar__range--neutral"
+                                            min="10"
+                                            max="100"
+                                            step="5"
+                                            value={exportQuality}
+                                            onChange={(e) => setExportQuality(Number(e.target.value))}
+                                        />
+                                    </div>
+                                )}
+                                <button
+                                    className="btn btn-secondary sidebar__action-btn"
+                                    onClick={handleExportDownload}
+                                >
+                                    Скачать
+                                </button>
+                            </div>
+                        )}
                     </>
                 )}
             </div>
+
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+            />
 
             {/* Footer - Fixed Button */}
             <div className="sidebar__footer">
