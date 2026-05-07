@@ -764,7 +764,7 @@ async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
     )
     #_____________апдейт_______ Strict validation for preview endpoint
     transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
-    if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status != "success":
+    if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status not in {"success", "skipped_empty", "disabled"}:
         detail = f"Prompt was not transformed. status={result.transform_status}"
         if result.error:
             detail = f"{detail}. error={result.error}"
@@ -1737,6 +1737,10 @@ async def spot_heal(
         active_tool="spot_heal",
     )
 
+MIN_SCALE_FACTOR = 0.1
+MAX_SCALE_FACTOR = 16.0
+
+
 @app.post("/upscale")
 async def upscale_image(
     image: UploadFile = File(...),
@@ -1746,18 +1750,25 @@ async def upscale_image(
     Architecture placeholder for Upscaling.
     Currently implements a simple resize, but ready for SwinIR/RealESRGAN integration.
     """
+    if not math.isfinite(scale_factor) or scale_factor < MIN_SCALE_FACTOR or scale_factor > MAX_SCALE_FACTOR:
+        raise HTTPException(
+            status_code=422,
+            detail=f"scale_factor must be a finite number between {MIN_SCALE_FACTOR} and {MAX_SCALE_FACTOR}.",
+        )
     try:
         content = await image.read()
         pil_image = Image.open(io.BytesIO(content)).convert("RGB")
-        
+
         # Placeholder implementation: Bicubic resize
         new_width = int(pil_image.width * scale_factor)
         new_height = int(pil_image.height * scale_factor)
         upscaled = pil_image.resize((new_width, new_height), Image.BICUBIC)
-        
+
         filename = save_image_with_metadata(upscaled, {"upscale": scale_factor}, str(settings.OUTPUT_DIR))
         return {"status": "success", "url": f"/outputs/{filename}"}
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upscale failed: {e}")
 
