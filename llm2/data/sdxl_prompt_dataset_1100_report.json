@@ -1,0 +1,112 @@
+{
+  "source_file": "train_1500.jsonl",
+  "target_size": 1100,
+  "selected_size": 1100,
+  "split_sizes": {
+    "train": 880,
+    "eval": 110,
+    "test": 110
+  },
+  "summary": {
+    "master": {
+      "count": 1100,
+      "medium_counts": {
+        "3d_render": 41,
+        "anime": 63,
+        "fine_art": 235,
+        "ink_graphic": 134,
+        "oil_painting": 151,
+        "photorealistic": 414,
+        "watercolor": 62
+      },
+      "category_counts": {
+        "animal": 112,
+        "city_arch": 122,
+        "fantasy_scifi": 143,
+        "nature": 70,
+        "object_product": 78,
+        "other": 251,
+        "person": 269,
+        "vehicle": 55
+      },
+      "avg_user_chars": 71.5,
+      "avg_assistant_chars": 465.9,
+      "avg_assistant_words": 59.9
+    },
+    "train": {
+      "count": 880,
+      "medium_counts": {
+        "3d_render": 30,
+        "anime": 43,
+        "fine_art": 194,
+        "ink_graphic": 109,
+        "oil_painting": 125,
+        "photorealistic": 332,
+        "watercolor": 47
+      },
+      "category_counts": {
+        "animal": 89,
+        "city_arch": 100,
+        "fantasy_scifi": 109,
+        "nature": 61,
+        "object_product": 61,
+        "other": 199,
+        "person": 218,
+        "vehicle": 43
+      },
+      "avg_user_chars": 70.9,
+      "avg_assistant_chars": 464.8,
+      "avg_assistant_words": 59.7
+    },
+    "eval": {
+      "count": 110,
+      "medium_counts": {
+        "3d_render": 7,
+        "anime": 5,
+        "fine_art": 18,
+        "ink_graphic": 13,
+        "oil_painting": 14,
+        "photorealistic": 46,
+        "watercolor": 7
+      },
+      "category_counts": {
+        "animal": 16,
+        "city_arch": 10,
+        "fantasy_scifi": 14,
+        "nature": 5,
+        "object_product": 13,
+        "other": 26,
+        "person": 20,
+        "vehicle": 6
+      },
+      "avg_user_chars": 64.7,
+      "avg_assistant_chars": 466.7,
+      "avg_assistant_words": 59.8
+    },
+    "test": {
+      "count": 110,
+      "medium_counts": {
+        "3d_render": 4,
+        "anime": 15,
+        "fine_art": 23,
+        "ink_graphic": 12,
+        "oil_painting": 12,
+        "photorealistic": 36,
+        "watercolor": 8
+      },
+      "category_counts": {
+        "animal": 7,
+        "city_arch": 12,
+        "fantasy_scifi": 20,
+        "nature": 4,
+        "object_product": 4,
+        "other": 26,
+        "person": 31,
+        "vehicle": 6
+      },
+      "avg_user_chars": 82.7,
+      "avg_assistant_chars": 474.4,
+      "avg_assistant_words": 61.3
+    }
+  }
+}

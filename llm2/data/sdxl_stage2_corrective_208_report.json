@@ -1,0 +1,12 @@
+{
+  "total": 208,
+  "train": 168,
+  "eval": 20,
+  "test": 20,
+  "files": {
+    "master": "data/sdxl_stage2_corrective_208_master.jsonl",
+    "train": "data/sdxl_stage2_corrective_208_train.jsonl",
+    "eval": "data/sdxl_stage2_corrective_208_eval.jsonl",
+    "test": "data/sdxl_stage2_corrective_208_test.jsonl"
+  }
+}
