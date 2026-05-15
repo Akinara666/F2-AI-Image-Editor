@@ -1591,4 +1591,6 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     );
 });
 
+Editor.displayName = 'Editor';
+
 export default Editor;

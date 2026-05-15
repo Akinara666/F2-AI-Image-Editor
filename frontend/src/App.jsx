@@ -7,179 +7,26 @@ import { useToast } from './components/ToastProvider';
 import {
   API_ENDPOINTS,
   AVAILABLE_MODELS_PLACEHOLDER,
-  AVAILABLE_SAMPLERS,
   createClientId,
   normalizeGenerationParams,
   resolveApiUrl
 } from './constants';
+import {
+  APP_SETTINGS_STORAGE_KEY,
+  APP_SETTINGS_STORAGE_VERSION,
+  HISTORY_STORAGE_KEY,
+  HISTORY_STORAGE_VERSION,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  clampSidebarWidth,
+  getHistoryFilename,
+  isMissingHistoryError,
+  loadAppSettingsFromStorage,
+  loadHistoryFromStorage,
+  loadSidebarWidthFromStorage,
+  normalizeHistoryItems
+} from './utils/appState';
 import './theme.css';
 import './App.css';
-
-const HISTORY_STORAGE_KEY = 'generation_history';
-const HISTORY_STORAGE_VERSION = 2;
-const HISTORY_MAX_ITEMS = 50;
-const APP_SETTINGS_STORAGE_KEY = 'generation_app_settings';
-const APP_SETTINGS_STORAGE_VERSION = 1;
-const SIDEBAR_WIDTH_STORAGE_KEY = 'app_sidebar_width';
-const DEFAULT_SIDEBAR_WIDTH = 360;
-const MIN_SIDEBAR_WIDTH = 320;
-const MAX_SIDEBAR_WIDTH = 560;
-const MIN_EDITOR_WIDTH = 320;
-
-const DEFAULT_PARAMS = {
-  prompt: "A futuristic city",
-  negative_prompt: "low quality, blurry",
-  seed: -1,
-  steps: 20,
-  cfg: 7.5,
-  denoising_strength: 0.75,
-  mask_blur: 4,
-  mask_padding: 32,
-  model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
-  sampler: AVAILABLE_SAMPLERS[0],
-  frame_size_index: 0
-};
-
-const DEFAULT_BRUSH_SETTINGS = {
-  brushMode: 'none',
-  brushColor: '#ffffff',
-  brushSize: 20
-};
-
-const normalizeHistoryItem = (item) => {
-  if (!item || typeof item !== 'object' || typeof item.url !== 'string' || !item.url.trim()) {
-    return null;
-  }
-
-  const meta = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
-    ? item.meta
-    : {};
-  const timestamp = Number(item.timestamp);
-  const generatedUrl = typeof item.generated_url === 'string' && item.generated_url.trim()
-    ? item.generated_url
-    : null;
-
-  return {
-    id: item.id ?? createClientId('history'),
-    url: item.url,
-    generated_url: generatedUrl,
-    meta,
-    timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now()
-  };
-};
-
-const normalizeHistoryItems = (items) => (
-  (Array.isArray(items) ? items : [])
-    .map(normalizeHistoryItem)
-    .filter(Boolean)
-    .sort((left, right) => right.timestamp - left.timestamp)
-    .slice(0, HISTORY_MAX_ITEMS)
-);
-
-const loadHistoryFromStorage = () => {
-  try {
-    const saved = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (!saved) {
-      return [];
-    }
-
-    const parsed = JSON.parse(saved);
-    const items = Array.isArray(parsed)
-      ? parsed
-      : (Array.isArray(parsed?.items) ? parsed.items : []);
-    return normalizeHistoryItems(items);
-  } catch {
-    return [];
-  }
-};
-
-const loadAppSettingsFromStorage = () => {
-  try {
-    const saved = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
-    if (!saved) {
-      return {
-        params: { ...DEFAULT_PARAMS },
-        brush: { ...DEFAULT_BRUSH_SETTINGS }
-      };
-    }
-
-    const parsed = JSON.parse(saved);
-    const rawParams = parsed?.params && typeof parsed.params === 'object' ? parsed.params : {};
-    const rawBrush = parsed?.brush && typeof parsed.brush === 'object' ? parsed.brush : {};
-    const { normalized } = normalizeGenerationParams({
-      ...DEFAULT_PARAMS,
-      ...rawParams
-    });
-
-    return {
-      params: {
-        prompt: typeof rawParams.prompt === 'string' ? rawParams.prompt : DEFAULT_PARAMS.prompt,
-        negative_prompt: typeof rawParams.negative_prompt === 'string' ? rawParams.negative_prompt : DEFAULT_PARAMS.negative_prompt,
-        seed: normalized.seed,
-        steps: normalized.steps,
-        cfg: normalized.cfg,
-        denoising_strength: normalized.denoising_strength,
-        mask_blur: normalized.mask_blur,
-        mask_padding: normalized.mask_padding,
-        frame_size_index: normalized.frame_size_index,
-        model_id: typeof rawParams.model_id === 'string' ? rawParams.model_id : DEFAULT_PARAMS.model_id,
-        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler,
-      },
-      brush: {
-        brushMode: typeof rawBrush.brushMode === 'string' ? rawBrush.brushMode : DEFAULT_BRUSH_SETTINGS.brushMode,
-        brushColor: typeof rawBrush.brushColor === 'string' ? rawBrush.brushColor : DEFAULT_BRUSH_SETTINGS.brushColor,
-        brushSize: Number.isFinite(Number(rawBrush.brushSize))
-          ? Math.max(1, Math.min(100, Number(rawBrush.brushSize)))
-          : DEFAULT_BRUSH_SETTINGS.brushSize
-      }
-    };
-  } catch {
-    return {
-      params: { ...DEFAULT_PARAMS },
-      brush: { ...DEFAULT_BRUSH_SETTINGS }
-    };
-  }
-};
-
-const isMissingHistoryError = (error) => {
-  const status = error?.response?.status;
-  if (status === 404 || status === 410) {
-    return true;
-  }
-
-  const message = String(error?.message || error?.response?.data?.detail || '');
-  return /\b(404|410)\b/.test(message);
-};
-
-const getHistoryFilename = (url) => {
-  const path = String(url || '').split('?')[0];
-  const parts = path.split('/').filter(Boolean);
-  return parts[parts.length - 1] || 'image.png';
-};
-
-const clampSidebarWidth = (rawWidth, viewportWidth = window.innerWidth) => {
-  const maxAllowed = Math.min(
-    MAX_SIDEBAR_WIDTH,
-    Math.max(MIN_SIDEBAR_WIDTH, viewportWidth - MIN_EDITOR_WIDTH)
-  );
-  return Math.round(Math.min(maxAllowed, Math.max(MIN_SIDEBAR_WIDTH, rawWidth)));
-};
-
-const loadSidebarWidthFromStorage = () => {
-  if (typeof window === 'undefined') {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-
-  try {
-    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
-    if (!Number.isFinite(saved)) {
-      return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
-    }
-    return clampSidebarWidth(saved, window.innerWidth);
-  } catch {
-    return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
-  }
-};
 
 function App() {
   const GENERATION_STATUS = {
@@ -193,14 +40,14 @@ function App() {
   const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState(initialAppSettings.params);
 
-  // Fetch models on mount
+  // Загружаем модели при монтировании.
   React.useEffect(() => {
     const fetchModels = async () => {
       try {
         const response = await axios.get(API_ENDPOINTS.MODELS);
         if (response.data && response.data.models) {
           setAvailableModels(response.data.models);
-          // Replace placeholder or missing stored model with the first available model.
+          // Если в настройках осталась заглушка или несуществующая модель, подставляем первую доступную.
           setParams(prev => ({
             ...prev,
             model_id: (
@@ -275,7 +122,7 @@ function App() {
     });
   }, []);
 
-  // Persist history to localStorage
+  // Сохраняем историю в localStorage.
   React.useEffect(() => {
     const normalizedHistory = normalizeHistoryItems(history);
     try {
@@ -283,7 +130,7 @@ function App() {
         version: HISTORY_STORAGE_VERSION,
         items: normalizedHistory
       }));
-    } catch { /* quota exceeded — silently ignore */ }
+    } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [history]);
 
   React.useEffect(() => {
@@ -302,7 +149,7 @@ function App() {
   React.useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
-    } catch { /* ignore storage issues */ }
+    } catch { /* Ошибки localStorage здесь безопасно игнорировать. */ }
   }, [sidebarWidth]);
 
   React.useEffect(() => {
@@ -358,10 +205,10 @@ function App() {
           brushSize
         }
       }));
-    } catch { /* quota exceeded — silently ignore */ }
+    } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [params, brushMode, brushColor, brushSize]);
 
-  // Ref to Editor's export function
+  // Ссылка на публичные методы редактора.
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
   const currentGenerationRequestIdRef = React.useRef(null);
@@ -431,10 +278,10 @@ function App() {
 
     try {
       void pollGenerationPreview(requestId, previewController.signal);
-      // 1. Get Crops from Editor
+      // 1. Получаем подготовленные данные из редактора.
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
 
-      // 2. Prepare FormData
+      // 2. Собираем FormData для запроса генерации.
       const formData = new FormData();
       formData.append('request_id', requestId);
       formData.append('prompt', normalizedParams.prompt);
@@ -450,7 +297,7 @@ function App() {
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
       formData.append('active_tool', brushMode);
-      // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
+      // В smart-режиме backend сам решает, нужен ли mask/img2img или txt2img.
       formData.append('mode', 'auto');
 
       formData.append('width', width);
@@ -463,8 +310,7 @@ function App() {
         formData.append('mask_image', maskImageBlob, 'mask.png');
       }
 
-      // 3. Send Request
-      // Note: Vite proxy set up in vite.config.js to localhost:8000
+      // 3. Отправляем запрос на backend.
       const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         signal: controller.signal
@@ -479,7 +325,7 @@ function App() {
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
           showInfo(`Трансформер промпта: ${response.data.meta.prompt_transform_status}`);
         }
-        // 4. Add to Canvas
+        // 4. Добавляем результат на холст.
         await editorRef.current.addGeneratedImage(response.data.url);
 
         const historyMeta = response.data.meta || {
@@ -512,7 +358,7 @@ function App() {
           showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
         }
 
-        // 5. Add to History
+        // 5. Обновляем историю генераций.
         const newHistoryItem = {
           id: createClientId('history'),
           url: historyDocumentUrl,

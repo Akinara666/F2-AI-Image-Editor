@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { resolveApiUrl } from '../constants';
 import './HistoryPanel.css';
 
@@ -29,7 +29,7 @@ const HistoryPanel = ({
 
     return (
         <div className="panel history-panel" ref={rootRef}>
-            {/* Fixed Header */}
+            {/* Закреплённый заголовок. */}
             <div className="history-panel__header">
                 <h3 className="history-panel__title">
                     История
@@ -39,7 +39,7 @@ const HistoryPanel = ({
                 </span>
             </div>
 
-            {/* Scrollable List */}
+            {/* Прокручиваемый список. */}
             <div className="custom-scrollbar history-panel__list">
                 {history.length === 0 && (
                     <div className="history-panel__empty">

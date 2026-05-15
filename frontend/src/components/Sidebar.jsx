@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import {
     AVAILABLE_SAMPLERS,
@@ -242,7 +242,7 @@ const Sidebar = ({
     return (
         <div className="panel sidebar">
 
-            {/* Scrollable Content */}
+            {/* Прокручиваемое содержимое. */}
             <div className="custom-scrollbar sidebar__content">
                 <h2 className="sidebar__title">Настройки AI</h2>
 
@@ -269,7 +269,7 @@ const Sidebar = ({
 
                 {activeTab === 'generation' && (
                     <>
-                        {/* Model & Sampler */}
+                        {/* Модель и сэмплер. */}
                         <div className="input-group">
                             <label className="input-label">Модель</label>
                             <select
@@ -313,7 +313,7 @@ const Sidebar = ({
                             </div>
                         </div>
 
-                        {/* Prompt */}
+                        {/* Основной промпт. */}
                         <div className="input-group">
                             <div className="sidebar__prompt-header sidebar__prompt-header--stacked">
                                 <label className="input-label">Промпт</label>
@@ -366,7 +366,7 @@ const Sidebar = ({
                             />
                         </div>
 
-                        {/* Negative Prompt */}
+                        {/* Негативный промпт. */}
                         <div className="input-group">
                             <label className="input-label">Негативный промпт</label>
                             <textarea
@@ -377,7 +377,7 @@ const Sidebar = ({
                             />
                         </div>
 
-                        {/* Params */}
+                        {/* Параметры генерации. */}
                         <div className="sidebar__grid-2col">
                             <div className="input-group">
                                 <label className="input-label">Сид (-1 = случайный)</label>
@@ -422,7 +422,7 @@ const Sidebar = ({
                     </>
                 )}
 
-                {/* Brush Controls */}
+                {/* Управление кистью. */}
                 {activeTab === 'tools' && (
                     <>
                         <div className="input-group">
@@ -858,7 +858,7 @@ const Sidebar = ({
                 onChange={handleFileChange}
             />
 
-            {/* Footer - Fixed Button */}
+            {/* Нижняя панель с фиксированной кнопкой. */}
             <div className="sidebar__footer">
                 {isGenerating ? (
                     <button

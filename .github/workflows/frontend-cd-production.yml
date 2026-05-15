@@ -1,0 +1,80 @@
+name: Frontend CD Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy to production
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.FRONTEND_PROD_VITE_API_BASE_URL }}
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-frontend:prod-${{ github.sha }}
+            ghcr.io/akinara666/working-title-psd2-frontend:prod-latest
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.FRONTEND_PROD_SSH_PRIVATE_KEY }}
+
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.FRONTEND_PROD_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy frontend to production server
+        run: |
+          ssh -p "${{ secrets.FRONTEND_PROD_SSH_PORT }}" "${{ secrets.FRONTEND_PROD_SSH_USER }}@${{ secrets.FRONTEND_PROD_SSH_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd "${{ secrets.FRONTEND_PROD_APP_DIR }}"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          echo "${{ secrets.FRONTEND_PROD_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.FRONTEND_PROD_GHCR_USERNAME }}" --password-stdin
+          docker compose --project-directory . -f deploy/frontend/compose.prod.yaml pull
+          docker compose --project-directory . -f deploy/frontend/compose.prod.yaml up -d
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:3000"
+          for _ in range(20):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      print(response.status)
+                  break
+              except Exception:
+                  time.sleep(3)
+          else:
+              raise SystemExit("Frontend production health check failed.")
+          PY
+          EOF

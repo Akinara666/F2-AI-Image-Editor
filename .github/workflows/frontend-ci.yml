@@ -1,0 +1,90 @@
+name: Frontend CI
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "deploy/frontend/**"
+      - ".github/workflows/frontend-*.yml"
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - "frontend/**"
+      - "deploy/frontend/**"
+      - ".github/workflows/frontend-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Run frontend test suite
+        run: npm test
+        working-directory: frontend
+
+      - name: Run frontend lint
+        run: npm run lint
+        working-directory: frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+
+  frontend-docker-smoke:
+    needs: frontend-checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build frontend smoke image
+        run: |
+          docker build \
+            -f frontend/Dockerfile \
+            --build-arg VITE_API_BASE_URL=http://127.0.0.1:8000 \
+            -t working-title-psd2-frontend-ci:${{ github.sha }} \
+            frontend
+
+      - name: Start frontend smoke container
+        run: |
+          docker run -d \
+            --name frontend-ci-smoke \
+            -p 3000:80 \
+            working-title-psd2-frontend-ci:${{ github.sha }}
+
+      - name: Verify frontend root page
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Frontend smoke check failed." >&2
+          docker logs frontend-ci-smoke || true
+          exit 1
+
+      - name: Stop frontend smoke container
+        if: always()
+        run: |
+          docker rm -f frontend-ci-smoke >/dev/null 2>&1 || true

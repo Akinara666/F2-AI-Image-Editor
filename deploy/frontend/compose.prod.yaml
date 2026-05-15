@@ -1,0 +1,15 @@
+name: working-title-psd2-frontend-prod
+
+services:
+  frontend:
+    image: ghcr.io/akinara666/working-title-psd2-frontend:prod-latest
+    container_name: working-title-psd2-frontend-prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s

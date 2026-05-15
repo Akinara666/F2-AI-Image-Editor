@@ -1,0 +1,88 @@
+name: Frontend CD Staging
+
+on:
+  workflow_run:
+    workflows:
+      - Frontend CI
+    types:
+      - completed
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy to staging
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.FRONTEND_STAGING_VITE_API_BASE_URL }}
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-frontend:dev-${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+            ghcr.io/akinara666/working-title-psd2-frontend:dev-latest
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.FRONTEND_STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.FRONTEND_STAGING_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy frontend to staging server
+        run: |
+          ssh -p "${{ secrets.FRONTEND_STAGING_SSH_PORT }}" "${{ secrets.FRONTEND_STAGING_SSH_USER }}@${{ secrets.FRONTEND_STAGING_SSH_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd "${{ secrets.FRONTEND_STAGING_APP_DIR }}"
+          git fetch origin dev
+          git checkout dev
+          git pull --ff-only origin dev
+          echo "${{ secrets.FRONTEND_STAGING_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.FRONTEND_STAGING_GHCR_USERNAME }}" --password-stdin
+          docker compose --project-directory . -f deploy/frontend/compose.staging.yaml pull
+          docker compose --project-directory . -f deploy/frontend/compose.staging.yaml up -d
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:3000"
+          for _ in range(20):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      print(response.status)
+                  break
+              except Exception:
+                  time.sleep(3)
+          else:
+              raise SystemExit("Frontend staging health check failed.")
+          PY
+          EOF

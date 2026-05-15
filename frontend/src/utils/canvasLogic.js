@@ -75,25 +75,6 @@ const getRasterObjectRenderBounds = (object) => ({
     height: Math.max(1, Math.round((object.height ?? 0) * (object.scaleY ?? 1)))
 });
 
-const mergeBounds = (objects) => {
-    if (!objects || objects.length === 0) {
-        return null;
-    }
-
-    const rects = objects.map(getObjectBounds);
-    const left = Math.min(...rects.map((rect) => rect.left));
-    const top = Math.min(...rects.map((rect) => rect.top));
-    const right = Math.max(...rects.map((rect) => rect.left + rect.width));
-    const bottom = Math.max(...rects.map((rect) => rect.top + rect.height));
-
-    return {
-        left,
-        top,
-        width: Math.max(1, Math.ceil(right - left)),
-        height: Math.max(1, Math.ceil(bottom - top))
-    };
-};
-
 const mergeRectBounds = (rects) => {
     if (!rects || rects.length === 0) {
         return null;
