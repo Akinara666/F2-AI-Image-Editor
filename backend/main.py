@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 import random
 from typing import Optional
 from pathlib import Path
@@ -18,12 +21,27 @@ from time import monotonic
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
 from PIL import Image, ImageDraw, ImageFilter, ImageChops
-import torch
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
 from pydantic import BaseModel
-from compel import CompelForSD, CompelForSDXL
+try:
+    from compel import CompelForSD, CompelForSDXL
+except ModuleNotFoundError:
+    CompelForSD = None
+    CompelForSDXL = None
 
 # Import core modules
-from core.manager import model_manager
 from core.utils import (
     save_image_with_metadata,
     process_mask_for_inpainting,
@@ -35,15 +53,73 @@ from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
 from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
-from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
-import logging
 
-# Setup Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+class _FallbackPreviewDecoder:
+    def normalize_method(self, method: Optional[str]) -> str:
+        normalized = str(method or settings.LIVE_PREVIEW_METHOD or "full").strip().lower()
+        if normalized in LIVE_PREVIEW_METHOD_CHOICES:
+            return normalized
+        return "full"
+
+    def prepare(self, pipe, model_family: str, method: Optional[str]) -> str:
+        return self.normalize_method(method)
+
+    def decode(self, pipe, latents, model_family: str, method: Optional[str]):
+        return None
+
+
+class _FallbackModelManager:
+    def __init__(self, import_error: Exception):
+        self.device = "cpu"
+        self._import_error = import_error
+
+    @staticmethod
+    def infer_model_family(model_id: str) -> str:
+        lowered = str(model_id or "").lower()
+        sdxl_hints = ("stable-diffusion-xl", "sdxl", "juggernautxl", "realvisxl", "pony", "xl")
+        return "sdxl" if any(hint in lowered for hint in sdxl_hints) else "sd"
+
+    @staticmethod
+    def request_cancel(request_id: str) -> None:
+        return None
+
+    @staticmethod
+    def is_cancel_requested(request_id: str) -> bool:
+        return False
+
+    @staticmethod
+    def bind_active_pipeline(request_id: str, pipe) -> None:
+        return None
+
+    @asynccontextmanager
+    async def generation_session(self, request_id: str):
+        yield
+
+    async def get_model(self, *args, **kwargs):
+        raise RuntimeError(
+            "AI runtime dependencies are unavailable. "
+            "Install torch/diffusers/compel and related backend runtime packages."
+        ) from self._import_error
+
+
+AI_RUNTIME_IMPORT_ERROR: Exception | None = None
+
+try:
+    from core.manager import model_manager
+except Exception as exc:
+    AI_RUNTIME_IMPORT_ERROR = exc
+    logger.warning("Falling back to lightweight model manager because AI runtime import failed: %s", exc)
+    model_manager = _FallbackModelManager(exc)
+
+LIVE_PREVIEW_METHOD_CHOICES = ("full", "approx_nn", "approx_cheap", "taesd")
+try:
+    from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
+except Exception as exc:
+    if AI_RUNTIME_IMPORT_ERROR is None:
+        AI_RUNTIME_IMPORT_ERROR = exc
+    logger.warning("Falling back to lightweight preview decoder because preview runtime import failed: %s", exc)
+    preview_decoder = _FallbackPreviewDecoder()
 
 app = FastAPI(title="Local AI Gen Service", version="0.1.0")
 
@@ -125,6 +201,23 @@ ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp
 
 def _validation_error(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
+
+
+def _ensure_ai_runtime_available() -> None:
+    if AI_RUNTIME_IMPORT_ERROR is None and torch is not None:
+        return
+
+    missing_bits = []
+    if torch is None:
+        missing_bits.append("torch")
+    if AI_RUNTIME_IMPORT_ERROR is not None:
+        missing_bits.append(type(AI_RUNTIME_IMPORT_ERROR).__name__)
+
+    detail = (
+        "AI runtime is unavailable for generation endpoints. "
+        f"Missing or failed dependencies: {', '.join(missing_bits)}."
+    )
+    raise HTTPException(status_code=503, detail=detail)
 
 
 def _merge_negative_prompt_terms(base_prompt: Optional[str], extra_prompt: Optional[str]) -> str:
@@ -519,6 +612,8 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
     negative_prompt = negative_prompt or ""
     
     if model_family == "sdxl":
+        if CompelForSDXL is None:
+            raise RuntimeError("compel is not installed.")
         compel = CompelForSDXL(pipe=pipe)
         prompt_embeds, pooled_prompt_embeds = compel(prompt)
         negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
@@ -529,6 +624,8 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
             "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
         }
     else:
+        if CompelForSD is None:
+            raise RuntimeError("compel is not installed.")
         compel = CompelForSD(pipe=pipe)
         prompt_embeds = compel(prompt)
         negative_prompt_embeds = compel(negative_prompt)
@@ -858,6 +955,7 @@ async def generate_image(
     mask_image: UploadFile = File(None),
 ):
     try:
+        _ensure_ai_runtime_available()
         request_id = (request_id or "").strip() or uuid.uuid4().hex
         #_____________апдейт_______ Normalize active tool once per request
         active_tool = _normalize_active_tool(active_tool)

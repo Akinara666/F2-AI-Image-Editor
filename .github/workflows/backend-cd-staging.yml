@@ -1,0 +1,92 @@
+name: Backend CD Staging
+
+on:
+  workflow_run:
+    workflows:
+      - Backend CI
+    types:
+      - completed
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy to staging
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          build-args: |
+            INSTALL_AI_RUNTIME=true
+            INSTALL_OPTIONAL_RUNTIME=false
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-backend:dev-${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+            ghcr.io/akinara666/working-title-psd2-backend:dev-latest
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.BACKEND_STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.BACKEND_STAGING_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy backend to staging server
+        run: |
+          ssh -p "${{ secrets.BACKEND_STAGING_SSH_PORT }}" "${{ secrets.BACKEND_STAGING_SSH_USER }}@${{ secrets.BACKEND_STAGING_SSH_HOST }}" <<'EOF'
+          set -euo pipefail
+          cd "${{ secrets.BACKEND_STAGING_APP_DIR }}"
+          git fetch origin dev
+          git checkout dev
+          git pull --ff-only origin dev
+          cat > deploy/backend/backend.staging.env <<'ENVFILE'
+          ${{ secrets.BACKEND_STAGING_ENV_FILE }}
+          ENVFILE
+          echo "${{ secrets.BACKEND_STAGING_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.BACKEND_STAGING_GHCR_USERNAME }}" --password-stdin
+          docker compose --project-directory . -f deploy/backend/compose.staging.yaml pull
+          docker compose --project-directory . -f deploy/backend/compose.staging.yaml up -d
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:8000/health"
+          for _ in range(20):
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      print(response.read().decode())
+                  break
+              except Exception:
+                  time.sleep(3)
+          else:
+              raise SystemExit("Backend staging health check failed.")
+          PY
+          EOF

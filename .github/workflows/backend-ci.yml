@@ -1,0 +1,83 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "deploy/backend/**"
+      - ".github/workflows/backend-*.yml"
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - "backend/**"
+      - "deploy/backend/**"
+      - ".github/workflows/backend-*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements-ci.txt
+
+      - name: Install backend CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-ci.txt
+
+      - name: Run backend test suite
+        run: PYTHONPATH=backend python -m unittest discover -s backend/tests -p 'test_*.py' -v
+
+  backend-docker-smoke:
+    needs: backend-tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend smoke image
+        run: |
+          docker build \
+            -f backend/Dockerfile \
+            --build-arg INSTALL_AI_RUNTIME=false \
+            --build-arg INSTALL_OPTIONAL_RUNTIME=false \
+            -t working-title-psd2-backend-ci:${{ github.sha }} \
+            backend
+
+      - name: Start backend smoke container
+        run: |
+          docker run -d \
+            --name backend-ci-smoke \
+            -p 8000:8000 \
+            working-title-psd2-backend-ci:${{ github.sha }}
+
+      - name: Verify backend health endpoint
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Backend health check failed." >&2
+          docker logs backend-ci-smoke || true
+          exit 1
+
+      - name: Stop backend smoke container
+        if: always()
+        run: |
+          docker rm -f backend-ci-smoke >/dev/null 2>&1 || true

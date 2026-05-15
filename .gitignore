@@ -2,6 +2,7 @@
 backend/.env
 backend/venv/
 frontend/node_modules/
+deploy/backend/*.env
 
 # Build artifacts
 frontend/dist/
