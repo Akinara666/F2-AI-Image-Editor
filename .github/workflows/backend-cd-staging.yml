@@ -3,7 +3,7 @@ name: Backend CD Staging
 on:
   workflow_run:
     workflows:
-      - Backend CI
+      - CI
     types:
       - completed
     branches:

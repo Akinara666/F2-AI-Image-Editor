@@ -3,7 +3,7 @@ name: Frontend CD Staging
 on:
   workflow_run:
     workflows:
-      - Frontend CI
+      - CI
     types:
       - completed
     branches:
