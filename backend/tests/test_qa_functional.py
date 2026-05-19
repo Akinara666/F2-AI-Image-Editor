@@ -4,11 +4,14 @@ Tests endpoints as a consumer would: only observing inputs/outputs, no internals
 """
 import io
 import unittest
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
 
 from main import app
+from core.config import settings
+from core.generation_preview import generation_preview_store
 
 
 def _rgb_png(size=(64, 64), color=(100, 150, 200)) -> bytes:
@@ -122,6 +125,57 @@ class TestHistoryDeleteEndpoint(unittest.TestCase):
         )
         self.assertIn(r.status_code, (404, 200))
 
+    def test_delete_existing_file_returns_deleted_url(self):
+        save_response = self.client.post(
+            "/history/save",
+            data={"prompt": "delete me"},
+            files={"image": ("snap.png", _rgb_png(), "image/png")},
+        )
+        self.assertEqual(save_response.status_code, 200)
+        payload = save_response.json()
+        output_path = Path(settings.OUTPUT_DIR) / payload["filename"]
+        self.assertTrue(output_path.exists())
+
+        try:
+            delete_response = self.client.post(
+                "/history/delete",
+                json={"url": payload["url"]},
+            )
+            self.assertEqual(delete_response.status_code, 200)
+            delete_payload = delete_response.json()
+            self.assertEqual(delete_payload.get("status"), "success")
+            self.assertEqual(delete_payload.get("deleted_urls"), [payload["url"]])
+            self.assertEqual(delete_payload.get("missing_urls"), [])
+            self.assertFalse(output_path.exists())
+        finally:
+            if output_path.exists():
+                output_path.unlink()
+
+    def test_delete_mixed_existing_and_missing_urls_reports_both(self):
+        save_response = self.client.post(
+            "/history/save",
+            data={"prompt": "mixed delete"},
+            files={"image": ("snap.png", _rgb_png(), "image/png")},
+        )
+        self.assertEqual(save_response.status_code, 200)
+        payload = save_response.json()
+        output_path = Path(settings.OUTPUT_DIR) / payload["filename"]
+        missing_url = "/outputs/definitely_missing_for_delete_test.png"
+
+        try:
+            delete_response = self.client.post(
+                "/history/delete",
+                json={"urls": [payload["url"], missing_url]},
+            )
+            self.assertEqual(delete_response.status_code, 200)
+            delete_payload = delete_response.json()
+            self.assertEqual(delete_payload.get("deleted_urls"), [payload["url"]])
+            self.assertEqual(delete_payload.get("missing_urls"), [missing_url])
+            self.assertFalse(output_path.exists())
+        finally:
+            if output_path.exists():
+                output_path.unlink()
+
 
 class TestHistorySaveEndpoint(unittest.TestCase):
     @classmethod
@@ -169,6 +223,36 @@ class TestHistorySaveEndpoint(unittest.TestCase):
             files={"image": ("snap.png", _rgb_png(), "image/png")},
         )
         self.assertEqual(r.status_code, 200)
+
+    def test_save_persists_metadata_fields(self):
+        response = self.client.post(
+            "/history/save",
+            data={
+                "prompt": "metadata prompt",
+                "raw_prompt": "raw metadata prompt",
+                "negative_prompt": "bad anatomy",
+                "seed": "123",
+                "active_tool": "  QUICK_SELECT  ",
+                "generated_url": "/outputs/generated-source.png",
+            },
+            files={"image": ("snap.png", _rgb_png(), "image/png")},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        output_path = Path(settings.OUTPUT_DIR) / payload["filename"]
+
+        try:
+            with Image.open(output_path) as saved:
+                self.assertEqual(saved.info.get("prompt"), "metadata prompt")
+                self.assertEqual(saved.info.get("raw_prompt"), "raw metadata prompt")
+                self.assertEqual(saved.info.get("negative_prompt"), "bad anatomy")
+                self.assertEqual(saved.info.get("seed"), "123")
+                self.assertEqual(saved.info.get("active_tool"), "quick_select")
+                self.assertEqual(saved.info.get("generated_url"), "/outputs/generated-source.png")
+                self.assertEqual(saved.info.get("history_kind"), "document_snapshot")
+        finally:
+            if output_path.exists():
+                output_path.unlink()
 
 
 class TestUpscaleEndpoint(unittest.TestCase):
@@ -257,6 +341,47 @@ class TestGenerationPreviewEndpoint(unittest.TestCase):
     def test_preview_nonexistent_request_returns_404(self):
         r = self.client.get("/generate/preview/nonexistent-req-999")
         self.assertEqual(r.status_code, 404)
+
+    def test_preview_existing_request_returns_payload(self):
+        request_id = "preview-success-functional-001"
+        preview_image = Image.new("RGB", (24, 24), (255, 0, 0))
+        generation_preview_store.start(request_id, total_steps=12)
+        generation_preview_store.update(
+            request_id,
+            step=4,
+            total_steps=12,
+            image=preview_image,
+            status="running",
+        )
+
+        try:
+            response = self.client.get(f"/generate/preview/{request_id}")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload.get("status"), "success")
+            data = payload.get("data", {})
+            self.assertEqual(data.get("request_id"), request_id)
+            self.assertEqual(data.get("status"), "running")
+            self.assertEqual(data.get("step"), 4)
+            self.assertEqual(data.get("total_steps"), 12)
+            self.assertAlmostEqual(data.get("progress"), 4 / 12)
+            self.assertTrue(str(data.get("image_data_url", "")).startswith("data:image/jpeg;base64,"))
+        finally:
+            generation_preview_store.clear(request_id)
+
+
+class TestGenerateEndpoint(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.client = TestClient(app)
+
+    def test_generate_returns_503_without_ai_runtime(self):
+        response = self.client.post(
+            "/generate",
+            data={"prompt": "a futuristic city"},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("AI runtime is unavailable", response.json().get("detail", ""))
 
 
 if __name__ == "__main__":

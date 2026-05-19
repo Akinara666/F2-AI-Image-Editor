@@ -95,6 +95,28 @@ class TestValidationBoundaries(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 422)
 
+    def test_clone_stamp_non_image_file_rejected(self):
+        r = self.client.post(
+            "/tools/clone-stamp",
+            data={"source_x": "10", "source_y": "10", "target_x": "30", "target_y": "30"},
+            files={"init_image": ("i.png", b"not_an_image", "image/png")},
+        )
+        self.assertEqual(r.status_code, 400)
+
+    def test_clone_stamp_oversized_feather_rejected(self):
+        r = self.client.post(
+            "/tools/clone-stamp",
+            data={
+                "source_x": "10",
+                "source_y": "10",
+                "target_x": "30",
+                "target_y": "30",
+                "feather": "999",
+            },
+            files={"init_image": ("i.png", _png(), "image/png")},
+        )
+        self.assertEqual(r.status_code, 422)
+
     # ── /tools/quick-select/refine ──────────────────────────────────────────
 
     def test_quick_select_negative_width_rejected(self):

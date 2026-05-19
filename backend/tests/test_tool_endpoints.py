@@ -74,6 +74,19 @@ class ToolEndpointsTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
+    def test_clone_stamp_rejects_non_image_file(self):
+        response = self.client.post(
+            "/tools/clone-stamp",
+            data={
+                "source_x": "16",
+                "source_y": "16",
+                "target_x": "40",
+                "target_y": "40",
+            },
+            files={"init_image": ("init.png", b"not_an_image", "image/png")},
+        )
+        self.assertEqual(response.status_code, 400)
+
     def test_quick_select_refine_accepts_mask_image_without_selection_fields(self):
         response = self.client.post(
             "/tools/quick-select/refine",
@@ -130,6 +143,42 @@ class ToolEndpointsTests(unittest.TestCase):
             files={"init_image": ("init.png", self._png_bytes(), "image/png")},
         )
         self.assertEqual(response.status_code, 422)
+
+    def test_quick_select_refine_alias_requires_mask_or_selection(self):
+        response = self.client.post(
+            "/quick-select/refine",
+            data={"width": "64", "height": "64"},
+            files={"init_image": ("init.png", self._png_bytes(), "image/png")},
+        )
+        self.assertEqual(response.status_code, 422)
+
+    def test_quick_select_refine_alias_returns_503_without_ai_runtime(self):
+        response = self.client.post(
+            "/quick-select/refine",
+            data={
+                "width": "64",
+                "height": "64",
+                "selection_left": "8",
+                "selection_top": "8",
+                "selection_width": "24",
+                "selection_height": "24",
+            },
+            files={"init_image": ("init.png", self._png_bytes(), "image/png")},
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("AI runtime is unavailable", response.json().get("detail", ""))
+
+    def test_spot_heal_alias_returns_503_without_ai_runtime(self):
+        response = self.client.post(
+            "/spot-heal",
+            data={"width": "64", "height": "64"},
+            files={
+                "init_image": ("init.png", self._png_bytes(), "image/png"),
+                "mask_image": ("mask.png", self._mask_bytes(), "image/png"),
+            },
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("AI runtime is unavailable", response.json().get("detail", ""))
 
 
 if __name__ == "__main__":
