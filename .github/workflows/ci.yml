@@ -264,3 +264,39 @@ jobs:
         if: always()
         run: |
           docker rm -f frontend-ci-smoke >/dev/null 2>&1 || true
+
+  system-docker-smoke:
+    needs:
+      - backend-docker-smoke
+      - frontend-docker-smoke
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start backend and frontend together
+        run: docker compose up --build -d
+
+      - name: Verify backend and frontend health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null \
+              && curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "System smoke check failed." >&2
+          docker compose ps
+          docker compose logs backend frontend || true
+          exit 1
+
+      - name: Verify frontend bundle points to backend API
+        run: |
+          frontend_container_id="$(docker compose ps -q frontend)"
+          docker exec "$frontend_container_id" sh -lc "grep -R '127.0.0.1:8000' /usr/share/nginx/html/assets >/dev/null"
+
+      - name: Stop backend and frontend
+        if: always()
+        run: docker compose down --volumes --remove-orphans
