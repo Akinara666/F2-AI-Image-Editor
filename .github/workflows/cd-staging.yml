@@ -1,0 +1,133 @@
+name: CD Staging
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - dev
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref для выкладки на staging
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cd-staging
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      secrets.STAGING_SSH_HOST != '' &&
+      secrets.STAGING_SSH_PORT != '' &&
+      secrets.STAGING_SSH_USER != '' &&
+      secrets.STAGING_SSH_PRIVATE_KEY != '' &&
+      secrets.STAGING_SSH_KNOWN_HOSTS != '' &&
+      secrets.STAGING_APP_DIR != '' &&
+      secrets.STAGING_BACKEND_ENV_FILE != '' &&
+      secrets.STAGING_GHCR_USERNAME != '' &&
+      secrets.STAGING_GHCR_TOKEN != '' &&
+      secrets.STAGING_FRONTEND_VITE_API_BASE_URL != ''
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          build-args: |
+            INSTALL_AI_RUNTIME=true
+            INSTALL_OPTIONAL_RUNTIME=false
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-backend:staging-${{ steps.meta.outputs.git_sha }}
+            ghcr.io/akinara666/working-title-psd2-backend:staging-latest
+
+      - name: Build and push frontend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.STAGING_FRONTEND_VITE_API_BASE_URL }}
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-frontend:staging-${{ steps.meta.outputs.git_sha }}
+            ghcr.io/akinara666/working-title-psd2-frontend:staging-latest
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.STAGING_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy release to staging server
+        run: |
+          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" <<'EOF'
+          set -euo pipefail
+          IMAGE_SHA="${{ steps.meta.outputs.git_sha }}"
+          cd "${{ secrets.STAGING_APP_DIR }}"
+          git fetch origin --tags
+          git checkout "$IMAGE_SHA"
+          cat > deploy/backend.staging.env <<'ENVFILE'
+          ${{ secrets.STAGING_BACKEND_ENV_FILE }}
+          ENVFILE
+          echo "${{ secrets.STAGING_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.STAGING_GHCR_USERNAME }}" --password-stdin
+          export BACKEND_ENV_FILE="./backend.staging.env"
+          export BACKEND_IMAGE_TAG="staging-$IMAGE_SHA"
+          export FRONTEND_IMAGE_TAG="staging-$IMAGE_SHA"
+          docker compose -f deploy/compose.staging.yaml pull
+          docker compose -f deploy/compose.staging.yaml up -d
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          checks = [
+              ("backend", "http://127.0.0.1:8000/health"),
+              ("frontend", "http://127.0.0.1:3000"),
+          ]
+
+          for name, url in checks:
+              for _ in range(20):
+                  try:
+                      with urllib.request.urlopen(url, timeout=5) as response:
+                          print(name, response.status)
+                      break
+                  except Exception:
+                      time.sleep(3)
+              else:
+                  raise SystemExit(f"{name} staging health check failed: {url}")
+          PY
+          EOF

@@ -1,0 +1,125 @@
+name: CD Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref для выкладки на production
+        required: false
+        default: main
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    if: >-
+      secrets.PROD_SSH_HOST != '' &&
+      secrets.PROD_SSH_PORT != '' &&
+      secrets.PROD_SSH_USER != '' &&
+      secrets.PROD_SSH_PRIVATE_KEY != '' &&
+      secrets.PROD_SSH_KNOWN_HOSTS != '' &&
+      secrets.PROD_APP_DIR != '' &&
+      secrets.PROD_BACKEND_ENV_FILE != '' &&
+      secrets.PROD_GHCR_USERNAME != '' &&
+      secrets.PROD_GHCR_TOKEN != '' &&
+      secrets.PROD_FRONTEND_VITE_API_BASE_URL != ''
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          echo "git_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: true
+          build-args: |
+            INSTALL_AI_RUNTIME=true
+            INSTALL_OPTIONAL_RUNTIME=false
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-backend:prod-${{ steps.meta.outputs.git_sha }}
+            ghcr.io/akinara666/working-title-psd2-backend:prod-latest
+
+      - name: Build and push frontend runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          build-args: |
+            VITE_API_BASE_URL=${{ secrets.PROD_FRONTEND_VITE_API_BASE_URL }}
+          tags: |
+            ghcr.io/akinara666/working-title-psd2-frontend:prod-${{ steps.meta.outputs.git_sha }}
+            ghcr.io/akinara666/working-title-psd2-frontend:prod-latest
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+
+      - name: Configure known hosts
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.PROD_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy release to production server
+        run: |
+          ssh -p "${{ secrets.PROD_SSH_PORT }}" "${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}" <<'EOF'
+          set -euo pipefail
+          IMAGE_SHA="${{ steps.meta.outputs.git_sha }}"
+          cd "${{ secrets.PROD_APP_DIR }}"
+          git fetch origin --tags
+          git checkout "$IMAGE_SHA"
+          cat > deploy/backend.prod.env <<'ENVFILE'
+          ${{ secrets.PROD_BACKEND_ENV_FILE }}
+          ENVFILE
+          echo "${{ secrets.PROD_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ secrets.PROD_GHCR_USERNAME }}" --password-stdin
+          export BACKEND_ENV_FILE="./backend.prod.env"
+          export BACKEND_IMAGE_TAG="prod-$IMAGE_SHA"
+          export FRONTEND_IMAGE_TAG="prod-$IMAGE_SHA"
+          docker compose -f deploy/compose.prod.yaml pull
+          docker compose -f deploy/compose.prod.yaml up -d
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          checks = [
+              ("backend", "http://127.0.0.1:8000/health"),
+              ("frontend", "http://127.0.0.1:3000"),
+          ]
+
+          for name, url in checks:
+              for _ in range(20):
+                  try:
+                      with urllib.request.urlopen(url, timeout=5) as response:
+                          print(name, response.status)
+                      break
+                  except Exception:
+                      time.sleep(3)
+              else:
+                  raise SystemExit(f"{name} production health check failed: {url}")
+          PY
+          EOF

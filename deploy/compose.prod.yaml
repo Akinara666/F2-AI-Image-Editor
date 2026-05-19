@@ -1,0 +1,38 @@
+name: working-title-psd2-prod
+
+services:
+  backend:
+    image: ghcr.io/akinara666/working-title-psd2-backend:${BACKEND_IMAGE_TAG:-prod-latest}
+    container_name: working-title-psd2-backend-prod
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend.env.example}
+    volumes:
+      - ../backend/models:/app/models
+      - ../backend/static/outputs:/app/static/outputs
+    # Раскомментируй на GPU-хостах, где настроен NVIDIA Container Toolkit.
+    # gpus: all
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    image: ghcr.io/akinara666/working-title-psd2-frontend:${FRONTEND_IMAGE_TAG:-prod-latest}
+    container_name: working-title-psd2-frontend-prod
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
