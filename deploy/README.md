@@ -9,12 +9,12 @@
 Локальный orchestration для `CI` и ручного smoke-прогона находится в корневом `compose.yaml`.
 Файлы из этой папки нужны именно для `CD` и работы на сервере.
 
-Пока целевой сервер ещё не подключён, в репозитории есть mock workflow
-`.github/workflows/cd-rehearsal.yml`.
-Он не делает удалённый деплой, но проверяет release-сценарий:
+Пока целевой сервер ещё не подключён, в репозитории есть workflow
+`.github/workflows/cd-validation.yml`.
+Он проверяет release-сценарий и корректность deploy-конфигурации:
 
 - валидирует `deploy`-compose-файлы
-- собирает release-like Docker-образы
+- собирает release-образы для проверки
 - поднимает staging-стек локально в GitHub runner
 - проверяет health backend и frontend
 
