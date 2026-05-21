@@ -5,6 +5,7 @@ Tests endpoints as a consumer would: only observing inputs/outputs, no internals
 import io
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 from fastapi.testclient import TestClient
@@ -58,6 +59,41 @@ class TestHealthEndpoints(unittest.TestCase):
         body = r.json()
         self.assertIn("models", body)
         self.assertIsInstance(body["models"], list)
+
+    def test_models_merges_cloud_managed_and_local_entries(self):
+        managed_entries = [
+            {"id": "managed:test-model", "label": "Managed Test", "family": "sdxl"}
+        ]
+        local_entries = [
+            {"id": "/tmp/local-model.safetensors", "label": "Local Test", "family": "sd"}
+        ]
+
+        with patch('main._get_managed_model_entries', return_value=managed_entries), patch(
+            'main._get_local_model_entries',
+            return_value=local_entries,
+        ):
+            response = self.client.get('/models')
+
+        self.assertEqual(response.status_code, 200)
+        models = response.json()['models']
+        model_ids = [model['id'] for model in models]
+        self.assertIn('managed:test-model', model_ids)
+        self.assertIn('/tmp/local-model.safetensors', model_ids)
+        self.assertIn('runwayml/stable-diffusion-v1-5', model_ids)
+
+    def test_models_returns_cloud_models_when_managed_and_local_are_empty(self):
+        with patch('main._get_managed_model_entries', return_value=[]), patch(
+            'main._get_local_model_entries',
+            return_value=[],
+        ):
+            response = self.client.get('/models')
+
+        self.assertEqual(response.status_code, 200)
+        models = response.json()['models']
+        self.assertEqual(models, [
+            {"id": "runwayml/stable-diffusion-v1-5", "label": "SD v1.5 Base (Cloud)", "family": "sd"},
+            {"id": "stabilityai/stable-diffusion-xl-base-1.0", "label": "SDXL Base 1.0 (Cloud)", "family": "sdxl"},
+        ])
 
     def test_prompt_health_returns_status(self):
         r = self.client.get("/prompt/health")

@@ -6,6 +6,12 @@ deploy/backend/*.env
 
 # Build artifacts
 frontend/dist/
+frontend/coverage/
+backend/htmlcov/
+backend/coverage.xml
+backend/coverage.json
+.coverage
+.coverage.*
 __pycache__/
 
 # Generated outputs
