@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import { API_ENDPOINTS } from '../constants';
 import './ModelManager.css';
@@ -197,7 +198,9 @@ const ModelManager = ({
 
     const activeDownloads = downloads.filter((d) => ACTIVE_STATUSES.includes(d.status));
 
-    return (
+    // Рендерим в document.body через портал: иначе backdrop-filter у .panel
+    // создаёт containing block и position: fixed «запирается» внутри сайдбара.
+    return createPortal(
         <div className="mm-overlay" role="dialog" aria-modal="true" onMouseDown={onClose}>
             <div className="mm-panel" onMouseDown={(e) => e.stopPropagation()}>
                 <header className="mm-header">
@@ -382,7 +385,8 @@ const ModelManager = ({
                     )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
