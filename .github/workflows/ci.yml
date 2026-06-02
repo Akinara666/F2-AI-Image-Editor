@@ -113,6 +113,7 @@ jobs:
           PYTHONPATH=backend python -m unittest \
             backend.tests.test_tool_endpoints \
             backend.tests.test_qa_negative \
+            backend.tests.test_model_downloads \
             -v
 
   backend-docker-smoke:
@@ -195,6 +196,7 @@ jobs:
             backend.tests.test_qa_integration \
             backend.tests.test_tool_endpoints \
             backend.tests.test_qa_negative \
+            backend.tests.test_model_downloads \
             -v
           python -m coverage report --rcfile=.coveragerc
           python -m coverage html --rcfile=.coveragerc

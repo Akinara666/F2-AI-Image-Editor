@@ -3,6 +3,10 @@ backend/.env
 backend/venv/
 frontend/node_modules/
 deploy/backend/*.env
+# Runtime env-файлы деплоя (создаются bootstrap.sh / CD на сервере). Шаблон
+# deploy/backend.env.example остаётся в репозитории.
+deploy/backend.env
+deploy/backend.*.env
 
 # Build artifacts
 frontend/dist/

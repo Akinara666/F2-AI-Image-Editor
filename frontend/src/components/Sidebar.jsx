@@ -6,6 +6,7 @@ import {
     API_ENDPOINTS,
     parseGenerationNumericParam
 } from '../constants';
+import ModelManager from './ModelManager';
 import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
@@ -38,6 +39,7 @@ const getPromptTransformStageLabel = (elapsedMs) => {
 
 const Sidebar = ({
     availableModels,
+    onModelsRefresh,
     params, setParams,
     isGenerating, isBusy, generationStatus, onGenerate, onCancel,
     brushMode, setBrushMode,
@@ -49,6 +51,7 @@ const Sidebar = ({
     showToastError, showToastSuccess, showToastInfo
 }) => {
     const [activeTab, setActiveTab] = useState('generation');
+    const [isModelManagerOpen, setIsModelManagerOpen] = useState(false);
     const [isTransformingPrompt, setIsTransformingPrompt] = useState(false);
     const [promptTransformElapsedMs, setPromptTransformElapsedMs] = useState(0);
     const [numberDrafts, setNumberDrafts] = useState({
@@ -271,7 +274,16 @@ const Sidebar = ({
                     <>
                         {/* Модель и сэмплер. */}
                         <div className="input-group">
-                            <label className="input-label">Модель</label>
+                            <div className="sidebar__label-row">
+                                <label className="input-label">Модель</label>
+                                <button
+                                    type="button"
+                                    className="sidebar__model-manage-btn"
+                                    onClick={() => setIsModelManagerOpen(true)}
+                                >
+                                    ⚙ Модели
+                                </button>
+                            </div>
                             <select
                                 name="model_id"
                                 className="input-field"
@@ -878,6 +890,18 @@ const Sidebar = ({
                     </button>
                 )}
             </div>
+
+            <ModelManager
+                open={isModelManagerOpen}
+                onClose={() => setIsModelManagerOpen(false)}
+                availableModels={availableModels}
+                activeModelId={params.model_id}
+                onSelectModel={(id) => setParams(prev => ({ ...prev, model_id: id }))}
+                onModelsRefresh={onModelsRefresh}
+                showToastError={showToastError}
+                showToastSuccess={showToastSuccess}
+                showToastInfo={showToastInfo}
+            />
         </div>
     );
 };
