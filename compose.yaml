@@ -22,7 +22,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE_URL: "http://127.0.0.1:8000"
+        # Пусто = same-origin: nginx фронтенда сам проксирует API на backend.
+        VITE_API_BASE_URL: ""
     depends_on:
       backend:
         condition: service_healthy

@@ -377,10 +377,10 @@ jobs:
           docker compose logs backend frontend || true
           exit 1
 
-      - name: Verify frontend bundle points to backend API
+      - name: Verify frontend reverse-proxies the backend API
         run: |
-          frontend_container_id="$(docker compose ps -q frontend)"
-          docker exec "$frontend_container_id" sh -lc "grep -R '127.0.0.1:8000' /usr/share/nginx/html/assets >/dev/null"
+          curl --fail --silent http://127.0.0.1:3000/health >/dev/null
+          curl --fail --silent http://127.0.0.1:3000/models >/dev/null
 
       - name: Stop backend and frontend
         if: always()

@@ -20,7 +20,16 @@ RUN pip install --upgrade pip \
 
 ARG INSTALL_AI_RUNTIME=false
 ARG INSTALL_OPTIONAL_RUNTIME=false
+# Оставь пустым для CPU-сборки (torch с обычного PyPI).
+# Для GPU-хоста передай CUDA-индекс, например: https://download.pytorch.org/whl/cu121
+# cu-колёса torch self-contained (cudart/cudnn/cublas внутри); хосту нужен только
+# NVIDIA-драйвер + nvidia-container-toolkit. Ставим torch первым, чтобы requirements.txt
+# увидел его уже удовлетворённым и не подтянул CPU-сборку поверх.
+ARG TORCH_INDEX_URL=""
 
+RUN if [ "$INSTALL_AI_RUNTIME" = "true" ] && [ -n "$TORCH_INDEX_URL" ]; then \
+        pip install torch --index-url "$TORCH_INDEX_URL"; \
+    fi
 RUN if [ "$INSTALL_AI_RUNTIME" = "true" ]; then pip install -r requirements.txt; fi
 RUN if [ "$INSTALL_OPTIONAL_RUNTIME" = "true" ]; then pip install -r requirements-optional.txt; fi
 

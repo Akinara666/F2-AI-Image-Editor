@@ -108,7 +108,23 @@ export LLM_TOP_P=0.9
     *   Нажмите **GENERATE** еще раз, чтобы заменить вариант, или **ACCEPT**, чтобы вклеить его в холст.
     *   Нажмите **DISCARD**, чтобы удалить.
 
-## Удаленный сервер
+## 🚀 Развёртывание на сервере (одной командой)
+На свежем GPU-сервере (Vast.ai / RunPod / любой хост с NVIDIA-драйвером):
+
+```bash
+git clone git@github.com:Akinara666/working-title-psd2.git
+cd working-title-psd2
+bash deploy/bootstrap.sh
+```
+
+Скрипт ставит Docker и NVIDIA Container Toolkit (при наличии GPU), собирает образы,
+поднимает backend + frontend + Cloudflare Tunnel и печатает единый публичный
+`https://*.trycloudflare.com`. Фронтенд проксирует API через nginx (same-origin),
+поэтому второй URL и настройка CORS не нужны. Подробности — в `deploy/README.md`.
+
+Модели можно скачивать с HuggingFace / Civit.ai прямо из меню «Модели» в редакторе.
+
+## Удаленный сервер (ручные сценарии)
 Сценарии с `SSH`-туннелем, `trycloudflare.com`, `ngrok` и настройкой `CORS_ALLOW_ORIGINS` / `VITE_API_BASE_URL` описаны в `REMOTE_SERVER.md`.
 
 ## 📂 Структура проекта
