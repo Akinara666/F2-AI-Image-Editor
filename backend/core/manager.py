@@ -264,25 +264,29 @@ class ModelManager:
             candidates.append({key: value for key, value in base_args.items() if key != "variant"})
         return candidates
 
+    def _free_cuda_memory(self):
+        """Return freed blocks to the OS/allocator without touching pipeline state."""
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
     def _unload_current_model(self):
         """No longer fully unloads by default. Models are managed by cpu_offload.
         This method is kept for explicit hard resets if needed.
         """
         self.logger.info("Hard VRAM clear requested.")
         if self.current_pipeline is not None:
-            # We don't delete the pipeline if it's in the cache, 
+            # We don't delete the pipeline if it's in the cache,
             # we just let cpu_offload handle VRAM.
             # If we wanted to really delete it:
             # del self.current_pipeline
             self.current_pipeline = None
             self.current_cache_key = None
             self.current_model_cache_key = None
-            
+
         # Hard cleanup
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        self._free_cuda_memory()
         self.logger.info("VRAM cleared.")
 
     async def get_model(
@@ -365,7 +369,12 @@ class ModelManager:
                 return self.current_pipeline
             except Exception as e:
                 self.logger.error(f"Error loading model: {e}")
-                self._unload_current_model() # Cleanup on failure
+                # The new load failed before current_pipeline was reassigned, so
+                # the previously active pipeline (if any) is still valid and lives
+                # in the cache. Only reclaim leaked CUDA memory; do not wipe the
+                # working pipeline pointers, otherwise the next request needlessly
+                # re-activates a model that never stopped working.
+                self._free_cuda_memory()
                 raise e
 
     def _load_model_bundle(
@@ -625,9 +634,7 @@ class ModelManager:
             if self._offload_hook_owner is evicted_bundle.anchor_pipeline:
                 self._offload_hook_owner = None
             del evicted_bundle
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            self._free_cuda_memory()
 
     def _apply_sampler(self, pipeline, sampler_name: str):
         """Applies the requested sampler to the pipeline."""
