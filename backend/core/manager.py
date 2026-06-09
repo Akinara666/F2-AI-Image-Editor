@@ -64,6 +64,11 @@ class ModelManager:
         self.logger = logging.getLogger("ModelManager")
         self.model_family_cache: dict[str, ModelFamily] = {}
         self.model_family_cache_lock = threading.Lock()
+        # accelerate installs CPU-offload hooks on the module objects themselves.
+        # Pipelines built via from_pipe() share those modules, so only one
+        # pipeline may own the offload hooks at a time. Track the current owner
+        # to hand ownership over cleanly instead of stacking conflicting hooks.
+        self._offload_hook_owner = None
 
     @staticmethod
     def _generate_model_cache_key(
@@ -461,7 +466,7 @@ class ModelManager:
         if self.device == "cuda":
             if self.sd_enable_cpu_offload:
                 try:
-                    pipeline.enable_model_cpu_offload()
+                    self._enable_model_cpu_offload(pipeline)
                     uses_cpu_offload = True
                     self.logger.info("Enabled CPU offloading for model bundle %s.", cache_key)
                 except Exception as e:
@@ -509,13 +514,34 @@ class ModelManager:
         )
         return pipeline_class.from_pipe(bundle.anchor_pipeline, torch_dtype=bundle.torch_dtype)
 
+    def _enable_model_cpu_offload(self, pipeline) -> None:
+        """Hand CPU-offload hook ownership to ``pipeline``.
+
+        Frees the hooks held by the previous owner first so that modules shared
+        through from_pipe() are never hooked by two pipelines at once (which
+        leaves accelerate confused about device placement).
+        """
+        previous_owner = self._offload_hook_owner
+        if previous_owner is not None and previous_owner is not pipeline:
+            remove_hooks = getattr(previous_owner, "remove_all_hooks", None)
+            if remove_hooks is not None:
+                try:
+                    remove_hooks()
+                except Exception as e:
+                    self.logger.warning("Could not remove offload hooks from previous owner: %s", e)
+        pipeline.enable_model_cpu_offload()
+        self._offload_hook_owner = pipeline
+
     def _activate_pipeline_for_runtime(self, bundle: ModelBundle, pipeline, runtime_cache_key: str) -> None:
         if self.current_cache_key == runtime_cache_key and self.current_pipeline is pipeline:
             return
 
         if bundle.uses_cpu_offload and self.device == "cuda":
+            if self._offload_hook_owner is pipeline:
+                self.logger.info("Pipeline %s already owns CPU offload hooks.", runtime_cache_key)
+                return
             try:
-                pipeline.enable_model_cpu_offload()
+                self._enable_model_cpu_offload(pipeline)
                 self.logger.info("Re-activated CPU offload hooks for pipeline %s", runtime_cache_key)
             except Exception as e:
                 self.logger.warning(
@@ -594,6 +620,10 @@ class ModelManager:
                 self.current_pipeline = None
                 self.current_cache_key = None
                 self.current_model_cache_key = None
+                # The active pipeline (offload owner) belonged to this bundle.
+                self._offload_hook_owner = None
+            if self._offload_hook_owner is evicted_bundle.anchor_pipeline:
+                self._offload_hook_owner = None
             del evicted_bundle
             gc.collect()
             if torch.cuda.is_available():
