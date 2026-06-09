@@ -53,6 +53,15 @@ class BasePromptLLMAdapter:
     def health(self) -> dict[str, Any]:
         return {"status": "ok", "adapter": self.__class__.__name__}
 
+    def should_unload_after_call(self) -> bool:
+        """Whether unloading after every call actually frees a scarce resource.
+
+        Defaults to True so callers honouring unload_after_call keep their old
+        behaviour. Adapters that gain nothing from per-call unloading (e.g. a
+        CPU-only model whose unload only churns disk reads) override this.
+        """
+        return True
+
     def unload(self) -> None:
         with self._state_lock:
             if self._active_calls > 0:
@@ -84,6 +93,10 @@ class StubPromptLLMAdapter(BasePromptLLMAdapter):
             "negative_prompt_extra": "",
             "style_tags": [],
         }
+
+    def should_unload_after_call(self) -> bool:
+        # Nothing is ever loaded, so per-call unloading is pointless.
+        return False
 
 
 #_____________апдейт_______ Qwen GGUF + LoRA adapter (lazy-loaded)
@@ -263,6 +276,13 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             len(parsed.get("style_tags") or []),
         )
         return parsed
+
+    def should_unload_after_call(self) -> bool:
+        # Unloading only frees VRAM when some layers live on the GPU. For pure
+        # CPU inference (n_gpu_layers == 0) an unload merely forces the next call
+        # to re-read the multi-GB GGUF from disk with no memory benefit, so keep
+        # the model resident.
+        return self.n_gpu_layers != 0
 
     def health(self) -> dict[str, Any]:
         loaded = self._llm is not None
