@@ -50,6 +50,7 @@ class ModelManager:
     def __init__(self, device=settings.DEVICE, max_cache_size=settings.MAX_CACHED_MODELS):
         self.device = device
         self.sd_enable_cpu_offload = settings.SD_ENABLE_CPU_OFFLOAD
+        self.sd_enable_xformers = settings.SD_ENABLE_XFORMERS
         self.model_bundles_cache = OrderedDict()  # LRU cache: { bundle_key: ModelBundle }
         self.max_cache_size = max_cache_size
         self.current_pipeline = None
@@ -69,6 +70,18 @@ class ModelManager:
         # pipeline may own the offload hooks at a time. Track the current owner
         # to hand ownership over cleanly instead of stacking conflicting hooks.
         self._offload_hook_owner = None
+        self._configure_tf32()
+
+    def _configure_tf32(self):
+        """Allow TF32 tensor-core math for fp32 ops (Ampere+); harmless elsewhere."""
+        if self.device != "cuda" or not settings.SD_ALLOW_TF32:
+            return
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            self.logger.info("Enabled TF32 matmul/cudnn for faster fp32 ops on Ampere+ GPUs.")
+        except Exception as e:
+            self.logger.warning("Could not enable TF32: %s", e)
 
     @staticmethod
     def _generate_model_cache_key(
@@ -87,7 +100,25 @@ class ModelManager:
         return f"{model_cache_key}::{pipeline_type}"
 
     def _get_default_torch_dtype(self) -> torch.dtype:
-        return torch.float16 if self.device == "cuda" else torch.float32
+        override = settings.SD_TORCH_DTYPE
+        if override in {"fp32", "float32"}:
+            return torch.float32
+        if override in {"fp16", "float16", "half"}:
+            return torch.float16
+        if override in {"bf16", "bfloat16"}:
+            return torch.bfloat16
+
+        # auto: bf16 shares fp32's exponent range, so it avoids the fp16 overflow
+        # that yields black/NaN VAE output. Use it where natively accelerated
+        # (Ampere+, sm_80+); fall back to fp16 on older GPUs and fp32 on CPU.
+        if self.device != "cuda":
+            return torch.float32
+        try:
+            if torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8:
+                return torch.bfloat16
+        except Exception as e:
+            self.logger.warning("Could not query GPU capability for dtype selection: %s", e)
+        return torch.float16
 
     @staticmethod
     def _normalize_model_family(model_family: Optional[str]) -> Optional[ModelFamily]:
@@ -472,19 +503,24 @@ class ModelManager:
                 + " | ".join(load_errors[-4:])
             )
 
-        try:
-            pipeline.enable_xformers_memory_efficient_attention()
-        except Exception as e:
-            self.logger.warning(f"Could not enable xformers: {e}")
-            # Modern torch already routes attention through memory-efficient SDPA,
-            # so we only force attention slicing in the low-VRAM regime (offload
-            # enabled) where its memory saving outweighs the speed cost.
-            if self.sd_enable_cpu_offload:
-                try:
-                    pipeline.enable_attention_slicing()
-                    self.logger.info("Enabled attention slicing fallback for bundle %s.", cache_key)
-                except Exception as slice_error:
-                    self.logger.warning(f"Could not enable attention slicing: {slice_error}")
+        # torch SDPA is the diffusers default on torch>=2.0 and gives
+        # memory-efficient attention for free, so xformers is opt-in only.
+        if self.sd_enable_xformers:
+            try:
+                pipeline.enable_xformers_memory_efficient_attention()
+                self.logger.info("Enabled xformers memory-efficient attention for bundle %s.", cache_key)
+            except Exception as e:
+                self.logger.warning(f"Could not enable xformers ({e}); relying on torch SDPA.")
+                # In the low-VRAM regime fall back to attention slicing; otherwise
+                # SDPA already caps the attention memory without the speed cost.
+                if self.sd_enable_cpu_offload:
+                    try:
+                        pipeline.enable_attention_slicing()
+                        self.logger.info("Enabled attention slicing fallback for bundle %s.", cache_key)
+                    except Exception as slice_error:
+                        self.logger.warning(f"Could not enable attention slicing: {slice_error}")
+        else:
+            self.logger.info("xformers disabled; using torch SDPA attention for bundle %s.", cache_key)
 
         # VAE slicing/tiling cap the peak VRAM of the decode step (the spike is
         # most pronounced for SDXL and large / outpainting canvases). They are
