@@ -37,6 +37,9 @@ class Settings:
     # fp32 -> far fewer black/NaN VAE outputs) and fp16 on older GPUs. Override
     # with fp16 / bf16 / fp32.
     SD_TORCH_DTYPE: str = os.getenv("SD_TORCH_DTYPE", "auto").strip().lower()
+    # Optional one-off tiny inference right after load to pay CUDA kernel
+    # compilation / allocation cost up front so the first real request is fast.
+    SD_WARMUP: bool = os.getenv("SD_WARMUP", "false").lower() == "true"
     NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
     NSFW_NEGATIVE_PROMPT: str = os.getenv(
         "NSFW_NEGATIVE_PROMPT",

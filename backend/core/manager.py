@@ -555,6 +555,8 @@ class ModelManager:
             self.logger.info("Running SD bundle %s on CPU without model offload.", cache_key)
             pipeline.to(self.device)
 
+        self._warmup_pipeline(pipeline, pipeline_type, cache_key)
+
         return ModelBundle(
             cache_key=cache_key,
             model_id=model_id,
@@ -564,6 +566,33 @@ class ModelManager:
             torch_dtype=preferred_torch_dtype,
             uses_cpu_offload=uses_cpu_offload,
         )
+
+    def _warmup_pipeline(self, pipeline, pipeline_type: PipelineType, cache_key: str) -> None:
+        """Run a tiny throwaway generation so CUDA kernels/allocations are paid
+        for during load, not on the user's first real request. Best-effort: any
+        failure is logged and ignored. text2img only (other modes need real
+        image/mask inputs)."""
+        if not settings.SD_WARMUP or self.device != "cuda" or pipeline_type != "text2img":
+            return
+        try:
+            import time
+
+            started = time.perf_counter()
+            with torch.inference_mode():
+                pipeline(
+                    prompt="",
+                    num_inference_steps=1,
+                    width=64,
+                    height=64,
+                    output_type="latent",
+                )
+            self.logger.info(
+                "Warmup finished for bundle %s in %s ms.",
+                cache_key,
+                int((time.perf_counter() - started) * 1000),
+            )
+        except Exception as e:
+            self.logger.warning("Warmup failed for bundle %s (ignored): %s", cache_key, e)
 
     def _materialize_pipeline(self, bundle: ModelBundle, pipeline_type: PipelineType):
         if pipeline_type == bundle.anchor_pipeline_type:
