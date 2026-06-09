@@ -88,7 +88,7 @@ class PreviewDecoder:
             if resolved_method == "approx_nn":
                 self._get_approx_model(model_family, latent_channels=self._infer_latent_channels(pipe))
             elif resolved_method == "taesd":
-                self._get_taesd_model(model_family)
+                self._get_taesd_model(model_family, torch_dtype=self._infer_pipe_dtype(pipe))
         except Exception as exc:
             self.logger.warning(
                 "Failed to prepare preview method %s for family=%s: %s. Falling back to approx_cheap.",
@@ -152,15 +152,32 @@ class PreviewDecoder:
             self.logger.info("Loaded Approx NN preview model: family=%s channels=%s path=%s", model_family, latent_channels, model_path)
             return model
 
-    def _get_taesd_model(self, model_family: str) -> AutoencoderTiny:
+    @staticmethod
+    def _infer_pipe_dtype(pipe) -> Optional[torch.dtype]:
+        dtype = getattr(pipe, "dtype", None)
+        if isinstance(dtype, torch.dtype):
+            return dtype
+        unet = getattr(pipe, "unet", None)
+        unet_dtype = getattr(unet, "dtype", None)
+        return unet_dtype if isinstance(unet_dtype, torch.dtype) else None
+
+    def _get_taesd_model(self, model_family: str, torch_dtype: Optional[torch.dtype] = None) -> AutoencoderTiny:
         with self._lock:
             cached_model = self._taesd_models.get(model_family)
             if cached_model is not None:
                 return cached_model
 
             repo_id = TAESD_MODEL_IDS[model_family]
-            self.logger.info("Loading TAESD preview model: family=%s repo=%s", model_family, repo_id)
-            model = AutoencoderTiny.from_pretrained(repo_id)
+            self.logger.info(
+                "Loading TAESD preview model: family=%s repo=%s dtype=%s",
+                model_family,
+                repo_id,
+                torch_dtype,
+            )
+            # Load directly in the runtime dtype to skip the fp32 materialization
+            # + later conversion; _decode_* still re-casts as a safety net.
+            load_kwargs = {"torch_dtype": torch_dtype} if torch_dtype is not None else {}
+            model = AutoencoderTiny.from_pretrained(repo_id, **load_kwargs)
             model.eval()
             self._taesd_models[model_family] = model
             return model
@@ -203,7 +220,7 @@ class PreviewDecoder:
         return self._latents_to_rgb_image(rgb_tensor, upscale_factor=4)
 
     def _decode_taesd(self, latents: torch.Tensor, model_family: str) -> Image.Image:
-        model = self._get_taesd_model(model_family)
+        model = self._get_taesd_model(model_family, torch_dtype=latents.dtype)
         reference_param = next(model.parameters(), None)
         target_device = latents.device if reference_param is None else reference_param.device
         target_dtype = latents.dtype if reference_param is None else reference_param.dtype

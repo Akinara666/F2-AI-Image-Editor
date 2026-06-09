@@ -53,6 +53,15 @@ class BasePromptLLMAdapter:
     def health(self) -> dict[str, Any]:
         return {"status": "ok", "adapter": self.__class__.__name__}
 
+    def should_unload_after_call(self) -> bool:
+        """Whether unloading after every call actually frees a scarce resource.
+
+        Defaults to True so callers honouring unload_after_call keep their old
+        behaviour. Adapters that gain nothing from per-call unloading (e.g. a
+        CPU-only model whose unload only churns disk reads) override this.
+        """
+        return True
+
     def unload(self) -> None:
         with self._state_lock:
             if self._active_calls > 0:
@@ -84,6 +93,10 @@ class StubPromptLLMAdapter(BasePromptLLMAdapter):
             "negative_prompt_extra": "",
             "style_tags": [],
         }
+
+    def should_unload_after_call(self) -> bool:
+        # Nothing is ever loaded, so per-call unloading is pointless.
+        return False
 
 
 #_____________апдейт_______ Qwen GGUF + LoRA adapter (lazy-loaded)
@@ -264,6 +277,13 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         )
         return parsed
 
+    def should_unload_after_call(self) -> bool:
+        # Unloading only frees VRAM when some layers live on the GPU. For pure
+        # CPU inference (n_gpu_layers == 0) an unload merely forces the next call
+        # to re-read the multi-GB GGUF from disk with no memory benefit, so keep
+        # the model resident.
+        return self.n_gpu_layers != 0
+
     def health(self) -> dict[str, Any]:
         loaded = self._llm is not None
         return {
@@ -286,11 +306,23 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self._llm = None
         import gc
         gc.collect()
+        # When layers were offloaded to the GPU, releasing the Python object is
+        # not enough: the CUDA caching allocator keeps the freed blocks until an
+        # explicit empty_cache(). Skipping this would leave VRAM occupied right
+        # before a heavy SD/SDXL load and could trigger a spurious OOM.
+        if self.n_gpu_layers != 0:
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception as exc:
+                self.logger.warning("Could not free CUDA cache after LLM unload: %s", exc)
 
 
 #_____________апдейт_______ Provider factory
-def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
-    provider = (provider_name or "stub").strip().lower()
+def _create_llm_adapter(provider: str) -> BasePromptLLMAdapter:
     if provider in {"qwen_gguf", "qwen_gguf_lora"}:
         return QwenGGUFLoraAdapter(
             model_path=settings.LLM_MODEL_PATH,
@@ -305,3 +337,21 @@ def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
             system_prompt=settings.LLM_SYSTEM_PROMPT,
         )
     return StubPromptLLMAdapter()
+
+
+# Adapters are cached per provider so that the positive and negative prompt
+# transformers reuse a single underlying model instead of each loading its own
+# copy of the (multi-GB) GGUF weights into memory.
+_adapter_cache: dict[str, BasePromptLLMAdapter] = {}
+_adapter_cache_lock = threading.Lock()
+
+
+def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
+    provider = (provider_name or "stub").strip().lower()
+    with _adapter_cache_lock:
+        cached = _adapter_cache.get(provider)
+        if cached is not None:
+            return cached
+        adapter = _create_llm_adapter(provider)
+        _adapter_cache[provider] = adapter
+        return adapter

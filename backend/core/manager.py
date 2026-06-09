@@ -50,6 +50,7 @@ class ModelManager:
     def __init__(self, device=settings.DEVICE, max_cache_size=settings.MAX_CACHED_MODELS):
         self.device = device
         self.sd_enable_cpu_offload = settings.SD_ENABLE_CPU_OFFLOAD
+        self.sd_enable_xformers = settings.SD_ENABLE_XFORMERS
         self.model_bundles_cache = OrderedDict()  # LRU cache: { bundle_key: ModelBundle }
         self.max_cache_size = max_cache_size
         self.current_pipeline = None
@@ -64,6 +65,23 @@ class ModelManager:
         self.logger = logging.getLogger("ModelManager")
         self.model_family_cache: dict[str, ModelFamily] = {}
         self.model_family_cache_lock = threading.Lock()
+        # accelerate installs CPU-offload hooks on the module objects themselves.
+        # Pipelines built via from_pipe() share those modules, so only one
+        # pipeline may own the offload hooks at a time. Track the current owner
+        # to hand ownership over cleanly instead of stacking conflicting hooks.
+        self._offload_hook_owner = None
+        self._configure_tf32()
+
+    def _configure_tf32(self):
+        """Allow TF32 tensor-core math for fp32 ops (Ampere+); harmless elsewhere."""
+        if self.device != "cuda" or not settings.SD_ALLOW_TF32:
+            return
+        try:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            self.logger.info("Enabled TF32 matmul/cudnn for faster fp32 ops on Ampere+ GPUs.")
+        except Exception as e:
+            self.logger.warning("Could not enable TF32: %s", e)
 
     @staticmethod
     def _generate_model_cache_key(
@@ -82,7 +100,25 @@ class ModelManager:
         return f"{model_cache_key}::{pipeline_type}"
 
     def _get_default_torch_dtype(self) -> torch.dtype:
-        return torch.float16 if self.device == "cuda" else torch.float32
+        override = settings.SD_TORCH_DTYPE
+        if override in {"fp32", "float32"}:
+            return torch.float32
+        if override in {"fp16", "float16", "half"}:
+            return torch.float16
+        if override in {"bf16", "bfloat16"}:
+            return torch.bfloat16
+
+        # auto: bf16 shares fp32's exponent range, so it avoids the fp16 overflow
+        # that yields black/NaN VAE output. Use it where natively accelerated
+        # (Ampere+, sm_80+); fall back to fp16 on older GPUs and fp32 on CPU.
+        if self.device != "cuda":
+            return torch.float32
+        try:
+            if torch.cuda.is_available() and torch.cuda.get_device_capability(0)[0] >= 8:
+                return torch.bfloat16
+        except Exception as e:
+            self.logger.warning("Could not query GPU capability for dtype selection: %s", e)
+        return torch.float16
 
     @staticmethod
     def _normalize_model_family(model_family: Optional[str]) -> Optional[ModelFamily]:
@@ -259,25 +295,46 @@ class ModelManager:
             candidates.append({key: value for key, value in base_args.items() if key != "variant"})
         return candidates
 
+    def _free_cuda_memory(self):
+        """Return freed blocks to the OS/allocator without touching pipeline state."""
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
+    @staticmethod
+    def _is_cuda_oom(exc: BaseException) -> bool:
+        oom_type = getattr(torch.cuda, "OutOfMemoryError", None)
+        if oom_type is not None and isinstance(exc, oom_type):
+            return True
+        return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+    def _clear_all_cached_bundles(self):
+        """Drop every cached bundle and reclaim VRAM (used to recover from OOM)."""
+        self.logger.warning("Dropping all cached model bundles to reclaim VRAM.")
+        self.model_bundles_cache.clear()
+        self.current_pipeline = None
+        self.current_cache_key = None
+        self.current_model_cache_key = None
+        self._offload_hook_owner = None
+        self._free_cuda_memory()
+
     def _unload_current_model(self):
         """No longer fully unloads by default. Models are managed by cpu_offload.
         This method is kept for explicit hard resets if needed.
         """
         self.logger.info("Hard VRAM clear requested.")
         if self.current_pipeline is not None:
-            # We don't delete the pipeline if it's in the cache, 
+            # We don't delete the pipeline if it's in the cache,
             # we just let cpu_offload handle VRAM.
             # If we wanted to really delete it:
             # del self.current_pipeline
             self.current_pipeline = None
             self.current_cache_key = None
             self.current_model_cache_key = None
-            
+
         # Hard cleanup
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        self._free_cuda_memory()
         self.logger.info("VRAM cleared.")
 
     async def get_model(
@@ -313,55 +370,70 @@ class ModelManager:
                 self._apply_sampler(self.current_pipeline, sampler_name)
                 return self.current_pipeline
 
-            try:
-                bundle = self.model_bundles_cache.get(model_cache_key)
-                if bundle is not None:
+            # Two attempts: if the first fails with CUDA OOM we drop every cached
+            # bundle to free VRAM and retry once with a clean slate.
+            for attempt in range(2):
+                try:
+                    bundle = self.model_bundles_cache.get(model_cache_key)
+                    if bundle is not None:
+                        self.logger.info(
+                            "Model bundle cache hit: bundle=%s requested_pipeline=%s anchor=%s offload=%s",
+                            model_cache_key,
+                            pipeline_type,
+                            bundle.anchor_pipeline_type,
+                            bundle.uses_cpu_offload,
+                        )
+                        self.model_bundles_cache.move_to_end(model_cache_key)
+                    else:
+                        self.logger.info(
+                            "Model bundle cache miss. Loading fresh bundle: model_id=%s family=%s anchor_pipeline_type=%s",
+                            model_id,
+                            resolved_model_family,
+                            pipeline_type,
+                        )
+                        bundle = self._load_model_bundle(
+                            model_id=model_id,
+                            model_family=resolved_model_family,
+                            pipeline_type=pipeline_type,
+                            cache_key=model_cache_key,
+                            **kwargs,
+                        )
+                        self._evict_if_needed()
+                        self.model_bundles_cache[model_cache_key] = bundle
+
+                    pipeline = self._materialize_pipeline(bundle, pipeline_type)
+                    self._activate_pipeline_for_runtime(bundle, pipeline, runtime_cache_key)
+
+                    self.current_pipeline = pipeline
+                    self.current_cache_key = runtime_cache_key
+                    self.current_model_cache_key = model_cache_key
+
                     self.logger.info(
-                        "Model bundle cache hit: bundle=%s requested_pipeline=%s anchor=%s offload=%s",
+                        "Runtime pipeline ready: runtime=%s bundle=%s anchor=%s requested=%s offload=%s",
+                        runtime_cache_key,
                         model_cache_key,
-                        pipeline_type,
                         bundle.anchor_pipeline_type,
+                        pipeline_type,
                         bundle.uses_cpu_offload,
                     )
-                    self.model_bundles_cache.move_to_end(model_cache_key)
-                else:
-                    self.logger.info(
-                        "Model bundle cache miss. Loading fresh bundle: model_id=%s family=%s anchor_pipeline_type=%s",
-                        model_id,
-                        resolved_model_family,
-                        pipeline_type,
-                    )
-                    bundle = self._load_model_bundle(
-                        model_id=model_id,
-                        model_family=resolved_model_family,
-                        pipeline_type=pipeline_type,
-                        cache_key=model_cache_key,
-                        **kwargs,
-                    )
-                    self._evict_if_needed()
-                    self.model_bundles_cache[model_cache_key] = bundle
-
-                pipeline = self._materialize_pipeline(bundle, pipeline_type)
-                self._activate_pipeline_for_runtime(bundle, pipeline, runtime_cache_key)
-
-                self.current_pipeline = pipeline
-                self.current_cache_key = runtime_cache_key
-                self.current_model_cache_key = model_cache_key
-
-                self.logger.info(
-                    "Runtime pipeline ready: runtime=%s bundle=%s anchor=%s requested=%s offload=%s",
-                    runtime_cache_key,
-                    model_cache_key,
-                    bundle.anchor_pipeline_type,
-                    pipeline_type,
-                    bundle.uses_cpu_offload,
-                )
-                self._apply_sampler(self.current_pipeline, sampler_name)
-                return self.current_pipeline
-            except Exception as e:
-                self.logger.error(f"Error loading model: {e}")
-                self._unload_current_model() # Cleanup on failure
-                raise e
+                    self._apply_sampler(self.current_pipeline, sampler_name)
+                    return self.current_pipeline
+                except Exception as e:
+                    if attempt == 0 and self._is_cuda_oom(e):
+                        self.logger.warning(
+                            "CUDA out of memory while loading model (attempt 1/2). "
+                            "Dropping all cached bundles and retrying once: %s",
+                            e,
+                        )
+                        self._clear_all_cached_bundles()
+                        continue
+                    self.logger.error(f"Error loading model: {e}")
+                    # A non-OOM failure (or OOM even after clearing) happens before
+                    # current_pipeline is reassigned, so the previously active
+                    # pipeline (if any) is still valid and cached. Only reclaim
+                    # leaked CUDA memory; do not wipe the working pipeline pointers.
+                    self._free_cuda_memory()
+                    raise e
 
     def _load_model_bundle(
         self,
@@ -431,16 +503,42 @@ class ModelManager:
                 + " | ".join(load_errors[-4:])
             )
 
-        try:
-            pipeline.enable_xformers_memory_efficient_attention()
-        except Exception as e:
-            self.logger.warning(f"Could not enable xformers: {e}")
+        # torch SDPA is the diffusers default on torch>=2.0 and gives
+        # memory-efficient attention for free, so xformers is opt-in only.
+        if self.sd_enable_xformers:
+            try:
+                pipeline.enable_xformers_memory_efficient_attention()
+                self.logger.info("Enabled xformers memory-efficient attention for bundle %s.", cache_key)
+            except Exception as e:
+                self.logger.warning(f"Could not enable xformers ({e}); relying on torch SDPA.")
+                # In the low-VRAM regime fall back to attention slicing; otherwise
+                # SDPA already caps the attention memory without the speed cost.
+                if self.sd_enable_cpu_offload:
+                    try:
+                        pipeline.enable_attention_slicing()
+                        self.logger.info("Enabled attention slicing fallback for bundle %s.", cache_key)
+                    except Exception as slice_error:
+                        self.logger.warning(f"Could not enable attention slicing: {slice_error}")
+        else:
+            self.logger.info("xformers disabled; using torch SDPA attention for bundle %s.", cache_key)
+
+        # VAE slicing/tiling cap the peak VRAM of the decode step (the spike is
+        # most pronounced for SDXL and large / outpainting canvases). They are
+        # effectively free for typical sizes and degrade gracefully if absent.
+        for vae_optimization in ("enable_vae_slicing", "enable_vae_tiling"):
+            enable_fn = getattr(pipeline, vae_optimization, None)
+            if enable_fn is None:
+                continue
+            try:
+                enable_fn()
+            except Exception as e:
+                self.logger.warning("Could not %s for bundle %s: %s", vae_optimization, cache_key, e)
 
         uses_cpu_offload = False
         if self.device == "cuda":
             if self.sd_enable_cpu_offload:
                 try:
-                    pipeline.enable_model_cpu_offload()
+                    self._enable_model_cpu_offload(pipeline)
                     uses_cpu_offload = True
                     self.logger.info("Enabled CPU offloading for model bundle %s.", cache_key)
                 except Exception as e:
@@ -457,6 +555,8 @@ class ModelManager:
             self.logger.info("Running SD bundle %s on CPU without model offload.", cache_key)
             pipeline.to(self.device)
 
+        self._warmup_pipeline(pipeline, pipeline_type, cache_key)
+
         return ModelBundle(
             cache_key=cache_key,
             model_id=model_id,
@@ -466,6 +566,33 @@ class ModelManager:
             torch_dtype=preferred_torch_dtype,
             uses_cpu_offload=uses_cpu_offload,
         )
+
+    def _warmup_pipeline(self, pipeline, pipeline_type: PipelineType, cache_key: str) -> None:
+        """Run a tiny throwaway generation so CUDA kernels/allocations are paid
+        for during load, not on the user's first real request. Best-effort: any
+        failure is logged and ignored. text2img only (other modes need real
+        image/mask inputs)."""
+        if not settings.SD_WARMUP or self.device != "cuda" or pipeline_type != "text2img":
+            return
+        try:
+            import time
+
+            started = time.perf_counter()
+            with torch.inference_mode():
+                pipeline(
+                    prompt="",
+                    num_inference_steps=1,
+                    width=64,
+                    height=64,
+                    output_type="latent",
+                )
+            self.logger.info(
+                "Warmup finished for bundle %s in %s ms.",
+                cache_key,
+                int((time.perf_counter() - started) * 1000),
+            )
+        except Exception as e:
+            self.logger.warning("Warmup failed for bundle %s (ignored): %s", cache_key, e)
 
     def _materialize_pipeline(self, bundle: ModelBundle, pipeline_type: PipelineType):
         if pipeline_type == bundle.anchor_pipeline_type:
@@ -488,13 +615,34 @@ class ModelManager:
         )
         return pipeline_class.from_pipe(bundle.anchor_pipeline, torch_dtype=bundle.torch_dtype)
 
+    def _enable_model_cpu_offload(self, pipeline) -> None:
+        """Hand CPU-offload hook ownership to ``pipeline``.
+
+        Frees the hooks held by the previous owner first so that modules shared
+        through from_pipe() are never hooked by two pipelines at once (which
+        leaves accelerate confused about device placement).
+        """
+        previous_owner = self._offload_hook_owner
+        if previous_owner is not None and previous_owner is not pipeline:
+            remove_hooks = getattr(previous_owner, "remove_all_hooks", None)
+            if remove_hooks is not None:
+                try:
+                    remove_hooks()
+                except Exception as e:
+                    self.logger.warning("Could not remove offload hooks from previous owner: %s", e)
+        pipeline.enable_model_cpu_offload()
+        self._offload_hook_owner = pipeline
+
     def _activate_pipeline_for_runtime(self, bundle: ModelBundle, pipeline, runtime_cache_key: str) -> None:
         if self.current_cache_key == runtime_cache_key and self.current_pipeline is pipeline:
             return
 
         if bundle.uses_cpu_offload and self.device == "cuda":
+            if self._offload_hook_owner is pipeline:
+                self.logger.info("Pipeline %s already owns CPU offload hooks.", runtime_cache_key)
+                return
             try:
-                pipeline.enable_model_cpu_offload()
+                self._enable_model_cpu_offload(pipeline)
                 self.logger.info("Re-activated CPU offload hooks for pipeline %s", runtime_cache_key)
             except Exception as e:
                 self.logger.warning(
@@ -573,10 +721,12 @@ class ModelManager:
                 self.current_pipeline = None
                 self.current_cache_key = None
                 self.current_model_cache_key = None
+                # The active pipeline (offload owner) belonged to this bundle.
+                self._offload_hook_owner = None
+            if self._offload_hook_owner is evicted_bundle.anchor_pipeline:
+                self._offload_hook_owner = None
             del evicted_bundle
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            self._free_cuda_memory()
 
     def _apply_sampler(self, pipeline, sampler_name: str):
         """Applies the requested sampler to the pipeline."""

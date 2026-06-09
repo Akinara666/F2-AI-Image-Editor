@@ -26,6 +26,20 @@ class Settings:
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
     SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
+    # Attention backend: torch SDPA is the diffusers default on torch>=2.0 and is
+    # usually as fast as xformers without the extra dependency, so xformers is
+    # opt-in. Enable only if you have a matching xformers build installed.
+    SD_ENABLE_XFORMERS: bool = os.getenv("SD_ENABLE_XFORMERS", "false").lower() == "true"
+    # TF32 accelerates fp32 matmul/conv on Ampere+ tensor cores (e.g. the fp32
+    # VAE upcast) with no visible quality loss for diffusion. No-op on older GPUs.
+    SD_ALLOW_TF32: bool = os.getenv("SD_ALLOW_TF32", "true").lower() == "true"
+    # Runtime precision: "auto" picks bf16 on Ampere+ (same exponent range as
+    # fp32 -> far fewer black/NaN VAE outputs) and fp16 on older GPUs. Override
+    # with fp16 / bf16 / fp32.
+    SD_TORCH_DTYPE: str = os.getenv("SD_TORCH_DTYPE", "auto").strip().lower()
+    # Optional one-off tiny inference right after load to pay CUDA kernel
+    # compilation / allocation cost up front so the first real request is fast.
+    SD_WARMUP: bool = os.getenv("SD_WARMUP", "false").lower() == "true"
     NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
     NSFW_NEGATIVE_PROMPT: str = os.getenv(
         "NSFW_NEGATIVE_PROMPT",

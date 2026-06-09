@@ -210,11 +210,15 @@ class NegativePromptTransformer:
                 error=error_message,
             )
         finally:
-            if self.unload_after_call:
+            if self.unload_after_call and self.adapter.should_unload_after_call():
                 try:
                     self.adapter.unload()
                 except Exception as exc:
                     self.logger.warning("Failed to unload adapter: %s", exc)
+            elif self.unload_after_call:
+                self.logger.info(
+                    "Skipping adapter unload: keeping resident model loaded (no resource freed by unload)."
+                )
 
     def health(self) -> dict[str, Any]:
         data = {

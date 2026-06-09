@@ -58,6 +58,27 @@ class SlowUnloadAwareAdapter(BasePromptLLMAdapter):
         self.unload_count += 1
 
 
+class ResidentAdapter(BasePromptLLMAdapter):
+    """Adapter that gains nothing from per-call unloading (e.g. CPU-only)."""
+
+    def __init__(self):
+        super().__init__()
+        self.unload_count = 0
+
+    def transform_to_sd(self, prompt: str, context=None) -> dict:
+        return {
+            "positive_prompt": f"resident::{prompt}",
+            "negative_prompt_extra": "",
+            "style_tags": [],
+        }
+
+    def should_unload_after_call(self) -> bool:
+        return False
+
+    def _unload_now_locked(self) -> None:
+        self.unload_count += 1
+
+
 class PromptTransformerTests(unittest.TestCase):
     def test_disabled_transformer_returns_raw_prompt_and_user_negative(self):
         transformer = PromptTransformer(
@@ -204,6 +225,21 @@ class PromptTransformerTests(unittest.TestCase):
         self.assertEqual(result.transform_status, "busy")
         self.assertEqual(result.transformed_prompt, "")
         self.assertEqual(result.error, "Prompt transformer is busy with a previous request.")
+
+    def test_resident_adapter_is_not_unloaded_even_when_unload_after_call(self):
+        adapter = ResidentAdapter()
+        transformer = PromptTransformer(
+            enabled=True,
+            timeout_ms=1000,
+            provider_name="stub",
+            adapter=adapter,
+            unload_after_call=True,
+        )
+
+        result = asyncio.run(transformer.transform_prompt("hello", use_prompt_transform=True))
+
+        self.assertEqual(result.transform_status, "success")
+        self.assertEqual(adapter.unload_count, 0)
 
 
 if __name__ == "__main__":

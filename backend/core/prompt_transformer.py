@@ -262,7 +262,7 @@ class PromptTransformer:
                 error=error_message,
             )
         finally:
-            if self.unload_after_call:
+            if self.unload_after_call and self.adapter.should_unload_after_call():
                 try:
                     self.logger.info("Prompt transform requesting adapter unload: transform_id=%s", transform_id)
                     self.adapter.unload()

@@ -620,14 +620,42 @@ def _validate_generation_inputs(
         "mask_padding": mask_padding,
     }
 
-def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Optional[str], model_family: Optional[str]) -> dict:
-    prompt = prompt or ""
-    negative_prompt = negative_prompt or ""
-    
+def _get_compel_for_pipe(pipe, model_family: Optional[str]):
+    """Return a Compel wrapper bound to ``pipe``, reusing it across calls.
+
+    Compel wraps the pipeline's tokenizer/text-encoder, so a fresh instance per
+    generation just re-builds the same bindings. Cache it on the pipe object so
+    its lifetime follows the pipeline (the entry disappears when the bundle is
+    evicted) without keeping the pipe alive via a side cache.
+    """
+    cached = getattr(pipe, "_cached_compel_wrapper", None)
+    if cached is not None:
+        return cached
+
     if model_family == "sdxl":
         if CompelForSDXL is None:
             raise RuntimeError("compel is not installed.")
         compel = CompelForSDXL(pipe=pipe)
+    else:
+        if CompelForSD is None:
+            raise RuntimeError("compel is not installed.")
+        compel = CompelForSD(pipe=pipe)
+
+    try:
+        pipe._cached_compel_wrapper = compel
+    except Exception:
+        # Some pipeline objects may reject attribute assignment; fall back to
+        # rebuilding per call rather than failing.
+        pass
+    return compel
+
+
+def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Optional[str], model_family: Optional[str]) -> dict:
+    prompt = prompt or ""
+    negative_prompt = negative_prompt or ""
+
+    compel = _get_compel_for_pipe(pipe, model_family)
+    if model_family == "sdxl":
         prompt_embeds, pooled_prompt_embeds = compel(prompt)
         negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
         return {
@@ -637,9 +665,6 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
             "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
         }
     else:
-        if CompelForSD is None:
-            raise RuntimeError("compel is not installed.")
-        compel = CompelForSD(pipe=pipe)
         prompt_embeds = compel(prompt)
         negative_prompt_embeds = compel(negative_prompt)
         return {
