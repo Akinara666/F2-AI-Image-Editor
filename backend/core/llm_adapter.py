@@ -289,8 +289,7 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
 
 
 #_____________апдейт_______ Provider factory
-def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
-    provider = (provider_name or "stub").strip().lower()
+def _create_llm_adapter(provider: str) -> BasePromptLLMAdapter:
     if provider in {"qwen_gguf", "qwen_gguf_lora"}:
         return QwenGGUFLoraAdapter(
             model_path=settings.LLM_MODEL_PATH,
@@ -305,3 +304,21 @@ def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
             system_prompt=settings.LLM_SYSTEM_PROMPT,
         )
     return StubPromptLLMAdapter()
+
+
+# Adapters are cached per provider so that the positive and negative prompt
+# transformers reuse a single underlying model instead of each loading its own
+# copy of the (multi-GB) GGUF weights into memory.
+_adapter_cache: dict[str, BasePromptLLMAdapter] = {}
+_adapter_cache_lock = threading.Lock()
+
+
+def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
+    provider = (provider_name or "stub").strip().lower()
+    with _adapter_cache_lock:
+        cached = _adapter_cache.get(provider)
+        if cached is not None:
+            return cached
+        adapter = _create_llm_adapter(provider)
+        _adapter_cache[provider] = adapter
+        return adapter
