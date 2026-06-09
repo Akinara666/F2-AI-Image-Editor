@@ -1,13 +1,45 @@
 # Общий деплой стека
 
-В этой папке лежит единая схема выкладки для всего приложения:
+## 🚀 Быстрый старт одной командой (рекомендуется)
 
-- `compose.staging.yaml` для staging-окружения
-- `compose.prod.yaml` для production-окружения
-- `backend.env.example` как шаблон runtime-переменных backend
+На свежем GPU-сервере (Vast.ai / RunPod / любой хост с NVIDIA-драйвером):
+
+```bash
+git clone git@github.com:Akinara666/working-title-psd2.git
+cd working-title-psd2
+bash deploy/bootstrap.sh
+```
+
+Скрипт сам: поставит Docker и (при наличии GPU) NVIDIA Container Toolkit,
+создаст `deploy/backend.env`, соберёт образы локально, поднимет
+`deploy/compose.gpu.yaml` и поднимет Cloudflare Tunnel. В конце он напечатает
+публичный `https://<random>.trycloudflare.com` — это единый URL и для SPA, и
+для API (фронтенд проксирует backend через nginx, поэтому CORS не нужен).
+
+Полезные команды (`Makefile` в корне): `make up`, `make down`, `make logs`,
+`make url`, `make ps`, `make rebuild`. Флаги скрипта: `--cpu`, `--gpu`,
+`--no-tunnel`, `--no-build` (см. `deploy/bootstrap.sh --help`).
+
+Модели **не** качаются на этапе деплоя — их можно скачать с HuggingFace / Civit.ai
+прямо из меню «Модели» в интерфейсе редактора.
+
+---
+
+## Файлы этой папки
+
+- `bootstrap.sh` — запуск всего стека одной командой
+- `compose.gpu.yaml` — боевой стек: GPU (CUDA-torch) + Cloudflare Tunnel, сборка локально
+- `compose.staging.yaml` / `compose.prod.yaml` — альтернативный CD через готовые образы из GHCR
+- `backend.env.example` — канонический шаблон runtime-переменных backend
 
 Локальный orchestration для `CI` и ручного smoke-прогона находится в корневом `compose.yaml`.
-Файлы из этой папки нужны именно для `CD` и работы на сервере.
+
+## Альтернатива: CD через GHCR + SSH
+
+Ниже описан второй путь — автоматическая выкладка через GitHub Actions
+(собирает образы, пушит в GHCR, по SSH разворачивает на сервере). Он сложнее
+(нужны ~10 секретов на окружение) и без них job просто `skipped`. Используй его,
+если нужен полноценный CI/CD на постоянный сервер.
 
 Пока целевой сервер ещё не подключён, в репозитории есть workflow
 `.github/workflows/cd-validation.yml`.

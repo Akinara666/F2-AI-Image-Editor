@@ -53,6 +53,13 @@ from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
 from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
+from core.model_downloads import (
+    ModelDownloadError,
+    ModelDownloadManager,
+    list_huggingface_files,
+    search_civitai,
+    search_huggingface,
+)
 
 
 class _FallbackPreviewDecoder:
@@ -163,6 +170,8 @@ MANAGED_DOWNLOADABLE_MODELS = [
     },
 ]
 MANAGED_MODEL_DOWNLOAD_LOCKS: dict[str, threading.Lock] = {}
+# Менеджер пользовательских загрузок моделей (через меню в редакторе).
+model_download_manager = ModelDownloadManager(settings.MODELS_DIR)
 ALLOWED_SAMPLERS = {
     "Euler a",
     "Euler",
@@ -352,6 +361,10 @@ def _get_local_model_entries() -> list[dict[str, str]]:
                 "id": str(resolved_file),
                 "label": f"{resolved_file.name} (Local)",
                 "family": model_manager.infer_model_family(str(resolved_file)),
+                "source": "local",
+                "filename": resolved_file.name,
+                "downloaded": True,
+                "size_mb": round(resolved_file.stat().st_size / (1024 * 1024), 1),
             })
     except Exception as e:
         logger.error(f"Failed to scan models directory: {e}")
@@ -829,6 +842,101 @@ def read_root():
 @app.get("/models")
 def list_models():
     return {"models": ALLOWED_CLOUD_MODELS + _get_managed_model_entries() + _get_local_model_entries()}
+
+
+# --------------------------------------------------------------------------- #
+# Управление моделями: скачивание с HuggingFace / Civit.ai + поиск (меню в UI)
+# --------------------------------------------------------------------------- #
+class ModelDownloadRequest(BaseModel):
+    download_url: str
+    filename: str
+    model_id: Optional[str] = None
+    auth: Optional[str] = "none"
+
+
+class ModelDeleteRequest(BaseModel):
+    filename: Optional[str] = None
+    id: Optional[str] = None
+
+
+@app.post("/models/download")
+def start_model_download(payload: ModelDownloadRequest):
+    try:
+        job = model_download_manager.start(
+            url=payload.download_url,
+            filename=payload.filename,
+            model_id=payload.model_id or payload.filename,
+            auth=payload.auth or "none",
+        )
+    except ModelDownloadError as exc:
+        raise _validation_error(str(exc))
+    return job
+
+
+@app.get("/models/downloads")
+def list_model_downloads():
+    return {"downloads": model_download_manager.list_jobs()}
+
+
+@app.get("/models/download/{job_id}")
+def get_model_download(job_id: str):
+    job = model_download_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Download job not found.")
+    return job
+
+
+@app.post("/models/download/{job_id}/cancel")
+def cancel_model_download(job_id: str):
+    if not model_download_manager.cancel(job_id):
+        raise HTTPException(status_code=404, detail="No active download with this id.")
+    return {"status": "canceling", "job_id": job_id}
+
+
+@app.post("/models/delete")
+def delete_model(payload: ModelDeleteRequest):
+    raw = payload.filename or payload.id
+    if not raw:
+        raise _validation_error("filename or id is required.")
+    try:
+        target = model_download_manager.resolve_target(raw)
+    except ModelDownloadError as exc:
+        raise _validation_error(str(exc))
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Model file not found.")
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete model: {exc}")
+    logger.info("Deleted local model: %s", target.name)
+    return {"status": "deleted", "filename": target.name}
+
+
+@app.get("/models/search/civitai")
+def search_models_civitai(query: str = "", nsfw: bool = False, limit: int = 24):
+    try:
+        results = search_civitai(query, limit=limit, nsfw=nsfw)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"results": results}
+
+
+@app.get("/models/search/huggingface")
+def search_models_huggingface(query: str = "", limit: int = 24):
+    try:
+        results = search_huggingface(query, limit=limit)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"results": results}
+
+
+@app.get("/models/huggingface/files")
+def list_models_huggingface_files(repo: str):
+    try:
+        files = list_huggingface_files(repo)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"repo": repo, "files": files}
 
 
 #_____________апдейт_______ Prompt transformer preview contract

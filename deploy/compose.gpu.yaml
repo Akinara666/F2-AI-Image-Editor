@@ -1,0 +1,76 @@
+name: working-title-psd2-gpu
+
+# Боевой стек для GPU-сервера (Vast.ai / RunPod / любой хост с NVIDIA-драйвером).
+# Образы собираются ЛОКАЛЬНО на сервере (без GHCR и секретов) — поднимается одной
+# командой через deploy/bootstrap.sh.
+#
+# Публичный доступ даёт сервис cloudflared (быстрый туннель trycloudflare):
+# единый HTTPS-URL отдаёт и SPA, и API (nginx фронтенда проксирует backend).
+
+services:
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_AI_RUNTIME: "true"
+        INSTALL_OPTIONAL_RUNTIME: "false"
+        # CUDA-колёса torch (self-contained). Хосту нужен NVIDIA-драйвер +
+        # nvidia-container-toolkit. Для другой версии CUDA поменяй индекс.
+        TORCH_INDEX_URL: "https://download.pytorch.org/whl/cu121"
+    container_name: working-title-psd2-backend-gpu
+    restart: unless-stopped
+    env_file:
+      - ${BACKEND_ENV_FILE:-./backend.env.example}
+    # Локальный доступ для отладки / SSH-туннеля. Наружу ходит только cloudflared.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ../backend/models:/app/models
+      - ../backend/static/outputs:/app/static/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        # Пусто = same-origin: nginx сам проксирует API на backend.
+        VITE_API_BASE_URL: ""
+    container_name: working-title-psd2-frontend-gpu
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: working-title-psd2-cloudflared-gpu
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    # Быстрый туннель: публичный https://<random>.trycloudflare.com.
+    # URL печатается в логи — достань его через `docker compose logs cloudflared`
+    # или `make url`.
+    command: tunnel --no-autoupdate --url http://frontend:80

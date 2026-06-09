@@ -40,31 +40,36 @@ function App() {
   const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState(initialAppSettings.params);
 
-  // Загружаем модели при монтировании.
-  React.useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        const response = await axios.get(API_ENDPOINTS.MODELS);
-        if (response.data && response.data.models) {
-          setAvailableModels(response.data.models);
-          // Если в настройках осталась заглушка или несуществующая модель, подставляем первую доступную.
-          setParams(prev => ({
-            ...prev,
-            model_id: (
-              prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id
-              || !response.data.models.some((model) => model.id === prev.model_id)
-            )
-              ? response.data.models[0].id
-              : prev.model_id
-          }));
-        }
-      } catch (err) {
-        console.error("Failed to fetch models:", err);
-        showError("Не удалось загрузить список моделей с сервера.");
+  // Загрузка/обновление списка моделей (вызывается при монтировании и из меню моделей).
+  const refreshModels = React.useCallback(async ({ silent = false } = {}) => {
+    try {
+      const response = await axios.get(API_ENDPOINTS.MODELS);
+      const models = response.data?.models;
+      if (Array.isArray(models)) {
+        setAvailableModels(models);
+        // Если выбранной модели больше нет в списке (или это заглушка), берём первую доступную.
+        setParams(prev => ({
+          ...prev,
+          model_id: (
+            prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id
+            || !models.some((model) => model.id === prev.model_id)
+          )
+            ? (models[0]?.id ?? prev.model_id)
+            : prev.model_id
+        }));
+        return models;
       }
-    };
-    fetchModels();
-  }, []);
+      return [];
+    } catch (err) {
+      console.error("Failed to fetch models:", err);
+      if (!silent) showError("Не удалось загрузить список моделей с сервера.");
+      return [];
+    }
+  }, [showError]);
+
+  React.useEffect(() => {
+    refreshModels({ silent: false });
+  }, [refreshModels]);
 
   const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
   const [history, setHistory] = useState(loadHistoryFromStorage);
@@ -767,6 +772,7 @@ function App() {
       <div className="sidebar-shell" style={{ width: `${sidebarWidth}px` }}>
         <Sidebar
           availableModels={availableModels}
+          onModelsRefresh={refreshModels}
           params={params}
           setParams={setParams}
           isGenerating={isGenerating}

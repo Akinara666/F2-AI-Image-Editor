@@ -41,7 +41,14 @@ export const API_ENDPOINTS = {
     CANCEL: `${API_BASE_URL}/cancel`,
     HISTORY_SAVE: `${API_BASE_URL}/history/save`,
     HISTORY_DELETE: `${API_BASE_URL}/history/delete`,
-    MODELS: `${API_BASE_URL}/models`
+    MODELS: `${API_BASE_URL}/models`,
+    MODELS_DOWNLOAD: `${API_BASE_URL}/models/download`,
+    MODELS_DOWNLOAD_STATUS: (jobId) => `${API_BASE_URL}/models/download/${jobId}`,
+    MODELS_DOWNLOAD_CANCEL: (jobId) => `${API_BASE_URL}/models/download/${jobId}/cancel`,
+    MODELS_DELETE: `${API_BASE_URL}/models/delete`,
+    MODELS_SEARCH_CIVITAI: `${API_BASE_URL}/models/search/civitai`,
+    MODELS_SEARCH_HF: `${API_BASE_URL}/models/search/huggingface`,
+    MODELS_HF_FILES: `${API_BASE_URL}/models/huggingface/files`
 };
 
 // Initial placeholder shown while fetching the real list from the backend
