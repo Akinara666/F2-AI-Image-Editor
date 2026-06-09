@@ -435,6 +435,27 @@ class ModelManager:
             pipeline.enable_xformers_memory_efficient_attention()
         except Exception as e:
             self.logger.warning(f"Could not enable xformers: {e}")
+            # Modern torch already routes attention through memory-efficient SDPA,
+            # so we only force attention slicing in the low-VRAM regime (offload
+            # enabled) where its memory saving outweighs the speed cost.
+            if self.sd_enable_cpu_offload:
+                try:
+                    pipeline.enable_attention_slicing()
+                    self.logger.info("Enabled attention slicing fallback for bundle %s.", cache_key)
+                except Exception as slice_error:
+                    self.logger.warning(f"Could not enable attention slicing: {slice_error}")
+
+        # VAE slicing/tiling cap the peak VRAM of the decode step (the spike is
+        # most pronounced for SDXL and large / outpainting canvases). They are
+        # effectively free for typical sizes and degrade gracefully if absent.
+        for vae_optimization in ("enable_vae_slicing", "enable_vae_tiling"):
+            enable_fn = getattr(pipeline, vae_optimization, None)
+            if enable_fn is None:
+                continue
+            try:
+                enable_fn()
+            except Exception as e:
+                self.logger.warning("Could not %s for bundle %s: %s", vae_optimization, cache_key, e)
 
         uses_cpu_offload = False
         if self.device == "cuda":
