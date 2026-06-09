@@ -286,6 +286,19 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self._llm = None
         import gc
         gc.collect()
+        # When layers were offloaded to the GPU, releasing the Python object is
+        # not enough: the CUDA caching allocator keeps the freed blocks until an
+        # explicit empty_cache(). Skipping this would leave VRAM occupied right
+        # before a heavy SD/SDXL load and could trigger a spurious OOM.
+        if self.n_gpu_layers != 0:
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception as exc:
+                self.logger.warning("Could not free CUDA cache after LLM unload: %s", exc)
 
 
 #_____________апдейт_______ Provider factory
