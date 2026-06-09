@@ -7,6 +7,12 @@ deploy/backend/*.env
 # deploy/backend.env.example остаётся в репозитории.
 deploy/backend.env
 deploy/backend.*.env
+# Рантайм-артефакты bare-деплоя под vast.ai (deploy/run-vast.sh / run-client.sh)
+deploy/.venv-vast/
+deploy/.cloudflared-*
+deploy/.cloudflared.log
+deploy/.uvicorn.log
+frontend/.env.local
 
 # Build artifacts
 frontend/dist/

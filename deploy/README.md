@@ -23,11 +23,64 @@ bash deploy/bootstrap.sh
 Модели **не** качаются на этапе деплоя — их можно скачать с HuggingFace / Civit.ai
 прямо из меню «Модели» в интерфейсе редактора.
 
+> Путь выше требует **настоящего Docker-демона с GPU-passthrough** (своя GPU-VM,
+> RunPod «Docker host» и т.п.). На типичном **Vast.ai**-инстансе ты уже внутри
+> контейнера с готовым CUDA — там вложенный Docker не нужен и часто не работает.
+> Для этого случая есть отдельный путь ниже.
+
+---
+
+## 🟢 Vast.ai / готовый CUDA-контейнер (без Docker)
+
+Когда инстанс — это уже контейнер с CUDA и Python (Vast.ai, RunPod-pod, Colab-подобное),
+backend запускается напрямую, без вложенного Docker. GPU-нагрузка (backend) живёт
+на сервере, лёгкий фронтенд — у тебя на клиенте.
+
+**На сервере (vast.ai-инстанс):**
+
+```bash
+git clone https://github.com/Akinara666/working-title-psd2.git
+cd working-title-psd2
+bash deploy/run-vast.sh
+```
+
+Скрипт ([deploy/run-vast.sh](run-vast.sh)) ставит зависимости backend прямо в
+окружение инстанса (**предустановленный CUDA-torch не трогает** — типично для
+vast pytorch-образов), поднимает `uvicorn` на `0.0.0.0:8000` и Cloudflare
+quick-tunnel, затем печатает публичный `https://<random>.trycloudflare.com` —
+это адрес **API**.
+
+**На своём компьютере (клиент):**
+
+```bash
+bash deploy/run-client.sh https://<random>.trycloudflare.com
+# затем открой http://localhost:5173
+```
+
+Скрипт ([deploy/run-client.sh](run-client.sh)) прописывает адрес backend в
+`frontend/.env.local` и поднимает Vite dev-сервер. CORS для `localhost` backend
+разрешает по умолчанию, поэтому ничего больше настраивать не нужно.
+
+Флаги `run-vast.sh`: `--no-tunnel` (доступ через проброшенный порт vast / `ssh -L`),
+`--optional` (xformers + llama-cpp-python), `--no-venv`, `--reinstall`,
+`--port N`, `--torch-index URL` (см. `bash deploy/run-vast.sh --help`).
+
+**Заметки по vast.ai:**
+
+- Хранилище инстанса эфемерно — чтобы не перекачивать модели каждую аренду,
+  держи `backend/models` на persistent-томе (например симлинк/монт на `/workspace`).
+- Публичный URL trycloudflare случайный и **без авторизации** — любой со ссылкой
+  жжёт твою GPU. Не выкладывай его публично; для приватного доступа используй
+  `--no-tunnel` + `ssh -L`.
+- `--no-tunnel` удобен, если у инстанса уже проброшен внешний порт на 8000.
+
 ---
 
 ## Файлы этой папки
 
-- `bootstrap.sh` — запуск всего стека одной командой
+- `bootstrap.sh` — запуск всего стека одной командой (Docker + GPU + Cloudflare Tunnel)
+- `run-vast.sh` — backend напрямую без Docker (Vast.ai / готовый CUDA-контейнер)
+- `run-client.sh` — фронтенд на клиенте с подключением к удалённому backend
 - `compose.gpu.yaml` — боевой стек: GPU (CUDA-torch) + Cloudflare Tunnel, сборка локально
 - `compose.staging.yaml` / `compose.prod.yaml` — альтернативный CD через готовые образы из GHCR
 - `backend.env.example` — канонический шаблон runtime-переменных backend

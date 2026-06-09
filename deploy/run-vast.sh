@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+#
+# Запуск BACKEND напрямую (без вложенного Docker) на готовом CUDA-инстансе —
+# заточено под Vast.ai / RunPod-pod / любой контейнер, где CUDA и Python уже есть.
+#
+#   git clone <repo> && cd <repo>
+#   bash deploy/run-vast.sh
+#
+# Что делает:
+#   * ставит зависимости backend прямо в окружение инстанса (torch НЕ трогает,
+#     если CUDA-torch уже стоит — типично для vast pytorch-образов);
+#   * поднимает uvicorn на 0.0.0.0:8000;
+#   * (по умолчанию) поднимает Cloudflare quick-tunnel и печатает публичный
+#     https://<random>.trycloudflare.com — это адрес API;
+#   * фронтенд НЕ собирается: его запускают у себя на клиенте через
+#     deploy/run-client.sh <URL> (CORS для localhost уже разрешён).
+#
+# Флаги:
+#   --no-tunnel      без cloudflared (доступ по проброшенному порту vast / ssh -L)
+#   --no-venv        ставить в текущий python, а не в venv deploy/.venv-vast
+#   --optional       доустановить requirements-optional (xformers, llama-cpp-python)
+#   --reinstall      переустановить зависимости, даже если уже стоят
+#   --port N         порт backend (по умолчанию 8000)
+#   --torch-index U  индекс колёс torch (по умолчанию cu121)
+#   -h | --help      показать справку
+#
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+WITH_TUNNEL=1
+USE_VENV=1
+OPTIONAL=0
+REINSTALL=0
+PORT=8000
+HOST="0.0.0.0"
+TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+
+c_blue="\033[1;34m"; c_yellow="\033[1;33m"; c_red="\033[1;31m"; c_green="\033[1;32m"; c_off="\033[0m"
+log()  { printf "${c_blue}[vast]${c_off} %s\n" "$*"; }
+ok()   { printf "${c_green}[vast]${c_off} %s\n" "$*"; }
+warn() { printf "${c_yellow}[vast]${c_off} %s\n" "$*" >&2; }
+err()  { printf "${c_red}[vast]${c_off} %s\n" "$*" >&2; }
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "${BASH_SOURCE[0]}"; exit 0; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-tunnel) WITH_TUNNEL=0 ;;
+    --no-venv) USE_VENV=0 ;;
+    --optional) OPTIONAL=1 ;;
+    --reinstall) REINSTALL=1 ;;
+    --port) shift; PORT="${1:?--port требует значение}" ;;
+    --torch-index) shift; TORCH_INDEX="${1:?--torch-index требует значение}" ;;
+    -h|--help) usage ;;
+    *) err "Неизвестный аргумент: $1"; usage ;;
+  esac
+  shift
+done
+
+cd "$REPO_ROOT"
+
+command -v python3 >/dev/null 2>&1 || { err "python3 не найден в инстансе."; exit 1; }
+command -v curl    >/dev/null 2>&1 || { err "curl не найден (нужен для cloudflared/health)."; exit 1; }
+
+# ---------- python окружение ----------
+if [ "$USE_VENV" -eq 1 ]; then
+  VENV_DIR="$SCRIPT_DIR/.venv-vast"
+  if [ ! -d "$VENV_DIR" ]; then
+    log "Создаю venv (--system-site-packages, чтобы видеть предустановленный CUDA-torch) ..."
+    if ! python3 -m venv --system-site-packages "$VENV_DIR" 2>/dev/null; then
+      warn "Не удалось создать venv (нет python3-venv?) — ставлю в текущий python."
+      USE_VENV=0
+    fi
+  fi
+fi
+if [ "$USE_VENV" -eq 1 ]; then
+  PY="$VENV_DIR/bin/python"
+else
+  PY="$(command -v python3)"
+fi
+
+# ---------- зависимости ----------
+deps_ready() { "$PY" -c "import fastapi, diffusers, compel, torch" >/dev/null 2>&1; }
+
+if [ "$REINSTALL" -eq 1 ] || ! deps_ready; then
+  log "Обновляю pip ..."
+  "$PY" -m pip install --upgrade pip >/dev/null
+
+  if "$PY" -c "import torch; assert torch.cuda.is_available()" >/dev/null 2>&1; then
+    ok "CUDA-torch уже доступен — установку torch пропускаю."
+  else
+    warn "Рабочий CUDA-torch не найден — ставлю с индекса $TORCH_INDEX ..."
+    "$PY" -m pip install torch --index-url "$TORCH_INDEX"
+  fi
+
+  log "Ставлю backend-зависимости (torch уже удовлетворён — не переустанавливается) ..."
+  "$PY" -m pip install -r backend/requirements.txt
+
+  if [ "$OPTIONAL" -eq 1 ]; then
+    log "Ставлю optional-зависимости (xformers, llama-cpp-python) ..."
+    "$PY" -m pip install -r backend/requirements-optional.txt || warn "Часть optional-зависимостей не встала — продолжаю."
+  fi
+  ok "Зависимости готовы."
+else
+  ok "Зависимости уже установлены (передай --reinstall, чтобы обновить)."
+fi
+
+if ! "$PY" -c "import torch; assert torch.cuda.is_available()" >/dev/null 2>&1; then
+  warn "torch.cuda.is_available() == False — backend поднимется, но генерация пойдёт на CPU."
+  warn "Проверь, что инстанс реально с GPU и драйвер виден (nvidia-smi)."
+fi
+
+# ---------- env ----------
+ENV_FILE="$SCRIPT_DIR/backend.vast.env"
+if [ ! -f "$ENV_FILE" ]; then
+  cp "$SCRIPT_DIR/backend.env.example" "$ENV_FILE"
+  sed -i 's/^USE_CUDA=.*/USE_CUDA=true/' "$ENV_FILE"
+  ok "Создан deploy/backend.vast.env из шаблона (отредактируй при необходимости)."
+else
+  log "Использую существующий deploy/backend.vast.env"
+fi
+
+# ---------- запуск backend ----------
+UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
+CF_LOG="$SCRIPT_DIR/.cloudflared.log"
+UVICORN_PID=""
+CF_PID=""
+
+cleanup() {
+  [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true
+  [ -n "$UVICORN_PID" ] && kill "$UVICORN_PID" 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+# config.py читает переменные через python-dotenv из backend/.env — это надёжно
+# парсит значения со спецсимволами (regex CORS, и т.п.), в отличие от shell-source.
+cp "$ENV_FILE" "$REPO_ROOT/backend/.env"
+log "Поднимаю backend на $HOST:$PORT (лог: $UVICORN_LOG) ..."
+( cd backend && exec "$PY" -m uvicorn main:app --host "$HOST" --port "$PORT" ) >"$UVICORN_LOG" 2>&1 &
+UVICORN_PID=$!
+
+log "Жду готовности backend (/health) ..."
+healthy=0
+for _ in $(seq 1 60); do
+  if ! kill -0 "$UVICORN_PID" 2>/dev/null; then
+    err "Процесс backend завершился. Последние строки лога:"
+    tail -n 30 "$UVICORN_LOG" >&2 || true
+    exit 1
+  fi
+  if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then healthy=1; break; fi
+  sleep 2
+done
+[ "$healthy" -eq 1 ] && ok "Backend готов." || { err "Backend не ответил вовремя. Лог: $UVICORN_LOG"; tail -n 30 "$UVICORN_LOG" >&2 || true; exit 1; }
+
+# ---------- публичный доступ ----------
+PUBLIC_API=""
+if [ "$WITH_TUNNEL" -eq 1 ]; then
+  case "$(uname -m)" in
+    x86_64) CF_ARCH=amd64 ;;
+    aarch64|arm64) CF_ARCH=arm64 ;;
+    *) CF_ARCH=amd64 ;;
+  esac
+  CF_BIN="$SCRIPT_DIR/.cloudflared-$CF_ARCH"
+  if [ ! -x "$CF_BIN" ]; then
+    log "Скачиваю cloudflared ($CF_ARCH) ..."
+    curl -fsSL -o "$CF_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
+    chmod +x "$CF_BIN"
+  fi
+  log "Поднимаю Cloudflare quick-tunnel ..."
+  "$CF_BIN" tunnel --no-autoupdate --url "http://localhost:$PORT" >"$CF_LOG" 2>&1 &
+  CF_PID=$!
+  for _ in $(seq 1 30); do
+    PUBLIC_API="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -n1 || true)"
+    [ -n "$PUBLIC_API" ] && break
+    sleep 2
+  done
+fi
+
+printf "\n${c_green}==========================================================${c_off}\n"
+if [ -n "$PUBLIC_API" ]; then
+  printf   "${c_green}  Backend API (публичный):${c_off}\n  %s\n\n" "$PUBLIC_API"
+  printf   "  На СВОЁМ компьютере (клиенте) выполни:\n"
+  printf   "    bash deploy/run-client.sh %s\n" "$PUBLIC_API"
+elif [ "$WITH_TUNNEL" -eq 1 ]; then
+  warn "Не удалось извлечь URL туннеля. Смотри: $CF_LOG"
+else
+  printf   "${c_green}  Backend API:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
+  printf   "  Пробрось порт с клиента и запусти фронтенд на него, например:\n"
+  printf   "    ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
+  printf   "    bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
+fi
+printf "${c_green}==========================================================${c_off}\n\n"
+log "Логи backend: $UVICORN_LOG   |   Ctrl+C — остановить."
+
+wait "$UVICORN_PID"
