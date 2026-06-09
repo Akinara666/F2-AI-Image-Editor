@@ -271,6 +271,23 @@ class ModelManager:
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
 
+    @staticmethod
+    def _is_cuda_oom(exc: BaseException) -> bool:
+        oom_type = getattr(torch.cuda, "OutOfMemoryError", None)
+        if oom_type is not None and isinstance(exc, oom_type):
+            return True
+        return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+    def _clear_all_cached_bundles(self):
+        """Drop every cached bundle and reclaim VRAM (used to recover from OOM)."""
+        self.logger.warning("Dropping all cached model bundles to reclaim VRAM.")
+        self.model_bundles_cache.clear()
+        self.current_pipeline = None
+        self.current_cache_key = None
+        self.current_model_cache_key = None
+        self._offload_hook_owner = None
+        self._free_cuda_memory()
+
     def _unload_current_model(self):
         """No longer fully unloads by default. Models are managed by cpu_offload.
         This method is kept for explicit hard resets if needed.
@@ -322,60 +339,70 @@ class ModelManager:
                 self._apply_sampler(self.current_pipeline, sampler_name)
                 return self.current_pipeline
 
-            try:
-                bundle = self.model_bundles_cache.get(model_cache_key)
-                if bundle is not None:
+            # Two attempts: if the first fails with CUDA OOM we drop every cached
+            # bundle to free VRAM and retry once with a clean slate.
+            for attempt in range(2):
+                try:
+                    bundle = self.model_bundles_cache.get(model_cache_key)
+                    if bundle is not None:
+                        self.logger.info(
+                            "Model bundle cache hit: bundle=%s requested_pipeline=%s anchor=%s offload=%s",
+                            model_cache_key,
+                            pipeline_type,
+                            bundle.anchor_pipeline_type,
+                            bundle.uses_cpu_offload,
+                        )
+                        self.model_bundles_cache.move_to_end(model_cache_key)
+                    else:
+                        self.logger.info(
+                            "Model bundle cache miss. Loading fresh bundle: model_id=%s family=%s anchor_pipeline_type=%s",
+                            model_id,
+                            resolved_model_family,
+                            pipeline_type,
+                        )
+                        bundle = self._load_model_bundle(
+                            model_id=model_id,
+                            model_family=resolved_model_family,
+                            pipeline_type=pipeline_type,
+                            cache_key=model_cache_key,
+                            **kwargs,
+                        )
+                        self._evict_if_needed()
+                        self.model_bundles_cache[model_cache_key] = bundle
+
+                    pipeline = self._materialize_pipeline(bundle, pipeline_type)
+                    self._activate_pipeline_for_runtime(bundle, pipeline, runtime_cache_key)
+
+                    self.current_pipeline = pipeline
+                    self.current_cache_key = runtime_cache_key
+                    self.current_model_cache_key = model_cache_key
+
                     self.logger.info(
-                        "Model bundle cache hit: bundle=%s requested_pipeline=%s anchor=%s offload=%s",
+                        "Runtime pipeline ready: runtime=%s bundle=%s anchor=%s requested=%s offload=%s",
+                        runtime_cache_key,
                         model_cache_key,
-                        pipeline_type,
                         bundle.anchor_pipeline_type,
+                        pipeline_type,
                         bundle.uses_cpu_offload,
                     )
-                    self.model_bundles_cache.move_to_end(model_cache_key)
-                else:
-                    self.logger.info(
-                        "Model bundle cache miss. Loading fresh bundle: model_id=%s family=%s anchor_pipeline_type=%s",
-                        model_id,
-                        resolved_model_family,
-                        pipeline_type,
-                    )
-                    bundle = self._load_model_bundle(
-                        model_id=model_id,
-                        model_family=resolved_model_family,
-                        pipeline_type=pipeline_type,
-                        cache_key=model_cache_key,
-                        **kwargs,
-                    )
-                    self._evict_if_needed()
-                    self.model_bundles_cache[model_cache_key] = bundle
-
-                pipeline = self._materialize_pipeline(bundle, pipeline_type)
-                self._activate_pipeline_for_runtime(bundle, pipeline, runtime_cache_key)
-
-                self.current_pipeline = pipeline
-                self.current_cache_key = runtime_cache_key
-                self.current_model_cache_key = model_cache_key
-
-                self.logger.info(
-                    "Runtime pipeline ready: runtime=%s bundle=%s anchor=%s requested=%s offload=%s",
-                    runtime_cache_key,
-                    model_cache_key,
-                    bundle.anchor_pipeline_type,
-                    pipeline_type,
-                    bundle.uses_cpu_offload,
-                )
-                self._apply_sampler(self.current_pipeline, sampler_name)
-                return self.current_pipeline
-            except Exception as e:
-                self.logger.error(f"Error loading model: {e}")
-                # The new load failed before current_pipeline was reassigned, so
-                # the previously active pipeline (if any) is still valid and lives
-                # in the cache. Only reclaim leaked CUDA memory; do not wipe the
-                # working pipeline pointers, otherwise the next request needlessly
-                # re-activates a model that never stopped working.
-                self._free_cuda_memory()
-                raise e
+                    self._apply_sampler(self.current_pipeline, sampler_name)
+                    return self.current_pipeline
+                except Exception as e:
+                    if attempt == 0 and self._is_cuda_oom(e):
+                        self.logger.warning(
+                            "CUDA out of memory while loading model (attempt 1/2). "
+                            "Dropping all cached bundles and retrying once: %s",
+                            e,
+                        )
+                        self._clear_all_cached_bundles()
+                        continue
+                    self.logger.error(f"Error loading model: {e}")
+                    # A non-OOM failure (or OOM even after clearing) happens before
+                    # current_pipeline is reassigned, so the previously active
+                    # pipeline (if any) is still valid and cached. Only reclaim
+                    # leaked CUDA memory; do not wipe the working pipeline pointers.
+                    self._free_cuda_memory()
+                    raise e
 
     def _load_model_bundle(
         self,
