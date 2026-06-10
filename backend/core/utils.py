@@ -5,6 +5,30 @@ from PIL import Image, PngImagePlugin, ImageFilter
 from datetime import datetime
 from uuid import uuid4
 
+from core.config import settings
+
+
+def _prune_old_outputs(output_dir: str, max_files: int) -> None:
+    """Keep at most ``max_files`` newest PNGs in ``output_dir`` (cleanup policy)."""
+    if max_files <= 0:
+        return
+    try:
+        entries = [
+            entry for entry in os.scandir(output_dir)
+            if entry.is_file() and entry.name.lower().endswith(".png")
+        ]
+        if len(entries) <= max_files:
+            return
+        entries.sort(key=lambda entry: entry.stat().st_mtime)
+        for entry in entries[: len(entries) - max_files]:
+            try:
+                os.remove(entry.path)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
     """
     Saves the image with generation parameters in PNG metadata (tEXt chunk).
@@ -30,6 +54,7 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
     filepath = os.path.join(output_dir, filename)
 
     image.save(filepath, "PNG", pnginfo=meta)
+    _prune_old_outputs(output_dir, settings.MAX_STORED_IMAGES)
     return filename
 
 def _odd_kernel_size(radius_px: int) -> int:
