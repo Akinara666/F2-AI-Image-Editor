@@ -1,147 +1,194 @@
-# Local AI Image Editor (Infinite Canvas)
+<div align="center">
 
-Локальный сервис для AI-генерации изображений на бесконечном холсте (Photoshop Generative Fill).
+# F2 — Локальный AI-редактор изображений
 
-## 🚀 Основные возможности
+**Бесконечный холст · генеративное заполнение · полностью локальный SD/SDXL-пайплайн**
 
-![Interface Demo](./assets/UI.png)
+Редактор изображений с бесконечным холстом и генеративным заполнением. Объединяет
+txt2img, img2img, inpainting и outpainting в едином инструменте и работает целиком
+на вашем оборудовании.
 
-### Генерация и Редактирование
-*   **Бесконечный холст**: Рисуйте, генерируйте и расширяйте изображения в любую сторону.
-*   **Txt2Img & Img2Img**: Классическая генерация по тексту и на основе набросков.
-*   **Outpainting**: Просто поместите рамку на прозрачную область или край изображения — система автоматически "дорисует" продолжение.
-*   **Inpainting**: Используйте маску (красный цвет), чтобы изменить конкретные детали.
-*   **Sketch-to-Image**: Нарисуйте скетч кистью (серый фон подставится автоматически) и превратите его в полноценный арт.
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-009688?logo=fastapi&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
+![Diffusers](https://img.shields.io/badge/Diffusers-SD%20%2F%20SDXL-FFD21E)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-### Управление слоями (Staging & Baking)
-*   **Staging Area**: Сгенерированное изображение сначала появляется как "кандидат" (в зеленой рамке).
-*   **Merge on Accept**: При нажатии **ACCEPT**, изображение "запекается" в холст, объединяясь с фоном. Это позволяет держать холст производительным (single layer experience).
-*   **Resizable Frame**: Рамку генерации можно растягивать. Размер автоматически прилипает к значениям кратным 64px (например, 512x768).
+![Интерфейс](./assets/UI.png)
 
-### Инструменты UI
-*   **Инструменты**: Кисть, Ластик, Маска, Рука (Pan).
-*   **Resolution Badge**: Отображение текущего разрешения генерации в левом верхнем углу.
-*   **Hotkeys**:
-    *   `Space` (удерживать): Панорамирование (Pan).
-    *   `Ctrl+Z`: Отмена действия (Undo).
-    *   `Delete`: Удаление выделенного объекта.
-    *   `[ / ]`: Изменение размера кисти.
+</div>
 
-## 🛠 Технический стек
-*   **Frontend**: React, Pure Fabric.js (Canvas Logic), Vite.
-*   **Backend**: Python, FastAPI, Diffusers, Torch.
-*   **Prompt Transformer**: backend-модуль для интеграции локальной LLM перед SD.
-*   **Оптимизация**:
-    *   Автоматическая выгрузка моделей из VRAM.
-    *   Оффлайн-режим (попытка загрузки локальных кэшированных моделей).
-    *   fp16 / xformers для скорости.
+## Содержание
 
-## 📦 Установка и Запуск
+- [Возможности](#возможности)
+- [Технический стек](#технический-стек)
+- [Быстрый старт](#быстрый-старт)
+- [Конфигурация](#конфигурация)
+- [Использование](#использование)
+- [API](#api)
+- [Структура проекта](#структура-проекта)
+- [Тесты](#тесты)
 
-### 1. Настройка Backend
+## Возможности
+
+### Генерация и редактирование
+- **Бесконечный холст** — генерация и расширение изображения в произвольном направлении.
+- **Txt2Img / Img2Img** — генерация по текстовому описанию или на основе исходного изображения.
+- **Outpainting** — достраивание изображения за пределами исходных границ при размещении рамки на прозрачной области или у края.
+- **Inpainting** — локальное изменение области по маске; немаскированные пиксели сохраняются без потерь, края смешиваются методом feather-blend.
+- **Sketch-to-Image** — преобразование наброска, выполненного кистью, в готовое изображение.
+- Поддержка **SD и SDXL**; режимы text2img / img2img / inpainting (ControlNet — на стороне backend).
+
+### Контроль качества
+- **11 семплеров**: Euler a, Euler, DPM++ 2M / 2S a / SDE Karras, DPM2 a Karras, DDIM, DDPM, Heun, UniPC, LMS.
+- **Веса промптов в синтаксисе AUTOMATIC1111** (`(word:1.2)`, `[word]`) через Compel, управление CLIP skip и seed.
+- Опциональный **NSFW-фильтр**.
+- **Предпросмотр в реальном времени** — декодирование промежуточных латентов во время генерации (быстрые методы `approx_nn` и `TAESD`).
+
+### Рабочий процесс
+- **Staging и сведение слоёв** — результат отображается как кандидат (зелёная рамка) и сводится на холст по команде **ACCEPT**, что сохраняет однослойную модель холста и его производительность.
+- **Менеджер моделей** — загрузка чекпойнтов из **HuggingFace** и **Civit.ai** непосредственно из интерфейса.
+- **История генераций** — панель с предыдущими результатами.
+- **Prompt Transformer** — опциональная локальная LLM (Qwen GGUF + LoRA), адаптирующая исходный запрос под формат Stable Diffusion перед генерацией.
+
+## Технический стек
+
+- **Frontend:** React 18, Fabric.js (логика холста), Vite.
+- **Backend:** Python 3.11, FastAPI, Diffusers, PyTorch.
+- **Оптимизация загрузки и инференса** (см. [`backend/core/manager.py`](backend/core/manager.py)):
+  - LRU-кэш составных моделей (bundle), разделяемых между режимами text2img / img2img / inpainting через `from_pipe`;
+  - выгрузка на CPU (offload), VAE slicing/tiling, восстановление после нехватки видеопамяти (CUDA OOM);
+  - bf16 на архитектурах Ampere и новее (автоопределение), TF32 для операций в fp32, механизм внимания через torch SDPA (xformers — опционально);
+  - офлайн-режим с приоритетной загрузкой локально кэшированных моделей.
+- **Развёртывание:** Docker Compose, Cloudflare Tunnel, прямой запуск для Vast.ai / RunPod.
+
+## Быстрый старт
+
+> Подробные пошаговые инструкции по **всем** вариантам запуска приведены в каталоге **[`docs/`](docs/README.md)**.
+> Ниже — минимальный набор команд.
+
+### Локально (разработка)
+
 ```bash
+# Backend
 cd backend
-
-# Создание виртуального окружения
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
-
-# Установка зависимостей
+python3 -m venv venv && source venv/bin/activate     # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Запуск сервера
 python -m uvicorn main:app --reload --port 8000
-```
 
-### 2. Настройка Frontend
-```bash
+# Frontend (в отдельном терминале)
 cd frontend
-
-npm install
-npm run dev
+echo "VITE_API_BASE_URL=http://localhost:8000" > .env.local
+npm install && npm run dev                           # http://localhost:5173
 ```
 
-### 3. Prompt Transformer (подготовка под локальную LLM)
-По умолчанию трансформер выключен и не влияет на текущий pipeline.
+При отсутствии GPU установите `USE_CUDA=false` (исполнение на CPU медленнее).
+Подробнее — [docs/01-local.md](docs/01-local.md).
+
+### На GPU-сервере одной командой
 
 ```bash
-export PROMPT_TRANSFORM_ENABLED=true
-export PROMPT_TRANSFORM_TIMEOUT_MS=1500
-export PROMPT_TRANSFORM_PROVIDER=stub
-export PROMPT_TRANSFORM_STRICT=true
-export PROMPT_NEGATIVE_MERGE_POLICY=append
+git clone https://github.com/Akinara666/F2-AI-Image-Editor.git
+cd F2-AI-Image-Editor
+bash deploy/bootstrap.sh          # автоопределение GPU/CPU, сборка, Cloudflare Tunnel
 ```
 
-Полезные endpoint-ы:
-- `POST /prompt/transform` — превью трансформации промпта без запуска SD.
-- `GET /prompt/health` — статус загрузки prompt-transformer и LLM-адаптера.
-- `POST /generate` — поддерживает поля `raw_prompt` и `use_prompt_transform`.
-- Если трансформация включена и не удалась, backend вернет `422` и не запустит SD.
+По завершении выводится публичный адрес `https://<random>.trycloudflare.com` —
+единый URL для интерфейса и API. Требуется полноценный Docker-демон с доступом к GPU.
+Подробнее — [docs/02-docker-server.md](docs/02-docker-server.md).
 
-### 4. Qwen GGUF + LoRA (runtime)
-Для провайдера `qwen_gguf` подготовлены env-параметры:
+### На Vast.ai или готовом CUDA-контейнере (без Docker)
 
 ```bash
-export PROMPT_TRANSFORM_PROVIDER=qwen_gguf
-export LLM_MODEL_PATH=./backend/models/llm/model.gguf
-export LLM_LORA_PATH=./backend/models/llm/adapter.gguf
-export LLM_LORA_SCALE=1.0
-export LLM_CTX_SIZE=4096
-export LLM_THREADS=6
-export LLM_GPU_LAYERS=0
-export LLM_MAX_NEW_TOKENS=220
-export LLM_TEMPERATURE=0.2
-export LLM_TOP_P=0.9
+bash deploy/run-vast.sh           # backend и публичный адрес
+# на клиентском компьютере:
+bash deploy/run-client.sh https://<random>.trycloudflare.com
 ```
 
-Примечание: для `qwen_gguf` нужен установленный `llama-cpp-python`.
+Подробности и три способа подключения (Cloudflare Tunnel, проброс порта по SSH,
+нативный порт Vast.ai) — [docs/03-vast-ai.md](docs/03-vast-ai.md).
 
-## 🎮 Как пользоваться
-1.  **Навигация**: Зажмите `Пробел` и тяните мышкой для перемещения. Колесико — зум.
-2.  **Генерация**:
-    *   Переместите синюю рамку в нужное место.
-    *   (Опционально) Нарисуйте скетч или маску внутри.
-    *   Введите промпт и нажмите **GENERATE**.
-3.  **Принятие результата**:
-    *   Картинка появится поверх холста.
-    *   Нажмите **GENERATE** еще раз, чтобы заменить вариант, или **ACCEPT**, чтобы вклеить его в холст.
-    *   Нажмите **DISCARD**, чтобы удалить.
+## Конфигурация
 
-## 🚀 Развёртывание на сервере (одной командой)
-На свежем GPU-сервере (Vast.ai / RunPod / любой хост с NVIDIA-драйвером):
+Переменные окружения считываются из окружения или из файла `backend/.env`.
+Канонический шаблон — [`deploy/backend.env.example`](deploy/backend.env.example);
+полный справочник приведён в [docs/01-local.md, раздел «Переменные окружения»](docs/01-local.md#переменные-окружения).
 
-```bash
-git clone git@github.com:Akinara666/working-title-psd2.git
-cd working-title-psd2
-bash deploy/bootstrap.sh
-```
+Основные параметры:
 
-Скрипт ставит Docker и NVIDIA Container Toolkit (при наличии GPU), собирает образы,
-поднимает backend + frontend + Cloudflare Tunnel и печатает единый публичный
-`https://*.trycloudflare.com`. Фронтенд проксирует API через nginx (same-origin),
-поэтому второй URL и настройка CORS не нужны. Подробности — в `deploy/README.md`.
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `USE_CUDA` | `true` | GPU (CUDA-torch) или CPU |
+| `DEFAULT_MODEL_ID` | `runwayml/stable-diffusion-v1-5` | модель по умолчанию |
+| `SD_ENABLE_CPU_OFFLOAD` | `true` | выгрузка модулей в RAM для экономии видеопамяти |
+| `SD_TORCH_DTYPE` | `auto` | `auto` — bf16 на Ampere и новее, иначе fp16 |
+| `CIVITAI_API_TOKEN` / `HF_TOKEN` | — | токены для загрузки моделей |
+| `PROMPT_TRANSFORM_ENABLED` | `false` | включение LLM-трансформера промпта |
 
-Модели можно скачивать с HuggingFace / Civit.ai прямо из меню «Модели» в редакторе.
+## Использование
 
-## Удаленный сервер (ручные сценарии)
-Сценарии с `SSH`-туннелем, `trycloudflare.com`, `ngrok` и настройкой `CORS_ALLOW_ORIGINS` / `VITE_API_BASE_URL` описаны в `REMOTE_SERVER.md`.
+1. **Навигация.** Удерживая `Пробел`, перемещайте холст мышью; масштабирование — колесом.
+2. **Генерация.** Переместите рамку в нужную область, при необходимости нарисуйте набросок или маску, введите промпт и нажмите **GENERATE**.
+3. **Результат.** Повторный **GENERATE** заменяет вариант, **ACCEPT** сводит изображение на холст, **DISCARD** удаляет.
+4. **Модели.** В меню «Модели» загрузите чекпойнт из HuggingFace или Civit.ai по ссылке либо идентификатору.
 
-## 📂 Структура проекта
-```
+**Горячие клавиши:** `Space` — перемещение, `Ctrl+Z` — отмена, `Delete` — удаление объекта, `[` / `]` — размер кисти.
+
+## API
+
+FastAPI публикует интерактивную схему по адресу `/docs` (спецификация OpenAPI — `/openapi.json`). Основные эндпоинты:
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| `POST` | `/generate` | генерация (txt2img / img2img / inpaint); поля `raw_prompt`, `use_prompt_transform` |
+| `POST` | `/cancel` | отмена активной генерации |
+| `GET` | `/generate/preview/{request_id}` | предпросмотр прогресса генерации |
+| `GET` / `POST` | `/models`, `/models/download` | список и загрузка моделей |
+| `POST` | `/prompt/transform` | предпросмотр трансформации промпта без запуска SD |
+| `GET` | `/health`, `/prompt/health` | состояние сервиса и prompt-трансформера |
+
+## Структура проекта
+
+```text
 .
 ├── backend/
 │   ├── core/
-│   │   ├── manager.py   # Model Manager (VRAM logic)
-│   │   ├── llm_adapter.py # GGUF/LoRA adapter layer
-│   │   ├── prompt_transformer.py # Prompt -> SD prompt service (LLM hook)
-│   │   └── utils.py     # Image processing helpers
-│   └── main.py          # FastAPI Endpoints
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── Editor.jsx  # React State & Fabric wrappers
-    │   │   └── Sidebar.jsx # Параметры генерации
-    │   └── utils/
-    │       └── canvasLogic.js # Чистая логика Canvas (Export/Merge/Undo)
+│   │   ├── manager.py                     # менеджер моделей и видеопамяти (LRU-кэш, offload, восстановление после OOM)
+│   │   ├── llm_adapter.py                 # адаптер локальной LLM (Qwen GGUF + LoRA)
+│   │   ├── prompt_transformer.py          # трансформация промпта в формат Stable Diffusion
+│   │   ├── negative_prompt_transformer.py # трансформация негативного промпта
+│   │   ├── preview_decoder.py             # предпросмотр латентов (approx_nn / TAESD)
+│   │   ├── generation_preview.py          # хранилище прогресса генерации
+│   │   ├── model_downloads.py             # загрузка моделей из HuggingFace / Civit.ai
+│   │   ├── config.py                      # конфигурация и переменные окружения
+│   │   └── utils.py                       # обработка изображений
+│   ├── tests/                             # модульные, функциональные и интеграционные тесты
+│   └── main.py                            # эндпоинты FastAPI
+├── frontend/
+│   └── src/
+│       ├── components/
+│       │   ├── Editor.jsx                 # холст (Fabric.js) и состояние
+│       │   ├── Sidebar.jsx                # параметры генерации
+│       │   ├── ModelManager.jsx           # загрузка моделей из интерфейса
+│       │   └── HistoryPanel.jsx           # история генераций
+│       ├── utils/                         # логика холста (экспорт / сведение / отмена)
+│       └── constants.js                   # адрес API и эндпоинты
+├── deploy/                                # bootstrap.sh, run-vast.sh, compose-файлы
+└── docs/                                  # пошаговые инструкции по запуску
 ```
+
+## Тесты
+
+```bash
+# Backend (без torch/diffusers — лёгкие зависимости из requirements-ci.txt)
+PYTHONPATH=backend python -m unittest discover -s backend/tests -v
+
+# Frontend
+cd frontend && npm test
+```
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) выполняет backend-,
+prompt-, API- и frontend-тесты, а также docker-smoke на каждый push и pull request.
+</content>
