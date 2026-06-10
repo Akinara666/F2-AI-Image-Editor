@@ -1,6 +1,7 @@
 import {
   AVAILABLE_MODELS_PLACEHOLDER,
   AVAILABLE_SAMPLERS,
+  LEGACY_SAMPLER_ALIASES,
   createClientId,
   parseGenerationNumericParam
 } from '../constants';
@@ -39,6 +40,16 @@ export const DEFAULT_BRUSH_SETTINGS = {
 const getSanitizedNumericParam = (rawParams, name) => {
   const parsed = parseGenerationNumericParam(name, rawParams[name]);
   return parsed.valid ? parsed.value : parsed.rule?.defaultValue;
+};
+
+// Мигрируем легаси-имена и отбрасываем самплеры, которых больше нет в списке:
+// иначе сохранённое значение уезжает на бэкенд и получает 422.
+export const sanitizeSampler = (rawSampler) => {
+  if (typeof rawSampler !== 'string') {
+    return DEFAULT_PARAMS.sampler;
+  }
+  const mapped = LEGACY_SAMPLER_ALIASES[rawSampler] || rawSampler;
+  return AVAILABLE_SAMPLERS.includes(mapped) ? mapped : DEFAULT_PARAMS.sampler;
 };
 
 export const normalizeHistoryItem = (item) => {
@@ -114,7 +125,7 @@ export const loadAppSettingsFromStorage = () => {
         mask_padding: getSanitizedNumericParam(rawParams, 'mask_padding'),
         frame_size_index: getSanitizedNumericParam(rawParams, 'frame_size_index'),
         model_id: typeof rawParams.model_id === 'string' ? rawParams.model_id : DEFAULT_PARAMS.model_id,
-        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler
+        sampler: sanitizeSampler(rawParams.sampler)
       },
       brush: {
         brushMode: typeof rawBrush.brushMode === 'string' ? rawBrush.brushMode : DEFAULT_BRUSH_SETTINGS.brushMode,
