@@ -349,8 +349,17 @@ def _get_local_model_entries() -> list[dict[str, str]]:
         for entry in _get_managed_model_entries()
     }
     entries: list[dict[str, str]] = []
+    nested_model_count = 0
     try:
         for file in sorted(models_dir.iterdir()):
+            if file.is_dir():
+                # Checkpoints are only picked up from the top level; count nested
+                # ones so users who organize models in subfolders get a hint.
+                nested_model_count += sum(
+                    1 for nested in file.rglob("*")
+                    if nested.is_file() and nested.suffix.lower() in LOCAL_MODEL_SUFFIXES
+                )
+                continue
             if not file.is_file() or file.suffix.lower() not in LOCAL_MODEL_SUFFIXES:
                 continue
 
@@ -359,6 +368,10 @@ def _get_local_model_entries() -> list[dict[str, str]]:
                 logger.warning("Skipping local model outside MODELS_DIR: %s", resolved_file)
                 continue
             if resolved_file in managed_local_paths:
+                continue
+            if resolved_file.stat().st_size <= 0:
+                # 0-byte placeholders / interrupted copies can never be loaded.
+                logger.warning("Skipping empty local model file: %s", resolved_file)
                 continue
 
             entries.append({
@@ -372,6 +385,14 @@ def _get_local_model_entries() -> list[dict[str, str]]:
             })
     except Exception as e:
         logger.error(f"Failed to scan models directory: {e}")
+
+    if nested_model_count:
+        logger.warning(
+            "Found %s checkpoint file(s) in subfolders of %s. Only top-level files are listed — "
+            "move them up one level to use them.",
+            nested_model_count,
+            models_dir,
+        )
 
     return entries
 
