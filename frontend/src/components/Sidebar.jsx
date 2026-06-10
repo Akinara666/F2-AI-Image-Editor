@@ -7,10 +7,12 @@ import {
     parseGenerationNumericParam
 } from '../constants';
 import ModelManager from './ModelManager';
-import { TOOL_GROUPS } from './editor/toolModes';
+import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
 import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
+// Режимы, где есть кисть и уместен слайдер размера.
+const BRUSH_SIZE_TOOL_MODES = [...DRAWING_TOOL_MODES, TOOL_MODES.SPOT_HEAL, TOOL_MODES.CLONE_STAMP];
 const TEXT_NUMBER_FIELDS = ['seed', 'steps'];
 const LAYER_BLEND_MODES = [
     { id: 'normal', label: 'Обычный' },
@@ -186,6 +188,8 @@ const Sidebar = ({
         steps: String(params.steps)
     });
     const [layerViewMode, setLayerViewMode] = useState('list');
+    const [wandTolerance, setWandTolerance] = useState(32);
+    const [featherRadius, setFeatherRadius] = useState(4);
     const [importPanelOpen, setImportPanelOpen] = useState(false);
     const [importUrl, setImportUrl] = useState('');
     const [isImportingUrl, setIsImportingUrl] = useState(false);
@@ -592,15 +596,99 @@ const Sidebar = ({
 
                         {brushMode !== 'none' && (
                             <>
-                                <div className="input-group sidebar__brush-options">
-                                    <div className="sidebar__brush-row">
-                                        <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
-                                        <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
-                                        {brushMode === 'sketch' && (
-                                            <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                        )}
+                                {BRUSH_SIZE_TOOL_MODES.includes(brushMode) && (
+                                    <div className="input-group sidebar__brush-options">
+                                        <div className="sidebar__brush-row">
+                                            <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
+                                            <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
+                                            {brushMode === 'sketch' && (
+                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
+                                )}
+                                {SELECTION_TOOL_MODES.includes(brushMode) && (
+                                    <>
+                                        <small className="sidebar__hint">
+                                            {brushMode === TOOL_MODES.MAGIC_WAND
+                                                ? 'Клик — выделить похожие пиксели. Shift — добавить, Alt — вычесть.'
+                                                : 'Обведи область. Shift — добавить к выделению, Alt — вычесть.'}
+                                        </small>
+                                        {brushMode === TOOL_MODES.MAGIC_WAND && (
+                                            <div className="input-group">
+                                                <label className="input-label">Допуск: {wandTolerance}</label>
+                                                <input
+                                                    type="range"
+                                                    className="sidebar__range sidebar__range--neutral"
+                                                    min="0"
+                                                    max="128"
+                                                    value={wandTolerance}
+                                                    onChange={(e) => {
+                                                        const value = parseInt(e.target.value, 10);
+                                                        setWandTolerance(value);
+                                                        editorRef?.current?.setMagicWandTolerance(value);
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="input-group">
+                                            <div className="sidebar__brush-row">
+                                                <label className="input-label sidebar__brush-label">Растушёвка: {featherRadius}px</label>
+                                                <input
+                                                    type="range"
+                                                    className="sidebar__range sidebar__range--neutral"
+                                                    min="0"
+                                                    max="64"
+                                                    value={featherRadius}
+                                                    onChange={(e) => setFeatherRadius(parseInt(e.target.value, 10))}
+                                                    style={{ flex: 1 }}
+                                                />
+                                                <button
+                                                    className="btn btn-secondary sidebar__action-btn"
+                                                    onClick={() => {
+                                                        if (featherRadius <= 0) return;
+                                                        const applied = editorRef?.current?.featherSelection(featherRadius);
+                                                        if (!applied) {
+                                                            showToastInfo?.('Сначала создай выделение.');
+                                                        }
+                                                    }}
+                                                >
+                                                    Применить
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="sidebar__actions">
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => editorRef?.current?.invertSelection()}
+                                            >
+                                                Инвертировать
+                                            </button>
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => editorRef?.current?.deselectSelection()}
+                                                title="Снять выделение (Ctrl+D)"
+                                            >
+                                                Снять
+                                            </button>
+                                        </div>
+                                        <div className="sidebar__actions">
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => {
+                                                    const converted = editorRef?.current?.convertSelectionToInpaintMask();
+                                                    if (converted) {
+                                                        showToastSuccess?.('Выделение добавлено в маску инпейнта.');
+                                                    } else {
+                                                        showToastInfo?.('Сначала создай выделение.');
+                                                    }
+                                                }}
+                                            >
+                                                В маску инпейнта
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
                                 {brushMode === 'clone_stamp' && (
                                     <small className="sidebar__hint">
                                         Штамп: зажми Alt и кликни по источнику, затем рисуй в зоне назначения.

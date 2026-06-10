@@ -435,7 +435,9 @@ export const exportCanvasState = async (canvas, frame) => {
             child.set({
                 visible: true,
                 opacity: 1.0,
-                stroke: 'white'
+                stroke: 'white',
+                // Залитые маски (например, из выделения) тоже должны стать белыми.
+                ...(child.fill ? { fill: 'white' } : {})
             });
         });
         const maskCanvas = renderEntriesToCanvas([{ object: maskClone }], bounds, 'black');

@@ -40,6 +40,13 @@ import {
 } from './editor/interactionController';
 import { setupEditorKeyboardShortcuts } from './editor/keyboardController';
 import { setupCanvasViewportAndTransform } from './editor/transformController';
+import {
+    combineSelections,
+    featherSelection,
+    invertSelection,
+    traceSelectionOutline
+} from './editor/selectionEngine';
+import { setupSelectionToolHandling } from './editor/selectionController';
 import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
@@ -112,6 +119,10 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const quickSelectionDraftPointsRef = useRef([]);
     const quickClipboardRef = useRef(null);
     const layerCounterRef = useRef(1);
+    const selectionRef = useRef(null);
+    const selectionOverlayRef = useRef(null);
+    const selectionAntsTimerRef = useRef(null);
+    const magicWandToleranceRef = useRef(32);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -1190,6 +1201,221 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         };
     };
 
+    const getFrameRect = () => {
+        if (!genFrame) {
+            return null;
+        }
+        return {
+            left: genFrame.left ?? 0,
+            top: genFrame.top ?? 0,
+            width: Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1))),
+            height: Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)))
+        };
+    };
+
+    const renderFrameCompositeImageData = () => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const frameRect = getFrameRect();
+        const compositeCanvas = fabric.util.createCanvasElement();
+        compositeCanvas.width = frameRect.width;
+        compositeCanvas.height = frameRect.height;
+        const context = compositeCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            return null;
+        }
+
+        const rasterObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && (isBaseRasterObject(object, genFrame) || isCandidateObject(object, genFrame))
+        ));
+        if (rasterObjects.length === 0) {
+            return null;
+        }
+
+        rasterObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-frameRect.left, -frameRect.top);
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        return context.getImageData(0, 0, frameRect.width, frameRect.height);
+    };
+
+    const buildSelectionPathString = (loops) => loops
+        .map((loop) => `M ${loop.map((point) => `${point.x} ${point.y}`).join(' L ')} Z`)
+        .join(' ');
+
+    const stopSelectionAntsAnimation = () => {
+        if (selectionAntsTimerRef.current) {
+            window.clearInterval(selectionAntsTimerRef.current);
+            selectionAntsTimerRef.current = null;
+        }
+    };
+
+    const removeSelectionOverlay = () => {
+        if (!fabricCanvas) {
+            return;
+        }
+        fabricCanvas.getObjects()
+            .filter((object) => object.editorRole === 'selection-overlay' && object !== null)
+            .forEach((object) => fabricCanvas.remove(object));
+        selectionOverlayRef.current = null;
+    };
+
+    const updateSelectionOverlay = () => {
+        if (!fabricCanvas) {
+            return;
+        }
+        removeSelectionOverlay();
+
+        const selection = selectionRef.current;
+        const loops = selection ? traceSelectionOutline(selection) : [];
+        if (loops.length === 0) {
+            stopSelectionAntsAnimation();
+            fabricCanvas.requestRenderAll();
+            return;
+        }
+
+        const overlay = new fabric.Path(buildSelectionPathString(loops), {
+            fill: 'rgba(0, 212, 255, 0.07)',
+            fillRule: 'evenodd',
+            stroke: '#00d4ff',
+            strokeWidth: 1.2,
+            strokeUniform: true,
+            strokeDashArray: [5, 4],
+            selectable: false,
+            evented: false,
+            hasControls: false,
+            hasBorders: false,
+            objectCaching: false,
+            excludeFromExport: true,
+            editorRole: 'selection-overlay'
+        });
+        fabricCanvas.add(overlay);
+        overlay.bringToFront();
+        selectionOverlayRef.current = overlay;
+
+        // «Муравьи»: медленный интервал, чтобы не перерисовывать все слои
+        // каждый кадр (objectCaching у изображений выключен).
+        if (!selectionAntsTimerRef.current) {
+            selectionAntsTimerRef.current = window.setInterval(() => {
+                const antsOverlay = selectionOverlayRef.current;
+                if (!antsOverlay || !fabricCanvas) {
+                    return;
+                }
+                antsOverlay.set({ strokeDashOffset: ((antsOverlay.strokeDashOffset || 0) + 2) % 9 });
+                fabricCanvas.requestRenderAll();
+            }, 150);
+        }
+        fabricCanvas.requestRenderAll();
+    };
+
+    const applyIncomingSelection = (incoming, operation = 'replace') => {
+        selectionRef.current = combineSelections(selectionRef.current, incoming, operation);
+        updateSelectionOverlay();
+    };
+
+    const deselectSelection = () => {
+        if (!selectionRef.current) {
+            return false;
+        }
+        selectionRef.current = null;
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const invertActiveSelection = () => {
+        const frameRect = getFrameRect();
+        if (!frameRect) {
+            return false;
+        }
+        selectionRef.current = invertSelection(selectionRef.current, frameRect);
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const featherActiveSelection = (radius) => {
+        if (!selectionRef.current) {
+            return false;
+        }
+        selectionRef.current = featherSelection(selectionRef.current, radius);
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const convertSelectionToInpaintMask = () => {
+        const selection = selectionRef.current;
+        if (!selection || !fabricCanvas || !genFrame) {
+            return false;
+        }
+        const loops = traceSelectionOutline(selection);
+        if (loops.length === 0) {
+            return false;
+        }
+
+        const maskPath = new fabric.Path(buildSelectionPathString(loops), {
+            fill: 'rgba(255, 0, 0, 1.0)',
+            fillRule: 'evenodd',
+            stroke: null,
+            editorRole: CANVAS_OBJECT_ROLES.MASK,
+            isMask: true,
+            selectable: false,
+            evented: false,
+            opacity: 1.0
+        });
+
+        let maskGroup = getMaskGroupFromCanvas(fabricCanvas);
+        if (!maskGroup) {
+            maskGroup = new fabric.Group([], {
+                id: 'maskGroup',
+                editorRole: CANVAS_OBJECT_ROLES.MASK,
+                selectable: false,
+                evented: false,
+                opacity: 0.5,
+                objectCaching: true
+            });
+            fabricCanvas.add(maskGroup);
+        }
+        maskGroup.addWithUpdate(maskPath);
+        markUndoDirty(maskGroup);
+        if (candidateRef.current && !maskOverlayVisibleRef.current) {
+            maskGroup.set({ visible: false });
+        }
+        enforceCanvasLayerOrder(fabricCanvas, genFrame);
+        syncMaskStateFromCanvas(fabricCanvas);
+        fabricCanvas.requestRenderAll();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        return true;
+    };
+
+    useEffect(() => () => stopSelectionAntsAnimation(), []);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+        return setupSelectionToolHandling({
+            canvas: fabricCanvas,
+            brushModeRef,
+            clampPointToFrame,
+            getFrameBounds: getFrameRect,
+            renderFrameImageData: renderFrameCompositeImageData,
+            magicWandToleranceRef,
+            applySelection: applyIncomingSelection
+        });
+    }, [fabricCanvas, genFrame]);
+
     useImperativeHandle(ref, () => ({
         setGenFrameSize: (width, height) => setGenerationFrameSize({
             width,
@@ -1245,6 +1471,22 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         hasQuickClipboard: () => Boolean(quickClipboardRef.current),
 
+        getSelection: () => selectionRef.current,
+
+        hasSelection: () => Boolean(selectionRef.current),
+
+        deselectSelection,
+
+        invertSelection: invertActiveSelection,
+
+        featherSelection: featherActiveSelection,
+
+        convertSelectionToInpaintMask,
+
+        setMagicWandTolerance: (value) => {
+            magicWandToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
+        },
+
         exportForQuickSelectRefine,
 
         getLayers: () => buildLayersSnapshot(),
@@ -1279,22 +1521,26 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
-        restoreHistoryDocument: async (url) => restoreHistoryDocument({
-            url,
-            fabricCanvas,
-            genFrame,
-            genFrameVisual: genFrameVisualRef.current,
-            candidateRef,
-            setCandidateState,
-            enforceCanvasLayerOrder,
-            syncMaskStateFromCanvas,
-            syncCanvasInteractionMode,
-            syncFrameVisualState,
-            setGenDimensions,
-            markUndoDirty,
-            commitUndoSnapshot,
-            getUndoSnapshotParams
-        }),
+        restoreHistoryDocument: async (url) => {
+            // Выделение относится к старому документу — снимаем.
+            deselectSelection();
+            return restoreHistoryDocument({
+                url,
+                fabricCanvas,
+                genFrame,
+                genFrameVisual: genFrameVisualRef.current,
+                candidateRef,
+                setCandidateState,
+                enforceCanvasLayerOrder,
+                syncMaskStateFromCanvas,
+                syncCanvasInteractionMode,
+                syncFrameVisualState,
+                setGenDimensions,
+                markUndoDirty,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+        },
 
         undo: performUndo,
 
@@ -1318,6 +1564,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const pasteQuickSelectionRef = useRef(pasteQuickSelection);
     const performDeleteActiveObjectRef = useRef(performDeleteActiveObject);
     const syncCanvasInteractionModeRef = useRef(syncCanvasInteractionMode);
+    const deselectSelectionRef = useRef(deselectSelection);
     useEffect(() => {
         performUndoRef.current = performUndo;
         setBrushModeRef.current = setBrushMode;
@@ -1325,6 +1572,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         pasteQuickSelectionRef.current = pasteQuickSelection;
         performDeleteActiveObjectRef.current = performDeleteActiveObject;
         syncCanvasInteractionModeRef.current = syncCanvasInteractionMode;
+        deselectSelectionRef.current = deselectSelection;
     });
 
     const toggleMaskOverlayPreview = () => {
@@ -1342,7 +1590,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             pasteQuickSelectionRef,
             performUndoRef,
             performDeleteActiveObjectRef,
-            syncCanvasInteractionModeRef
+            syncCanvasInteractionModeRef,
+            deselectSelectionRef
         });
     }, [fabricCanvas, genFrame]);
 

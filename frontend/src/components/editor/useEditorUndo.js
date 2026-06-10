@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { fabric } from 'fabric';
 import { createClientId } from '../../constants';
+import { UI_OVERLAY_ROLES } from '../../utils/canvasLogic';
 
 const MAX_UNDO_STEPS = 50;
 
@@ -208,7 +209,11 @@ export const useEditorUndo = () => {
             frameVisual: serializeWithCache(frameVisualObject, undoFrameVisualCacheRef, serializeFrameVisualState),
             objects: canvas
                 .getObjects()
-                .filter((object) => object !== frameObject && object !== frameVisualObject)
+                .filter((object) => (
+                    object !== frameObject
+                    && object !== frameVisualObject
+                    && !UI_OVERLAY_ROLES.includes(object?.editorRole)
+                ))
                 .map(serializeUndoObject)
         };
     };
@@ -268,7 +273,11 @@ export const useEditorUndo = () => {
 
         canvas.discardActiveObject();
         canvas.getObjects()
-            .filter((object) => object !== frameObject && object !== frameVisualObject)
+            .filter((object) => (
+                object !== frameObject
+                && object !== frameVisualObject
+                && !UI_OVERLAY_ROLES.includes(object?.editorRole)
+            ))
             .forEach((object) => canvas.remove(object));
 
         frameObject.set(snapshot.frame);

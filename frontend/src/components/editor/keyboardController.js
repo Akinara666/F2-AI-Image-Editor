@@ -15,7 +15,8 @@ export const setupEditorKeyboardShortcuts = ({
     pasteQuickSelectionRef,
     performUndoRef,
     performDeleteActiveObjectRef,
-    syncCanvasInteractionModeRef
+    syncCanvasInteractionModeRef,
+    deselectSelectionRef
 }) => {
     if (!fabricCanvas) {
         return () => {};
@@ -29,6 +30,12 @@ export const setupEditorKeyboardShortcuts = ({
         if ((event.ctrlKey || event.metaKey) && event.code === 'KeyZ') {
             event.preventDefault();
             void performUndoRef.current?.();
+            return;
+        }
+
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyD') {
+            event.preventDefault();
+            deselectSelectionRef?.current?.();
             return;
         }
 
