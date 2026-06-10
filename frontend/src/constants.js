@@ -43,6 +43,7 @@ export const API_ENDPOINTS = {
     HISTORY_DELETE: `${API_BASE_URL}/history/delete`,
     MODELS: `${API_BASE_URL}/models`,
     MODELS_DOWNLOAD: `${API_BASE_URL}/models/download`,
+    MODELS_DOWNLOADS: `${API_BASE_URL}/models/downloads`,
     MODELS_DOWNLOAD_STATUS: (jobId) => `${API_BASE_URL}/models/download/${jobId}`,
     MODELS_DOWNLOAD_CANCEL: (jobId) => `${API_BASE_URL}/models/download/${jobId}/cancel`,
     MODELS_DELETE: `${API_BASE_URL}/models/delete`,
