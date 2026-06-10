@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AVAILABLE_SIZES } from '../constants';
 import {
   APP_SETTINGS_STORAGE_KEY,
   DEFAULT_BRUSH_SETTINGS,
@@ -87,7 +88,8 @@ describe('appState', () => {
       denoising_strength: 1,
       mask_blur: 0,
       mask_padding: 128,
-      frame_size_index: 3,
+      // Завышенный индекс прижимается к последнему пресету размера.
+      frame_size_index: AVAILABLE_SIZES.length - 1,
       model_id: 'custom-model',
       sampler: 'Euler'
     });
@@ -96,6 +98,18 @@ describe('appState', () => {
       brushColor: '#123456',
       brushSize: 100
     });
+  });
+
+  it('мигрирует легаси-имя самплера и отбрасывает неизвестные', () => {
+    localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify({
+      params: { sampler: 'DPM++ 2S a Karras' }
+    }));
+    expect(loadAppSettingsFromStorage().params.sampler).toBe('DPM++ 2M SDE Karras');
+
+    localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify({
+      params: { sampler: 'Totally Unknown Sampler' }
+    }));
+    expect(loadAppSettingsFromStorage().params.sampler).toBe(DEFAULT_PARAMS.sampler);
   });
 
   it('возвращает значения по умолчанию, если сохранённых настроек нет', () => {

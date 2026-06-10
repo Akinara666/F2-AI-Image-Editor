@@ -180,7 +180,7 @@ ALLOWED_SAMPLERS = {
     "Euler a",
     "Euler",
     "DPM++ 2M Karras",
-    "DPM++ 2S a Karras",
+    "DPM++ 2M SDE Karras",
     "DPM++ SDE Karras",
     "DPM2 a Karras",
     "DDIM",
@@ -189,12 +189,22 @@ ALLOWED_SAMPLERS = {
     "UniPC",
     "LMS",
 }
+# diffusers has no true single-step ancestral DPM++ 2S a; the old entry was
+# silently backed by the 2M SDE multistep scheduler. Keep the name as an alias
+# for stored client settings / external API callers.
+SAMPLER_ALIASES = {
+    "DPM++ 2S a Karras": "DPM++ 2M SDE Karras",
+}
 ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
 LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
 ALLOWED_MODEL_FAMILIES = {"sd", "sdxl"}
 MIN_DIMENSION = 64
 MAX_DIMENSION = 2048
-MAX_GENERATION_PIXELS = 1024 * 1024
+# 2 MP: covers native SDXL aspect presets (1024x1024, 896x1152, 1216x832)
+# and portrait/landscape HD like 1024x1536 with VRAM still bounded by
+# VAE tiling + attention slicing. The old 1 MP cap rejected anything
+# larger than the SDXL base square.
+MAX_GENERATION_PIXELS = 2 * 1024 * 1024
 DIMENSION_MULTIPLE = 8
 MIN_STEPS = 1
 MAX_STEPS = 150
@@ -601,6 +611,10 @@ def _validate_generation_inputs(
     mask_blur = _validate_int_field("mask_blur", mask_blur, MIN_MASK_BLUR, MAX_MASK_BLUR)
     mask_padding = _validate_int_field("mask_padding", mask_padding, MIN_MASK_PADDING, MAX_MASK_PADDING)
 
+    if sampler in SAMPLER_ALIASES:
+        normalized_sampler = SAMPLER_ALIASES[sampler]
+        logger.warning("Sampler %r is a legacy alias; using %r.", sampler, normalized_sampler)
+        sampler = normalized_sampler
     if sampler not in ALLOWED_SAMPLERS:
         raise _validation_error(f"Unsupported sampler: {sampler}")
 

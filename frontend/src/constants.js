@@ -61,7 +61,7 @@ export const AVAILABLE_SAMPLERS = [
     "Euler a",
     "Euler",
     "DPM++ 2M Karras",
-    "DPM++ 2S a Karras",
+    "DPM++ 2M SDE Karras",
     "DPM++ SDE Karras",
     "DPM2 a Karras",
     "DDIM",
@@ -71,11 +71,24 @@ export const AVAILABLE_SAMPLERS = [
     "LMS"
 ];
 
+// Старое имя «DPM++ 2S a Karras» фактически работало как 2M SDE — честно
+// переименовано; сохранённые настройки мигрируются при загрузке.
+export const LEGACY_SAMPLER_ALIASES = {
+    "DPM++ 2S a Karras": "DPM++ 2M SDE Karras"
+};
+
+// Новые пресеты добавляются только в конец: frame_size_index хранится в
+// localStorage, и перестановка сломала бы сохранённый выбор пользователя.
 export const AVAILABLE_SIZES = [
     { width: 512, height: 512, label: "512 x 512 (Квадрат)" },
     { width: 768, height: 512, label: "768 x 512 (Альбом)" },
     { width: 512, height: 768, label: "512 x 768 (Портрет)" },
-    { width: 768, height: 768, label: "768 x 768 (Квадрат HD)" }
+    { width: 768, height: 768, label: "768 x 768 (Квадрат HD)" },
+    { width: 1024, height: 1024, label: "1024 x 1024 (SDXL Квадрат)" },
+    { width: 1152, height: 896, label: "1152 x 896 (SDXL Альбом)" },
+    { width: 896, height: 1152, label: "896 x 1152 (SDXL Портрет)" },
+    { width: 1536, height: 1024, label: "1536 x 1024 (Широкий HD)" },
+    { width: 1024, height: 1536, label: "1024 x 1536 (Высокий HD)" }
 ];
 
 export const GENERATION_NUMERIC_PARAM_RULES = {

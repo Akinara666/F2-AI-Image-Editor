@@ -748,32 +748,41 @@ class ModelManager:
             del evicted_bundle
             self._free_cuda_memory()
 
+    # A1111-style sampler name -> (scheduler class, from_config kwargs).
+    # "DPM++ 2S a Karras" is intentionally absent: diffusers has no single-step
+    # ancestral DPM++ scheduler, and pretending otherwise misleads users
+    # (main.py maps the legacy name to "DPM++ 2M SDE Karras" explicitly).
+    SAMPLER_SCHEDULERS = {
+        "Euler a": (EulerAncestralDiscreteScheduler, {}),
+        "Euler": (EulerDiscreteScheduler, {}),
+        "DPM++ 2M Karras": (DPMSolverMultistepScheduler, {"use_karras_sigmas": True}),
+        "DPM++ 2M SDE Karras": (
+            DPMSolverMultistepScheduler,
+            {"use_karras_sigmas": True, "algorithm_type": "sde-dpmsolver++"},
+        ),
+        "DPM++ SDE Karras": (DPMSolverSDEScheduler, {"use_karras_sigmas": True}),
+        "DPM2 a Karras": (KDPM2AncestralDiscreteScheduler, {"use_karras_sigmas": True}),
+        "DDIM": (DDIMScheduler, {}),
+        "DDPM": (DDPMScheduler, {}),
+        "Heun": (HeunDiscreteScheduler, {}),
+        "UniPC": (UniPCMultistepScheduler, {}),
+        "LMS": (LMSDiscreteScheduler, {}),
+    }
+
     def _apply_sampler(self, pipeline, sampler_name: str):
         """Applies the requested sampler to the pipeline."""
+        entry = self.SAMPLER_SCHEDULERS.get(sampler_name)
+        if entry is None:
+            self.logger.warning(
+                "Unknown sampler %r; keeping current scheduler %s.",
+                sampler_name,
+                type(pipeline.scheduler).__name__,
+            )
+            return
+        scheduler_class, scheduler_kwargs = entry
         self.logger.info(f"Applying scheduler: {sampler_name}")
         try:
-            if sampler_name == "Euler a":
-                pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "Euler":
-                pipeline.scheduler = EulerDiscreteScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "DPM++ 2M Karras":
-                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
-            elif sampler_name == "DPM++ 2S a Karras":
-                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True, algorithm_type="sde-dpmsolver++")
-            elif sampler_name == "DPM++ SDE Karras":
-                pipeline.scheduler = DPMSolverSDEScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
-            elif sampler_name == "DPM2 a Karras":
-                pipeline.scheduler = KDPM2AncestralDiscreteScheduler.from_config(pipeline.scheduler.config, use_karras_sigmas=True)
-            elif sampler_name == "DDIM":
-                pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "DDPM":
-                pipeline.scheduler = DDPMScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "Heun":
-                pipeline.scheduler = HeunDiscreteScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "UniPC":
-                pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
-            elif sampler_name == "LMS":
-                pipeline.scheduler = LMSDiscreteScheduler.from_config(pipeline.scheduler.config)
+            pipeline.scheduler = scheduler_class.from_config(pipeline.scheduler.config, **scheduler_kwargs)
         except Exception as e:
             self.logger.warning(f"Could not apply sampler {sampler_name}: {e}")
 
