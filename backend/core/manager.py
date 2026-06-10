@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass
 from collections import OrderedDict
 from contextlib import asynccontextmanager
@@ -61,7 +62,12 @@ class ModelManager:
         self.active_request_id: Optional[str] = None
         self.cancel_requested = False
         self.active_pipeline = None
-        self.cancelled_request_ids = set()
+        # request_id -> monotonic timestamp of the cancel request. /cancel can be
+        # called with ids that never reach a generation session, so entries are
+        # bounded by TTL + max size instead of relying on session cleanup alone.
+        self.cancelled_request_ids: dict[str, float] = {}
+        self.cancelled_ids_ttl_s = 3600
+        self.cancelled_ids_max = 1000
         self.logger = logging.getLogger("ModelManager")
         self.model_family_cache: dict[str, ModelFamily] = {}
         self.model_family_cache_lock = threading.Lock()
@@ -679,7 +685,7 @@ class ModelManager:
             self.active_pipeline = None
             self.cancel_requested = False
             self.active_request_id = None
-            self.cancelled_request_ids.discard(request_id)
+            self.cancelled_request_ids.pop(request_id, None)
             self.generation_lock.release()
             self.logger.info("Generation session finished: request_id=%s", request_id)
 
@@ -698,8 +704,22 @@ class ModelManager:
             return self.cancel_requested or request_id in self.cancelled_request_ids
         return request_id in self.cancelled_request_ids
 
+    def _prune_cancelled_ids(self) -> None:
+        cutoff = time.monotonic() - self.cancelled_ids_ttl_s
+        stale_ids = [
+            cancelled_id
+            for cancelled_id, requested_at in self.cancelled_request_ids.items()
+            if requested_at < cutoff
+        ]
+        for cancelled_id in stale_ids:
+            self.cancelled_request_ids.pop(cancelled_id, None)
+        # dict preserves insertion order, so the first keys are the oldest.
+        while len(self.cancelled_request_ids) > self.cancelled_ids_max:
+            self.cancelled_request_ids.pop(next(iter(self.cancelled_request_ids)), None)
+
     def request_cancel(self, request_id: str) -> bool:
-        self.cancelled_request_ids.add(request_id)
+        self.cancelled_request_ids[request_id] = time.monotonic()
+        self._prune_cancelled_ids()
         if self.active_request_id == request_id:
             self.cancel_requested = True
             if self.active_pipeline is not None:

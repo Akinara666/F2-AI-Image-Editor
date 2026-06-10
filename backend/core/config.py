@@ -53,7 +53,9 @@ class Settings:
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
-    PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
+    # Covers inference only — model loading happens outside this timeout.
+    # CPU GGUF inference of ~220 tokens realistically takes seconds, not ms.
+    PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "30000"))
     PROMPT_TRANSFORM_PROVIDER: str = os.getenv("PROMPT_TRANSFORM_PROVIDER", "stub")
     #_____________апдейт_______ Strict mode and merge policy
     PROMPT_TRANSFORM_STRICT: bool = os.getenv("PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
@@ -63,7 +65,7 @@ class Settings:
         "true",
     ).lower() == "true"
     NEG_PROMPT_TRANSFORM_ENABLED: bool = os.getenv("NEG_PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
-    NEG_PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("NEG_PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
+    NEG_PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("NEG_PROMPT_TRANSFORM_TIMEOUT_MS", "30000"))
     NEG_PROMPT_TRANSFORM_PROVIDER: str = os.getenv("NEG_PROMPT_TRANSFORM_PROVIDER", "stub")
     NEG_PROMPT_TRANSFORM_STRICT: bool = os.getenv("NEG_PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
     NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL: bool = os.getenv("NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL", "true").lower() == "true"

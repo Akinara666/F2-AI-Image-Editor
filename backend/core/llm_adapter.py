@@ -18,6 +18,14 @@ class BasePromptLLMAdapter:
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         raise NotImplementedError
 
+    def ensure_ready(self) -> None:
+        """Pre-load heavy resources (weights) before the timed transform call.
+
+        Callers run this outside their transform timeout so that a multi-GB
+        model load is not mistaken for a slow inference. No-op by default.
+        """
+        return None
+
     def _get_logger(self) -> logging.Logger:
         return getattr(self, "logger", logging.getLogger(self.__class__.__name__))
 
@@ -218,6 +226,9 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         if start == -1 or end == -1 or end <= start:
             raise RuntimeError("LLM response does not contain JSON object.")
         return json.loads(text[start : end + 1])
+
+    def ensure_ready(self) -> None:
+        self._ensure_model_loaded()
 
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         started = time.perf_counter()

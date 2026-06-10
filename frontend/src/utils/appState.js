@@ -165,7 +165,9 @@ export const loadSidebarWidthFromStorage = () => {
   }
 
   try {
-    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    // Number(null) === 0, что молча давало минимальную ширину вместо дефолтной.
+    const saved = raw === null ? NaN : Number(raw);
     if (!Number.isFinite(saved)) {
       return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
     }

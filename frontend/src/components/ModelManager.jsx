@@ -66,6 +66,29 @@ const ModelManager = ({
         [downloads]
     );
 
+    // ---- восстановление списка загрузок с сервера ----
+    // После перезагрузки страницы (или повторного открытия) активные загрузки
+    // продолжаются на бэкенде, но локальный state о них уже не знает.
+    useEffect(() => {
+        if (!open) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                const { data } = await axios.get(API_ENDPOINTS.MODELS_DOWNLOADS);
+                const jobs = Array.isArray(data?.downloads) ? data.downloads : [];
+                if (cancelled || jobs.length === 0) return;
+                setDownloads((prev) => {
+                    const known = new Set(prev.map((d) => d.job_id));
+                    const fresh = jobs.filter((j) => !known.has(j.job_id));
+                    return fresh.length ? [...fresh, ...prev] : prev;
+                });
+            } catch {
+                /* список загрузок не критичен для открытия модалки */
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [open]);
+
     // ---- опрос прогресса активных загрузок ----
     useEffect(() => {
         if (!open) return undefined;

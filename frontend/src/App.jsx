@@ -138,10 +138,15 @@ function App() {
     } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [history]);
 
+  // HEAD-проверку всей истории делаем один раз при первом непустом списке:
+  // раньше каждое изменение history заново опрашивало все элементы. Удаления
+  // отдельных файлов дальше отлавливает onError у <img> в HistoryPanel.
+  const initialHistoryPruneDoneRef = React.useRef(false);
   React.useEffect(() => {
-    if (history.length === 0) {
+    if (initialHistoryPruneDoneRef.current || history.length === 0) {
       return undefined;
     }
+    initialHistoryPruneDoneRef.current = true;
 
     const controller = new AbortController();
     void pruneMissingHistoryItems(history, controller.signal);
@@ -248,11 +253,17 @@ function App() {
       }
 
       await new Promise((resolve) => {
-        const timerId = window.setTimeout(resolve, 450);
-        signal.addEventListener('abort', () => {
+        // Снимаем слушатель после срабатывания таймера, иначе за долгую
+        // генерацию на signal накапливаются сотни обработчиков abort.
+        const onAbort = () => {
           window.clearTimeout(timerId);
           resolve();
-        }, { once: true });
+        };
+        const timerId = window.setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, 450);
+        signal.addEventListener('abort', onAbort, { once: true });
       });
     }
   }, []);
