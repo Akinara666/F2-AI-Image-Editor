@@ -1,128 +1,114 @@
-# Общий деплой стека
+# Развёртывание стека
 
-> 📚 Подробные пошаговые гайды по всем вариантам запуска — в [`docs/`](../docs/README.md):
-> [локально](../docs/01-local.md) · [Docker одной командой](../docs/02-docker-server.md) ·
-> [Vast.ai](../docs/03-vast-ai.md) · [GHCR + CD](../docs/04-ghcr-cd.md).
+Подробные пошаговые инструкции по всем вариантам запуска приведены в каталоге
+[`docs/`](../docs/README.md): [локально](../docs/01-local.md),
+[Docker одной командой](../docs/02-docker-server.md),
+[Vast.ai](../docs/03-vast-ai.md), [GHCR + CD](../docs/04-ghcr-cd.md).
+Ниже — справка по содержимому этого каталога и по сценарию CI/CD.
 
-## 🚀 Быстрый старт одной командой (рекомендуется)
+## Быстрый старт одной командой
 
-На свежем GPU-сервере (Vast.ai / RunPod / любой хост с NVIDIA-драйвером):
+На свежем GPU-сервере (Vast.ai, RunPod или любой хост с NVIDIA-драйвером):
 
 ```bash
-git clone git@github.com:Akinara666/working-title-psd2.git
-cd working-title-psd2
+git clone https://github.com/Akinara666/F2-AI-Image-Editor.git
+cd F2-AI-Image-Editor
 bash deploy/bootstrap.sh
 ```
 
-Скрипт сам: поставит Docker и (при наличии GPU) NVIDIA Container Toolkit,
-создаст `deploy/backend.env`, соберёт образы локально, поднимет
-`deploy/compose.gpu.yaml` и поднимет Cloudflare Tunnel. В конце он напечатает
-публичный `https://<random>.trycloudflare.com` — это единый URL и для SPA, и
-для API (фронтенд проксирует backend через nginx, поэтому CORS не нужен).
+Скрипт устанавливает Docker и (при наличии GPU) NVIDIA Container Toolkit, создаёт
+`deploy/backend.env`, собирает образы локально, поднимает `deploy/compose.gpu.yaml`
+и Cloudflare Tunnel. По завершении выводится публичный адрес
+`https://<random>.trycloudflare.com` — единый URL для интерфейса и API (фронтенд
+проксирует backend через nginx, поэтому настройка CORS не требуется).
 
-Полезные команды (`Makefile` в корне): `make up`, `make down`, `make logs`,
+Команды управления (`Makefile` в корне): `make up`, `make down`, `make logs`,
 `make url`, `make ps`, `make rebuild`. Флаги скрипта: `--cpu`, `--gpu`,
-`--no-tunnel`, `--no-build` (см. `deploy/bootstrap.sh --help`).
+`--no-tunnel`, `--no-build` (см. `bash deploy/bootstrap.sh --help`).
 
-Модели **не** качаются на этапе деплоя — их можно скачать с HuggingFace / Civit.ai
-прямо из меню «Модели» в интерфейсе редактора.
+Модели не загружаются на этапе развёртывания — их можно скачать из HuggingFace
+или Civit.ai непосредственно из меню «Модели» в интерфейсе редактора.
 
-> Путь выше требует **настоящего Docker-демона с GPU-passthrough** (своя GPU-VM,
-> RunPod «Docker host» и т.п.). На типичном **Vast.ai**-инстансе ты уже внутри
-> контейнера с готовым CUDA — там вложенный Docker не нужен и часто не работает.
-> Для этого случая есть отдельный путь ниже.
+Этот путь требует полноценного Docker-демона с доступом к GPU (собственная GPU-VM,
+RunPod в режиме «Docker host» и т. п.). На типичном инстансе Vast.ai вы уже
+находитесь внутри контейнера с готовым CUDA, где вложенный Docker не нужен и
+зачастую недоступен; для этого случая используйте путь, описанный ниже.
 
----
+## Vast.ai или готовый CUDA-контейнер (без Docker)
 
-## 🟢 Vast.ai / готовый CUDA-контейнер (без Docker)
+Когда инстанс — это уже контейнер с CUDA и Python (Vast.ai, RunPod-pod и подобные),
+backend запускается напрямую, без вложенного Docker. Вычислительная нагрузка
+(backend) выполняется на сервере, лёгкий фронтенд — на клиентском компьютере.
 
-Когда инстанс — это уже контейнер с CUDA и Python (Vast.ai, RunPod-pod, Colab-подобное),
-backend запускается напрямую, без вложенного Docker. GPU-нагрузка (backend) живёт
-на сервере, лёгкий фронтенд — у тебя на клиенте.
-
-**На сервере (vast.ai-инстанс):**
+На сервере:
 
 ```bash
-git clone https://github.com/Akinara666/working-title-psd2.git
-cd working-title-psd2
+git clone https://github.com/Akinara666/F2-AI-Image-Editor.git
+cd F2-AI-Image-Editor
 bash deploy/run-vast.sh
 ```
 
-Скрипт ([deploy/run-vast.sh](run-vast.sh)) ставит зависимости backend прямо в
-окружение инстанса (**предустановленный CUDA-torch не трогает** — типично для
-vast pytorch-образов), поднимает `uvicorn` на `0.0.0.0:8000` и Cloudflare
-quick-tunnel, затем печатает публичный `https://<random>.trycloudflare.com` —
-это адрес **API**.
+[`deploy/run-vast.sh`](run-vast.sh) устанавливает зависимости backend прямо в
+окружение инстанса (предустановленный CUDA-torch не затрагивается — это типично
+для PyTorch-образов Vast.ai), запускает `uvicorn` на `0.0.0.0:8000` и Cloudflare
+Tunnel, после чего выводит публичный адрес API `https://<random>.trycloudflare.com`.
 
-**На своём компьютере (клиент):**
+На клиентском компьютере:
 
 ```bash
 bash deploy/run-client.sh https://<random>.trycloudflare.com
-# затем открой http://localhost:5173
+# затем откройте http://localhost:5173
 ```
 
-Скрипт ([deploy/run-client.sh](run-client.sh)) прописывает адрес backend в
-`frontend/.env.local` и поднимает Vite dev-сервер. CORS для `localhost` backend
-разрешает по умолчанию, поэтому ничего больше настраивать не нужно.
+[`deploy/run-client.sh`](run-client.sh) записывает адрес backend в
+`frontend/.env.local` и запускает dev-сервер Vite. CORS для `localhost`
+разрешён по умолчанию, дополнительная настройка не требуется.
 
-Флаги `run-vast.sh`: `--no-tunnel` (доступ через проброшенный порт vast / `ssh -L`),
-`--optional` (xformers + llama-cpp-python), `--no-venv`, `--reinstall`,
-`--port N`, `--torch-index URL` (см. `bash deploy/run-vast.sh --help`).
+Полная инструкция и три способа подключения (Cloudflare Tunnel, проброс порта по
+SSH, нативный порт Vast.ai) — в [docs/03-vast-ai.md](../docs/03-vast-ai.md).
 
-**Заметки по vast.ai:**
+## Файлы каталога
 
-- Хранилище инстанса эфемерно — чтобы не перекачивать модели каждую аренду,
-  держи `backend/models` на persistent-томе (например симлинк/монт на `/workspace`).
-- Публичный URL trycloudflare случайный и **без авторизации** — любой со ссылкой
-  жжёт твою GPU. Не выкладывай его публично; для приватного доступа используй
-  `--no-tunnel` + `ssh -L`.
-- `--no-tunnel` удобен, если у инстанса уже проброшен внешний порт на 8000.
+- `bootstrap.sh` — запуск всего стека одной командой (Docker, GPU, Cloudflare Tunnel).
+- `run-vast.sh` — запуск backend напрямую без Docker (Vast.ai, готовый CUDA-контейнер).
+- `run-client.sh` — запуск фронтенда на клиенте с подключением к удалённому backend.
+- `compose.gpu.yaml` — боевой стек: GPU (CUDA-torch) и Cloudflare Tunnel, сборка локально.
+- `compose.staging.yaml` / `compose.prod.yaml` — развёртывание через готовые образы из GHCR.
+- `backend.env.example` — канонический шаблон runtime-переменных backend.
 
----
+Локальная оркестрация для CI и ручного smoke-прогона находится в корневом `compose.yaml`.
 
-## Файлы этой папки
+## Развёртывание через GHCR и SSH (CI/CD)
 
-- `bootstrap.sh` — запуск всего стека одной командой (Docker + GPU + Cloudflare Tunnel)
-- `run-vast.sh` — backend напрямую без Docker (Vast.ai / готовый CUDA-контейнер)
-- `run-client.sh` — фронтенд на клиенте с подключением к удалённому backend
-- `compose.gpu.yaml` — боевой стек: GPU (CUDA-torch) + Cloudflare Tunnel, сборка локально
-- `compose.staging.yaml` / `compose.prod.yaml` — альтернативный CD через готовые образы из GHCR
-- `backend.env.example` — канонический шаблон runtime-переменных backend
+Второй путь — автоматическая выкладка через GitHub Actions: сборка образов, push
+в GHCR и развёртывание на сервере по SSH через `docker compose`. Он сложнее
+(требуется около десяти секретов на окружение), без них deploy-job получает
+статус `skipped`. Используйте его для постоянного сервера с полноценным CI/CD.
 
-Локальный orchestration для `CI` и ручного smoke-прогона находится в корневом `compose.yaml`.
+Пока целевой сервер не подключён, в репозитории действует workflow
+`.github/workflows/cd-validation.yml`. Он проверяет сценарий релиза и корректность
+конфигурации развёртывания:
 
-## Альтернатива: CD через GHCR + SSH
+- валидирует compose-файлы каталога `deploy`;
+- собирает release-образы;
+- поднимает staging-стек локально в GitHub runner;
+- проверяет состояние (health) backend и frontend.
 
-Ниже описан второй путь — автоматическая выкладка через GitHub Actions
-(собирает образы, пушит в GHCR, по SSH разворачивает на сервере). Он сложнее
-(нужны ~10 секретов на окружение) и без них job просто `skipped`. Используй его,
-если нужен полноценный CI/CD на постоянный сервер.
+### Состав релиза
 
-Пока целевой сервер ещё не подключён, в репозитории есть workflow
-`.github/workflows/cd-validation.yml`.
-Он проверяет release-сценарий и корректность deploy-конфигурации:
-
-- валидирует `deploy`-compose-файлы
-- собирает release-образы для проверки
-- поднимает staging-стек локально в GitHub runner
-- проверяет health backend и frontend
-
-## Что выкатывается
-
-Один релиз всегда состоит из двух образов от одного и того же commit SHA:
+Один релиз состоит из двух образов от одного commit SHA:
 
 - `ghcr.io/akinara666/working-title-psd2-backend`
 - `ghcr.io/akinara666/working-title-psd2-frontend`
 
-Workflow собирает оба образа, пушит их в `GHCR`, потом по `SSH` выкладывает их вместе через `docker compose`.
-Пока нужные secrets не заведены, deploy-job в GitHub Actions будет автоматически `skipped`, а не `failed`.
+Workflow собирает оба образа, публикует их в GHCR, затем по SSH разворачивает их
+через `docker compose`. Пока секреты не заданы, deploy-job получает статус
+`skipped`, а не `failed`.
 
-## Структура на сервере
-
-Ожидаемая структура репозитория на сервере:
+### Структура на сервере
 
 ```text
-~/working-title-psd2
+~/F2-AI-Image-Editor
 ├── backend/
 │   ├── models/
 │   └── static/outputs/
@@ -134,31 +120,29 @@ Backend хранит модели и результаты генерации в 
 - `./backend/models`
 - `./backend/static/outputs`
 
-## Runtime env-файлы backend
+### Runtime env-файлы backend
 
-На сервере workflow создаёт один из этих файлов:
+На сервере workflow создаёт один из файлов:
 
 - `deploy/backend.staging.env`
 - `deploy/backend.prod.env`
 
-Шаблон значений лежит в `deploy/backend.env.example`.
-Если переменная `BACKEND_ENV_FILE` не задана, compose по умолчанию использует именно этот example-файл.
+Шаблон значений — `deploy/backend.env.example`. Если переменная `BACKEND_ENV_FILE`
+не задана, compose использует сам example-файл.
 
-## Важный момент по frontend API
+### Адрес API для frontend
 
-`frontend` получает `VITE_API_BASE_URL` на этапе сборки образа.
-Для staging и production нужно передавать адрес, который реально доступен браузеру пользователя.
+`frontend` получает `VITE_API_BASE_URL` на этапе сборки образа. Для staging и
+production необходимо передавать адрес, реально доступный браузеру пользователя:
 
-Обычно это:
-
-- либо публичный URL backend
-- либо URL reverse proxy, если backend публикуется через него
+- публичный URL backend, либо
+- URL reverse proxy, если backend публикуется через него.
 
 `http://127.0.0.1:8000` подходит только для локального smoke-режима.
 
-## GitHub Secrets
+### GitHub Secrets
 
-### Staging
+Staging:
 
 - `STAGING_SSH_HOST`
 - `STAGING_SSH_PORT`
@@ -171,7 +155,7 @@ Backend хранит модели и результаты генерации в 
 - `STAGING_GHCR_TOKEN`
 - `STAGING_FRONTEND_VITE_API_BASE_URL`
 
-### Production
+Production:
 
 - `PROD_SSH_HOST`
 - `PROD_SSH_PORT`
@@ -184,7 +168,7 @@ Backend хранит модели и результаты генерации в 
 - `PROD_GHCR_TOKEN`
 - `PROD_FRONTEND_VITE_API_BASE_URL`
 
-## Команды на сервере
+### Команды на сервере
 
 Staging:
 
@@ -200,10 +184,10 @@ docker compose -f deploy/compose.prod.yaml pull
 docker compose -f deploy/compose.prod.yaml up -d
 ```
 
-## Примечание по GPU
+### Запуск на GPU
 
-Если backend должен реально выполнять inference на GPU-хосте:
+Если backend должен выполнять inference на GPU-хосте:
 
-1. установи на сервер `NVIDIA Container Toolkit`
-2. раскомментируй `gpus: all` в нужном compose-файле
-3. при необходимости включи установку optional runtime-зависимостей в `CD` workflow
+1. установите NVIDIA Container Toolkit;
+2. раскомментируйте `gpus: all` в нужном compose-файле;
+3. при необходимости включите установку optional runtime-зависимостей в CD workflow.

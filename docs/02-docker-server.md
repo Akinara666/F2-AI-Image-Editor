@@ -1,42 +1,42 @@
 # 02 — Docker одной командой (GPU-сервер)
 
-Полный стек (backend + frontend + Cloudflare Tunnel) одной командой через
-[`deploy/bootstrap.sh`](../deploy/bootstrap.sh). Подходит для **своей GPU-VM,
-RunPod «Docker host» или любого хоста с настоящим Docker-демоном**.
+Полный стек (backend, frontend, Cloudflare Tunnel) запускается одной командой через
+[`deploy/bootstrap.sh`](../deploy/bootstrap.sh). Подходит для собственной GPU-VM,
+RunPod в режиме «Docker host» или любого хоста с полноценным Docker-демоном.
 
-> ⚠️ Нужен **реальный Docker-демон с GPU-passthrough**. На типичном Vast.ai-инстансе
-> (ты уже внутри контейнера) вложенный Docker не работает — для него см.
-> [гайд 03 — Vast.ai](03-vast-ai.md).
+Этот путь требует Docker-демона с доступом к GPU. На типичном инстансе Vast.ai
+(где вы уже находитесь внутри контейнера) вложенный Docker не работает — для этого
+случая см. [инструкцию 03 — Vast.ai](03-vast-ai.md).
 
 ---
 
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/Akinara666/working-title-psd2.git
-cd working-title-psd2
+git clone https://github.com/Akinara666/F2-AI-Image-Editor.git
+cd F2-AI-Image-Editor
 bash deploy/bootstrap.sh          # или: make up
 ```
 
-Что делает скрипт:
-1. ставит Docker (если нет) и `docker compose` v2;
-2. автоопределяет GPU (`nvidia-smi`); при наличии — ставит NVIDIA Container Toolkit
-   и проверяет `docker run --gpus all`;
-3. создаёт `deploy/backend.env` из шаблона (проставляет `USE_CUDA`);
-4. собирает образы **локально** (backend с CUDA-torch `cu121`) и поднимает
+Действия скрипта:
+1. устанавливает Docker (при отсутствии) и `docker compose` v2;
+2. определяет наличие GPU (`nvidia-smi`); при его наличии устанавливает NVIDIA
+   Container Toolkit и проверяет `docker run --gpus all`;
+3. создаёт `deploy/backend.env` из шаблона (устанавливает `USE_CUDA`);
+4. собирает образы локально (backend с CUDA-torch `cu121`) и поднимает
    [`deploy/compose.gpu.yaml`](../deploy/compose.gpu.yaml);
-5. поднимает `cloudflared` и печатает публичный
-   **`https://<random>.trycloudflare.com`** — единый URL для SPA и API
-   (nginx фронтенда проксирует backend, поэтому CORS не нужен).
+5. запускает `cloudflared` и выводит публичный адрес
+   `https://<random>.trycloudflare.com` — единый URL для интерфейса и API
+   (nginx фронтенда проксирует backend, поэтому настройка CORS не требуется).
 
-В конце увидишь:
+По завершении выводится:
 ```
 ==========================================================
   Приложение доступно по адресу:
   https://abcd-efgh-ijkl.trycloudflare.com
 ==========================================================
 ```
-Открой этот URL в браузере — это весь редактор.
+Откройте этот адрес в браузере — это весь редактор.
 
 ---
 
@@ -44,53 +44,53 @@ bash deploy/bootstrap.sh          # или: make up
 
 | Флаг | Назначение |
 |---|---|
-| `--gpu` | форсировать GPU-стек |
-| `--cpu` | лёгкий CPU-стек (**без AI-runtime и туннеля**, генерации нет — см. [гайд 01](01-local.md)) |
-| `--no-tunnel` | GPU-стек без cloudflared (доступ по SSH-туннелю/локально) |
+| `--gpu` | принудительно использовать GPU-стек |
+| `--cpu` | лёгкий CPU-стек (без AI-runtime и без туннеля, генерация недоступна — см. [инструкцию 01](01-local.md)) |
+| `--no-tunnel` | GPU-стек без cloudflared (доступ по SSH-туннелю или локально) |
 | `--no-build` | не пересобирать образы |
 | `-h`, `--help` | справка |
 
 ## Команды управления (`Makefile`)
 
 ```bash
-make up        # = bootstrap.sh (авто GPU/CPU + туннель)
-make url       # показать публичный Cloudflare URL
+make up        # = bootstrap.sh (автоопределение GPU/CPU и туннель)
+make url       # вывести публичный адрес Cloudflare
 make logs      # логи всех сервисов
 make ps        # статус
-make rebuild   # пересобрать и перезапустить
-make down      # остановить
+make rebuild   # пересборка и перезапуск
+make down      # остановка
 ```
 
 ---
 
 ## Доступ без туннеля
 
-`bash deploy/bootstrap.sh --no-tunnel` — backend на `127.0.0.1:8000`,
-frontend на `127.0.0.1:3000`. С клиента пробрось порт:
+`bash deploy/bootstrap.sh --no-tunnel` поднимает backend на `127.0.0.1:8000`,
+frontend на `127.0.0.1:3000`. С клиента пробросьте порт:
 ```bash
 ssh -L 3000:127.0.0.1:3000 <user>@<host>
-# открой http://localhost:3000
+# откройте http://localhost:3000
 ```
 
 ---
 
 ## Структура и данные
 
-Backend монтирует из репозитория (данные переживают пересборку образов):
-- `backend/models` → `/app/models` (модели)
-- `backend/static/outputs` → `/app/static/outputs` (результаты генерации)
+Backend монтирует каталоги из репозитория (данные сохраняются при пересборке образов):
+- `backend/models` -> `/app/models` (модели);
+- `backend/static/outputs` -> `/app/static/outputs` (результаты генерации).
 
 Конфигурация — `deploy/backend.env` (создаётся из
-[`deploy/backend.env.example`](../deploy/backend.env.example); разбор переменных —
-в [гайде 01](01-local.md#переменные-окружения)).
+[`deploy/backend.env.example`](../deploy/backend.env.example); справочник переменных —
+в [инструкции 01](01-local.md#переменные-окружения)).
 
 ---
 
-## Заметки
+## Примечания
 
-- **Первый запуск долгий**: сборка образа тянет CUDA-torch (несколько ГБ).
-  Повторные — быстрее (`--no-build`, кэш слоёв).
-- **Модели** не вшиты — качаются из меню «Модели» в редакторе после старта.
-- **Туннель trycloudflare** случайный/эфемерный и **без авторизации** — не
-  выкладывай ссылку публично, либо используй `--no-tunnel` + SSH.
-- Для **постоянного** сервера с автодеплоем — [гайд 04 (GHCR + CD)](04-ghcr-cd.md).
+- **Первый запуск длительный**: сборка образа загружает CUDA-torch (несколько ГБ).
+  Повторные запуски быстрее (`--no-build`, кэш слоёв).
+- **Модели** не встроены — загружаются из меню «Модели» в редакторе после запуска.
+- **Туннель trycloudflare** случайный и эфемерный, без аутентификации — не публикуйте
+  ссылку открыто либо используйте `--no-tunnel` и доступ по SSH.
+- Для постоянного сервера с автоматическим развёртыванием — [инструкция 04 (GHCR + CD)](04-ghcr-cd.md).

@@ -1,23 +1,23 @@
 # 04 — GHCR + SSH (CI/CD на постоянный сервер)
 
-Боевой путь для **постоянного сервера**: GitHub Actions собирает образы, пушит в
-GitHub Container Registry (GHCR) и по SSH разворачивает их через `docker compose`.
-Сложнее остальных (нужны секреты), зато полностью автоматический.
+Боевой путь для постоянного сервера: GitHub Actions собирает образы, публикует их
+в GitHub Container Registry (GHCR) и разворачивает по SSH через `docker compose`.
+Этот вариант сложнее остальных (требуются секреты), но полностью автоматизирован.
 
-> Если нужен просто быстрый разовый запуск — это, скорее всего, не твой вариант:
-> смотри [гайд 02 (Docker одной командой)](02-docker-server.md) или
-> [гайд 03 (Vast.ai)](03-vast-ai.md).
+Если требуется быстрый разовый запуск, используйте
+[инструкцию 02 (Docker одной командой)](02-docker-server.md) или
+[инструкцию 03 (Vast.ai)](03-vast-ai.md).
 
 ---
 
-## Что выкатывается
+## Состав релиза
 
-Один релиз = два образа от одного commit SHA:
+Один релиз — два образа от одного commit SHA:
 - `ghcr.io/akinara666/working-title-psd2-backend`
 - `ghcr.io/akinara666/working-title-psd2-frontend`
 
 Compose-файлы: [`deploy/compose.staging.yaml`](../deploy/compose.staging.yaml) и
-[`deploy/compose.prod.yaml`](../deploy/compose.prod.yaml). Оба монтируют
+[`deploy/compose.prod.yaml`](../deploy/compose.prod.yaml). Оба монтируют каталоги
 `backend/models` и `backend/static/outputs` из репозитория на сервере.
 
 ---
@@ -25,20 +25,20 @@ Compose-файлы: [`deploy/compose.staging.yaml`](../deploy/compose.staging.ya
 ## Структура на сервере
 
 ```text
-~/working-title-psd2
+~/F2-AI-Image-Editor
 ├── backend/
 │   ├── models/            # модели (volume)
 │   └── static/outputs/    # результаты генерации (volume)
 └── deploy/
 ```
 
-Runtime-env на сервере: `deploy/backend.staging.env` или `deploy/backend.prod.env`
-(шаблон — [`deploy/backend.env.example`](../deploy/backend.env.example)). Если
-`BACKEND_ENV_FILE` не задан, compose берёт сам example-файл.
+Runtime-переменные окружения на сервере: `deploy/backend.staging.env` или
+`deploy/backend.prod.env` (шаблон — [`deploy/backend.env.example`](../deploy/backend.env.example)).
+Если переменная `BACKEND_ENV_FILE` не задана, compose использует сам example-файл.
 
 ---
 
-## Ручная выкладка на сервере
+## Ручное развёртывание на сервере
 
 ```bash
 # staging
@@ -50,35 +50,35 @@ docker compose -f deploy/compose.prod.yaml pull
 docker compose -f deploy/compose.prod.yaml up -d
 ```
 
-Тег образа управляется через `BACKEND_IMAGE_TAG` / `FRONTEND_IMAGE_TAG`
+Тег образа задаётся переменными `BACKEND_IMAGE_TAG` / `FRONTEND_IMAGE_TAG`
 (по умолчанию `staging-latest` / `prod-latest`).
 
 ---
 
-## GPU на сервере
+## Запуск на GPU
 
-Если backend должен считать на GPU:
-1. поставь на сервер **NVIDIA Container Toolkit**;
-2. раскомментируй `gpus: all` в нужном compose-файле;
-3. при необходимости включи установку optional runtime-зависимостей в CD workflow.
+Если backend должен выполнять inference на GPU:
+1. установите NVIDIA Container Toolkit;
+2. раскомментируйте `gpus: all` в нужном compose-файле;
+3. при необходимости включите установку optional runtime-зависимостей в CD workflow.
 
 ---
 
-## Frontend API base
+## Адрес API для frontend
 
-`frontend` получает `VITE_API_BASE_URL` **на этапе сборки образа**. Для
-staging/prod передавай адрес, реально доступный браузеру пользователя (публичный
-URL backend или reverse-proxy). `http://127.0.0.1:8000` годится только для
-локального smoke.
+`frontend` получает `VITE_API_BASE_URL` на этапе сборки образа. Для staging и
+production передавайте адрес, реально доступный браузеру пользователя (публичный
+URL backend или reverse-proxy). `http://127.0.0.1:8000` подходит только для
+локального smoke-режима.
 
 ---
 
 ## GitHub Secrets
 
-Пока секреты не заданы, deploy-job в Actions становится `skipped` (не `failed`).
-А `.github/workflows/cd-validation.yml` всё равно валидирует релиз-сценарий:
-проверяет compose-файлы, собирает release-образы, поднимает staging локально в
-runner и проверяет health backend/frontend.
+Пока секреты не заданы, deploy-job в Actions получает статус `skipped`, а не
+`failed`. При этом workflow `.github/workflows/cd-validation.yml` всё равно
+валидирует сценарий релиза: проверяет compose-файлы, собирает release-образы,
+поднимает staging-стек локально в runner и проверяет состояние backend и frontend.
 
 ### Staging
 `STAGING_SSH_HOST`, `STAGING_SSH_PORT`, `STAGING_SSH_USER`, `STAGING_SSH_PRIVATE_KEY`,
@@ -92,4 +92,4 @@ runner и проверяет health backend/frontend.
 
 ---
 
-Полный разбор CD — в [`deploy/README.md`](../deploy/README.md) и `REMOTE_SERVER.md`.
+Полное описание CI/CD — в [`deploy/README.md`](../deploy/README.md) и `REMOTE_SERVER.md`.
