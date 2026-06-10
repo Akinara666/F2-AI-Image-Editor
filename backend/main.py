@@ -1970,6 +1970,9 @@ async def spot_heal(
 
 MIN_SCALE_FACTOR = 0.1
 MAX_SCALE_FACTOR = 16.0
+# Cap on the upscaled output area: prevents a large upload x16 from
+# allocating a multi-gigabyte PIL buffer and OOM-killing the process.
+MAX_UPSCALE_PIXELS = 4096 * 4096
 
 
 @app.post("/upscale")
@@ -1993,6 +1996,19 @@ async def upscale_image(
         # Placeholder implementation: Bicubic resize
         new_width = int(pil_image.width * scale_factor)
         new_height = int(pil_image.height * scale_factor)
+        if new_width < 1 or new_height < 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Upscaled image dimensions must be at least 1x1 pixel.",
+            )
+        if new_width * new_height > MAX_UPSCALE_PIXELS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Upscaled image area {new_width}x{new_height} exceeds the limit "
+                    f"of {MAX_UPSCALE_PIXELS} pixels. Reduce scale_factor or input size."
+                ),
+            )
         upscaled = pil_image.resize((new_width, new_height), Image.BICUBIC)
 
         filename = save_image_with_metadata(upscaled, {"upscale": scale_factor}, str(settings.OUTPUT_DIR))

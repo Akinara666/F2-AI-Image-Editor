@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 from PIL import Image, PngImagePlugin, ImageFilter
 from datetime import datetime
@@ -20,8 +21,9 @@ def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) 
     
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    # Use prompt snippet for filename if available
-    prompt_slug = (params.get("prompt") or "gen")[:20].replace(" ", "_").strip()
+    # Use prompt snippet for filename if available. Whitelist characters so the
+    # prompt can never inject path separators or break the /outputs URL.
+    prompt_slug = re.sub(r"[^\w-]+", "_", (params.get("prompt") or "gen")[:20]).strip("_")
     if not prompt_slug:
         prompt_slug = "gen"
     filename = f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
