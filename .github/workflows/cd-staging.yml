@@ -21,7 +21,9 @@ permissions:
 
 concurrency:
   group: cd-staging
-  cancel-in-progress: true
+  # Не отменяем деплой посреди docker compose up: обрыв оставляет сервер
+  # в полуобновлённом состоянии. Новый запуск дождётся завершения текущего.
+  cancel-in-progress: false
 
 jobs:
   preflight:
