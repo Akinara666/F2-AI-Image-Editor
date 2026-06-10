@@ -1,6 +1,13 @@
 import { fabric } from 'fabric';
 import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
 
+// Чисто экранные оверлеи: никогда не экспортируются и сортируются как FRAME.
+export const UI_OVERLAY_ROLES = [
+    'quick-select-overlay',
+    'selection-overlay',
+    'crop-overlay'
+];
+
 const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.FRAME_HIT_AREA]: -1,
     [CANVAS_OBJECT_ROLES.BASE]: 0,
@@ -38,7 +45,7 @@ const getRole = (object, genFrame) => {
     if (object.editorRole === CANVAS_OBJECT_ROLES.FRAME_HIT_AREA) {
         return CANVAS_OBJECT_ROLES.FRAME_HIT_AREA;
     }
-    if (object.editorRole === 'quick-select-overlay') {
+    if (UI_OVERLAY_ROLES.includes(object.editorRole)) {
         return CANVAS_OBJECT_ROLES.FRAME;
     }
     if (object.isCandidate || object.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) {
@@ -55,7 +62,7 @@ const getRole = (object, genFrame) => {
 
 const isUiOnlyObject = (object) => (
     object?.excludeFromExport === true
-    || object?.editorRole === 'quick-select-overlay'
+    || UI_OVERLAY_ROLES.includes(object?.editorRole)
 );
 
 const getObjectBounds = (object) => {

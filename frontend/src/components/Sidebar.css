@@ -306,6 +306,23 @@
     flex-wrap: wrap;
 }
 
+.sidebar__tool-group {
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__tool-group .sidebar__tool-bar {
+    margin-bottom: 0;
+}
+
+.sidebar__tool-group-label {
+    display: block;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--spacing-xs);
+}
+
 @keyframes sidebarPromptSpin {
     from {
         transform: rotate(0deg);

@@ -16,7 +16,10 @@ describe('editor helpers', () => {
       height: 180,
       scaleX: 1.5,
       scaleY: 0.75,
-      angle: 30
+      angle: 30,
+      flipX: true,
+      flipY: false,
+      stroke: '#fff'
     });
 
     expect(snapshot).toEqual({
@@ -25,7 +28,10 @@ describe('editor helpers', () => {
       width: 320,
       height: 180,
       scaleX: 1.5,
-      scaleY: 0.75
+      scaleY: 0.75,
+      angle: 30,
+      flipX: true,
+      flipY: false
     });
   });
 
@@ -36,11 +42,17 @@ describe('editor helpers', () => {
       width: 200,
       height: 100,
       scaleX: 1,
-      scaleY: 1
+      scaleY: 1,
+      angle: 0,
+      flipX: false,
+      flipY: false
     };
 
     expect(areTransformsEqual(base, { ...base })).toBe(true);
     expect(areTransformsEqual(base, { ...base, scaleY: 2 })).toBe(false);
+    expect(areTransformsEqual(base, { ...base, angle: 90 })).toBe(false);
+    expect(areTransformsEqual(base, { ...base, flipX: true })).toBe(false);
+    expect(areTransformsEqual(base, { ...base, flipY: true })).toBe(false);
   });
 
   it('сериализует визуальное состояние рамки и копирует dash-массив', () => {

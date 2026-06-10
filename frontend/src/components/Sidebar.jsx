@@ -7,6 +7,7 @@ import {
     parseGenerationNumericParam
 } from '../constants';
 import ModelManager from './ModelManager';
+import { TOOL_GROUPS } from './editor/toolModes';
 import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
@@ -24,6 +25,132 @@ const LAYER_KIND_BG = {
     Sketch: 'linear-gradient(135deg, rgba(255, 174, 66, 0.32), rgba(131, 78, 44, 0.72))',
     Mask: 'linear-gradient(135deg, rgba(140, 150, 170, 0.28), rgba(58, 63, 90, 0.58))'
 };
+const TOOL_ICONS = {
+    none: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
+            <path d="M13 13l6 6" />
+        </svg>
+    ),
+    hand: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 11V6a2 2 0 0 0-4 0v5" />
+            <path d="M14 10V4a2 2 0 0 0-4 0v6" />
+            <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
+            <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+        </svg>
+    ),
+    marquee_rect: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 3">
+            <rect x="4" y="4" width="16" height="16" rx="1" />
+        </svg>
+    ),
+    marquee_ellipse: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="3 3">
+            <ellipse cx="12" cy="12" rx="8" ry="8" />
+        </svg>
+    ),
+    lasso: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 22a5 5 0 0 1-2-4" />
+            <path d="M3.3 14A6.8 6.8 0 0 1 2 10c0-4.4 4.5-8 10-8s10 3.6 10 8-4.5 8-10 8a12 12 0 0 1-5-1" />
+            <path d="M5 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+        </svg>
+    ),
+    magic_wand: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m21 3-9.5 9.5" />
+            <path d="m3 21 6-6" />
+            <path d="M5 3v4" />
+            <path d="M3 5h4" />
+            <path d="M18 14v4" />
+            <path d="M16 16h4" />
+        </svg>
+    ),
+    quick_select: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 5h6" />
+            <path d="M3 12h4" />
+            <path d="M3 19h8" />
+            <rect x="12" y="7" width="9" height="10" rx="2" />
+        </svg>
+    ),
+    sketch: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+        </svg>
+    ),
+    text: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 7V4h16v3" />
+            <path d="M12 4v16" />
+            <path d="M9 20h6" />
+        </svg>
+    ),
+    shape: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="10" height="10" rx="1" />
+            <circle cx="16" cy="16" r="5" />
+        </svg>
+    ),
+    fill: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+            <path d="m5 2 5 5" />
+            <path d="M2 13h15" />
+            <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" />
+        </svg>
+    ),
+    gradient: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M7 3v18" strokeOpacity="0.9" />
+            <path d="M12 3v18" strokeOpacity="0.55" />
+            <path d="M17 3v18" strokeOpacity="0.25" />
+        </svg>
+    ),
+    eyedropper: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m2 22 1-1h3l9-9" />
+            <path d="M3 21v-3l9-9" />
+            <path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" />
+        </svg>
+    ),
+    eraser: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+            <path d="M22 21H7" />
+            <path d="m5 11 9 9" />
+        </svg>
+    ),
+    mask: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        </svg>
+    ),
+    spot_heal: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v18" />
+            <path d="M3 12h18" />
+            <path d="m18 6 1.5 1.5L22 5" />
+        </svg>
+    ),
+    clone_stamp: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="4" y="9" width="16" height="10" rx="2" />
+            <path d="M9 9V6a3 3 0 0 1 6 0v3" />
+            <path d="M12 14h.01" />
+        </svg>
+    ),
+    crop: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+            <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+        </svg>
+    )
+};
+
 const getPromptTransformStageLabel = (elapsedMs) => {
     if (elapsedMs < 1200) {
         return 'Отправляем запрос в AI-модуль';
@@ -439,110 +566,28 @@ const Sidebar = ({
                     <>
                         <div className="input-group">
                             <h3 className="sidebar__section-title">Инструменты</h3>
-                            <div className="sidebar__tool-bar">
-                                {[
-                                    {
-                                        id: 'none', label: 'Курсор', color: 'var(--primary)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
-                                                <path d="M13 13l6 6" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'hand', label: 'Рука', color: 'var(--accent)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M18 11V6a2 2 0 0 0-4 0v5" />
-                                                <path d="M14 10V4a2 2 0 0 0-4 0v6" />
-                                                <path d="M10 10.5V6a2 2 0 0 0-4 0v8" />
-                                                <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'sketch', label: 'Скетч', color: 'var(--primary)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'mask', label: 'Маска', color: 'var(--danger)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <circle cx="12" cy="12" r="10" />
-                                                <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'quick_select', label: 'Select (W)', color: 'var(--primary)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M3 5h6" />
-                                                <path d="M3 12h4" />
-                                                <path d="M3 19h8" />
-                                                <rect x="12" y="7" width="9" height="10" rx="2" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'spot_heal', label: 'Heal (J)', color: 'var(--success)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M12 3v18" />
-                                                <path d="M3 12h18" />
-                                                <path d="m18 6 1.5 1.5L22 5" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'clone_stamp', label: 'Штамп', color: 'var(--accent)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <rect x="4" y="9" width="16" height="10" rx="2" />
-                                                <path d="M9 9V6a3 3 0 0 1 6 0v3" />
-                                                <path d="M12 14h.01" />
-                                            </svg>
-                                        )
-                                    },
-                                    {
-                                        id: 'eraser', label: 'Ластик', color: 'var(--warning)', icon: (
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
-                                                <path d="M22 21H7" />
-                                                <path d="m5 11 9 9" />
-                                            </svg>
-                                        )
-                                    },
-                                ].map(tool => (
-                                    <button
-                                        key={tool.id}
-                                        className={`btn sidebar__tool-btn ${brushMode === tool.id ? 'sidebar__tool-btn--active' : ''}`}
-                                        onClick={() => setBrushMode(tool.id)}
-                                        style={{
-                                            background: brushMode === tool.id ? tool.color : 'var(--bg-hover)',
-                                            color: brushMode === tool.id ? 'white' : 'var(--text-muted)'
-                                        }}
-                                        title={
-                                            tool.id === 'clone_stamp'
-                                                ? 'Штамп (S)'
-                                                : (
-                                                    tool.id === 'spot_heal'
-                                                        ? 'Spot Healing Brush / Точечная восстановительная кисть (J)'
-                                                        : (
-                                                            tool.id === 'quick_select'
-                                                                ? 'Быстрое выделение (W)'
-                                                                : (
-                                                                    tool.id === 'eraser'
-                                                                        ? 'Ластик'
-                                                                        : tool.label
-                                                                )
-                                                        )
-                                                )
-                                        }
-                                    >
-                                        {tool.icon}
-                                        <span className="sidebar__tool-label">{tool.label}</span>
-                                    </button>
-                                ))}
-                            </div>
+                            {TOOL_GROUPS.map((group) => (
+                                <div key={group.id} className="sidebar__tool-group">
+                                    <span className="sidebar__tool-group-label">{group.label}</span>
+                                    <div className="sidebar__tool-bar">
+                                        {group.tools.map((tool) => (
+                                            <button
+                                                key={tool.id}
+                                                className={`btn sidebar__tool-btn ${brushMode === tool.id ? 'sidebar__tool-btn--active' : ''}`}
+                                                onClick={() => setBrushMode(tool.id)}
+                                                style={{
+                                                    background: brushMode === tool.id ? tool.color : 'var(--bg-hover)',
+                                                    color: brushMode === tool.id ? 'white' : 'var(--text-muted)'
+                                                }}
+                                                title={tool.title}
+                                            >
+                                                {TOOL_ICONS[tool.id]}
+                                                <span className="sidebar__tool-label">{tool.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
 
                         {brushMode !== 'none' && (

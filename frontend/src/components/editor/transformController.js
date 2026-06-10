@@ -1,4 +1,5 @@
 import { areTransformsEqual, snapshotObjectTransform } from './helpers';
+import { TOOL_MODES, isAltModifierToolMode, getCursorForToolMode } from './toolModes';
 
 const SNAP_DEADZONE = 2;
 
@@ -11,6 +12,9 @@ const createTransformHelpers = (gridSize) => {
         }
         if (typeof action === 'string' && action.startsWith('scale')) {
             return 'scaling';
+        }
+        if (action === 'rotate') {
+            return 'rotating';
         }
         return null;
     };
@@ -201,8 +205,8 @@ export const setupCanvasViewportAndTransform = ({
     const handleMouseDown = (opt) => {
         const evt = opt.e;
 
-        const isCloneStampAltPick = brushModeRef.current === 'clone_stamp' && evt.altKey === true;
-        if (!isCloneStampAltPick && (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning)) {
+        const isToolAltModifier = isAltModifierToolMode(brushModeRef.current) && evt.altKey === true;
+        if (!isToolAltModifier && (evt.altKey === true || brushModeRef.current === TOOL_MODES.HAND || canvas.isSpacePanning)) {
             isDragging = true;
             canvas.selection = false;
             lastPosX = evt.clientX;
@@ -229,7 +233,7 @@ export const setupCanvasViewportAndTransform = ({
         }
         isDragging = false;
         transformStart = null;
-        canvas.defaultCursor = brushModeRef.current === 'hand' ? 'grab' : 'default';
+        canvas.defaultCursor = getCursorForToolMode(brushModeRef.current);
     };
 
     const handleObjectMoving = (event) => {
