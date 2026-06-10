@@ -36,8 +36,10 @@ except ModuleNotFoundError:
 
 from pydantic import BaseModel
 try:
+    # ImportError (not just ModuleNotFoundError): older compel releases lack
+    # these wrappers, and a failed name import must not crash the whole app.
     from compel import CompelForSD, CompelForSDXL
-except ModuleNotFoundError:
+except ImportError:
     CompelForSD = None
     CompelForSDXL = None
 
@@ -146,9 +148,11 @@ app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="out
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global Error: {exc}", exc_info=True)
+    # Full details stay in the server log; raw exception text can leak
+    # filesystem paths and environment internals to the client.
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc), "type": type(exc).__name__}
+        content={"detail": "Internal server error", "type": type(exc).__name__}
     )
 
 # --- Presets & configuration ---
@@ -655,22 +659,21 @@ def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Op
     negative_prompt = negative_prompt or ""
 
     compel = _get_compel_for_pipe(pipe, model_family)
+    # CompelForSD/SDXL return a LabelledConditioning dataclass (not a tuple).
+    # Encoding positive and negative prompts in one call also lets compel pad
+    # both embeddings to the same length (separate calls can mismatch on long prompts).
+    conditioning = compel(prompt, negative_prompt=negative_prompt)
     if model_family == "sdxl":
-        prompt_embeds, pooled_prompt_embeds = compel(prompt)
-        negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
         return {
-            "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "negative_prompt_embeds": negative_prompt_embeds,
-            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+            "prompt_embeds": conditioning.embeds,
+            "pooled_prompt_embeds": conditioning.pooled_embeds,
+            "negative_prompt_embeds": conditioning.negative_embeds,
+            "negative_pooled_prompt_embeds": conditioning.negative_pooled_embeds,
         }
-    else:
-        prompt_embeds = compel(prompt)
-        negative_prompt_embeds = compel(negative_prompt)
-        return {
-            "prompt_embeds": prompt_embeds,
-            "negative_prompt_embeds": negative_prompt_embeds,
-        }
+    return {
+        "prompt_embeds": conditioning.embeds,
+        "negative_prompt_embeds": conditioning.negative_embeds,
+    }
 
 
 async def _read_upload_image(upload: UploadFile, *, mode: str) -> Image.Image:
@@ -1339,24 +1342,37 @@ async def generate_image(
                 seed = random.randint(0, 2**32 - 1)
 
             generator = torch.Generator(device=model_manager.device).manual_seed(seed)
-            try:
-                # Use Compel to process the prompts with A1111 weights
-                embeds_kwargs = _process_prompt_with_compel(
-                    pipe,
-                    final_prompt,
-                    final_negative_prompt,
-                    model_family
+            if diffusers_clip_skip is not None:
+                # compel has no clip-skip support, so honoring CLIP_SKIP>1 requires
+                # the plain diffusers parser (A1111 prompt weights are unavailable).
+                logger.info(
+                    "CLIP_SKIP=%s configured; using diffusers prompt parser instead of Compel.",
+                    configured_clip_skip,
                 )
-                prompt_call_kwargs = {
-                    **embeds_kwargs
-                }
-            except Exception as e:
-                logger.warning(f"Compel prompt processing failed: {e}. Falling back to default diffusers parser.")
                 prompt_call_kwargs = {
                     "prompt": final_prompt,
                     "negative_prompt": final_negative_prompt,
                     "clip_skip": diffusers_clip_skip,
                 }
+            else:
+                try:
+                    # Use Compel to process the prompts with A1111 weights
+                    embeds_kwargs = _process_prompt_with_compel(
+                        pipe,
+                        final_prompt,
+                        final_negative_prompt,
+                        model_family
+                    )
+                    prompt_call_kwargs = {
+                        **embeds_kwargs
+                    }
+                except Exception as e:
+                    logger.warning(f"Compel prompt processing failed: {e}. Falling back to default diffusers parser.")
+                    prompt_call_kwargs = {
+                        "prompt": final_prompt,
+                        "negative_prompt": final_negative_prompt,
+                        "clip_skip": diffusers_clip_skip,
+                    }
 
             result_image = None
             logger.info(
@@ -1561,7 +1577,8 @@ async def generate_image(
             }
             
     except HTTPException as e:
-        if 'request_id' in locals() and request_id:
+        # request_id is a Form parameter, so it is always bound here.
+        if request_id:
             generation_preview_store.mark(
                 request_id,
                 status="cancelled" if e.status_code == 499 else "error",

@@ -10,4 +10,5 @@ python-multipart>=0.0.6
 numpy>=1.24.0
 aiofiles>=23.0.0
 python-dotenv>=1.0.0
-compel>=2.0.2
+# >=2.3.1: CompelForSD/CompelForSDXL convenience wrappers (used in main.py)
+compel>=2.3.1
