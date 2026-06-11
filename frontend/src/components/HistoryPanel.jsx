@@ -51,10 +51,20 @@ const HistoryPanel = ({
                     <div
                         key={item.id}
                         className={`history-panel__card ${isBusy ? 'history-panel__card--disabled' : ''}`}
+                        role="button"
+                        tabIndex={isBusy ? -1 : 0}
+                        aria-label={`Восстановить на холст: ${item.meta?.prompt || `сид ${item.meta?.seed}`}`}
                         onClick={() => {
                             if (!isBusy) {
                                 void onSelect(item);
                             }
+                        }}
+                        onKeyDown={(event) => {
+                            if (isBusy || (event.key !== 'Enter' && event.key !== ' ')) {
+                                return;
+                            }
+                            event.preventDefault();
+                            void onSelect(item);
                         }}
                         aria-disabled={isBusy}
                         style={{ animationDelay: `${index * 0.05}s`, animation: `fadeIn 0.3s ease ${index * 0.05}s backwards` }}

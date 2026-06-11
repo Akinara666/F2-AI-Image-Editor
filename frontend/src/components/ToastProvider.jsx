@@ -54,13 +54,18 @@ export const ToastProvider = ({ children }) => {
     return (
         <ToastContext.Provider value={{ showSuccess, showError, showInfo }}>
             {children}
-            <div className="toast-container">
+            <div className="toast-container" aria-live="polite" aria-label="Уведомления">
                 {toasts.map(toast => (
-                    <div key={toast.id} className={`toast toast--${toast.type}`}>
+                    <div
+                        key={toast.id}
+                        className={`toast toast--${toast.type}`}
+                        role={toast.type === 'error' ? 'alert' : 'status'}
+                    >
                         <span className="toast__message">{toast.message}</span>
                         <button
                             className="toast__close"
                             onClick={() => removeToast(toast.id)}
+                            aria-label="Закрыть уведомление"
                         >
                             ✕
                         </button>
