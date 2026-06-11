@@ -173,6 +173,28 @@ const TOOL_ICONS = {
     )
 };
 
+// Слайдер с заголовком и значением: имя слева, значение справа, ползунок
+// на всю ширину, опциональный элемент (свотч/кнопка) справа от ползунка.
+const SliderControl = ({ name, value, suffix = '', min, max, onChange, trailing = null }) => (
+    <div className="sidebar__control">
+        <div className="sidebar__control-header">
+            <span className="sidebar__control-name">{name}</span>
+            <span className="sidebar__control-value">{value}{suffix}</span>
+        </div>
+        <div className="sidebar__control-row">
+            <input
+                type="range"
+                className="sidebar__range sidebar__range--primary"
+                min={min}
+                max={max}
+                value={value}
+                onChange={(e) => onChange(parseInt(e.target.value, 10))}
+            />
+            {trailing}
+        </div>
+    </div>
+);
+
 const getPromptTransformStageLabel = (elapsedMs) => {
     if (elapsedMs < 1200) {
         return 'Отправляем запрос в AI-модуль';
@@ -637,7 +659,7 @@ const Sidebar = ({
                         </div>
 
                         {brushMode === 'none' && (
-                            <>
+                            <div className="sidebar__tool-panel">
                                 <div className="sidebar__actions">
                                     <button
                                         className="btn btn-secondary sidebar__action-btn"
@@ -657,60 +679,66 @@ const Sidebar = ({
                                 <small className="sidebar__hint">
                                     Слой можно двигать, масштабировать и вращать за круглый маркер.
                                 </small>
-                            </>
+                            </div>
                         )}
 
                         {brushMode !== 'none' && (
                             <>
                                 {BRUSH_SIZE_TOOL_MODES.includes(brushMode) && (
-                                    <div className="input-group sidebar__brush-options">
-                                        <div className="sidebar__brush-row">
-                                            <label className="input-label sidebar__brush-label">Размер: {brushSize}</label>
-                                            <input type="range" className="sidebar__range sidebar__range--neutral" min="1" max="100" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} style={{ flex: 1 }} />
-                                            {brushMode === 'sketch' && (
-                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                            )}
-                                        </div>
+                                    <div className="sidebar__tool-panel">
+                                        <SliderControl
+                                            name="Размер кисти"
+                                            value={brushSize}
+                                            suffix=" px"
+                                            min={1}
+                                            max={100}
+                                            onChange={setBrushSize}
+                                            trailing={brushMode === 'sketch' ? (
+                                                <input
+                                                    type="color"
+                                                    className="sidebar__color-picker"
+                                                    value={brushColor}
+                                                    onChange={(e) => setBrushColor(e.target.value)}
+                                                    title="Цвет кисти"
+                                                />
+                                            ) : null}
+                                        />
+                                        {brushMode === 'clone_stamp' && (
+                                            <small className="sidebar__hint">
+                                                Зажми Alt и кликни по источнику, затем рисуй в зоне назначения.
+                                            </small>
+                                        )}
+                                        {brushMode === 'spot_heal' && (
+                                            <small className="sidebar__hint">
+                                                Кликни по мелкому дефекту — он будет закрашен локальной ретушью.
+                                            </small>
+                                        )}
                                     </div>
                                 )}
                                 {SELECTION_TOOL_MODES.includes(brushMode) && (
-                                    <>
-                                        <small className="sidebar__hint">
-                                            {brushMode === TOOL_MODES.MAGIC_WAND
-                                                ? 'Клик — выделить похожие пиксели. Shift — добавить, Alt — вычесть.'
-                                                : 'Обведи область. Shift — добавить к выделению, Alt — вычесть.'}
-                                        </small>
+                                    <div className="sidebar__tool-panel">
                                         {brushMode === TOOL_MODES.MAGIC_WAND && (
-                                            <div className="input-group">
-                                                <label className="input-label">Допуск: {wandTolerance}</label>
-                                                <input
-                                                    type="range"
-                                                    className="sidebar__range sidebar__range--neutral"
-                                                    min="0"
-                                                    max="128"
-                                                    value={wandTolerance}
-                                                    onChange={(e) => {
-                                                        const value = parseInt(e.target.value, 10);
-                                                        setWandTolerance(value);
-                                                        editorRef?.current?.setMagicWandTolerance(value);
-                                                    }}
-                                                />
-                                            </div>
+                                            <SliderControl
+                                                name="Допуск"
+                                                value={wandTolerance}
+                                                min={0}
+                                                max={128}
+                                                onChange={(value) => {
+                                                    setWandTolerance(value);
+                                                    editorRef?.current?.setMagicWandTolerance(value);
+                                                }}
+                                            />
                                         )}
-                                        <div className="input-group">
-                                            <div className="sidebar__brush-row">
-                                                <label className="input-label sidebar__brush-label">Растушёвка: {featherRadius}px</label>
-                                                <input
-                                                    type="range"
-                                                    className="sidebar__range sidebar__range--neutral"
-                                                    min="0"
-                                                    max="64"
-                                                    value={featherRadius}
-                                                    onChange={(e) => setFeatherRadius(parseInt(e.target.value, 10))}
-                                                    style={{ flex: 1 }}
-                                                />
+                                        <SliderControl
+                                            name="Растушёвка"
+                                            value={featherRadius}
+                                            suffix=" px"
+                                            min={0}
+                                            max={64}
+                                            onChange={setFeatherRadius}
+                                            trailing={(
                                                 <button
-                                                    className="btn btn-secondary sidebar__action-btn"
+                                                    className="btn btn-secondary sidebar__action-btn sidebar__inline-btn"
                                                     onClick={() => {
                                                         if (featherRadius <= 0) return;
                                                         const applied = editorRef?.current?.featherSelection(featherRadius);
@@ -718,11 +746,12 @@ const Sidebar = ({
                                                             showToastInfo?.('Сначала создай выделение.');
                                                         }
                                                     }}
+                                                    title="Растушевать активное выделение"
                                                 >
                                                     Применить
                                                 </button>
-                                            </div>
-                                        </div>
+                                            )}
+                                        />
                                         <div className="sidebar__actions">
                                             <button
                                                 className="btn btn-secondary sidebar__action-btn"
@@ -753,45 +782,53 @@ const Sidebar = ({
                                                 В маску инпейнта
                                             </button>
                                         </div>
-                                    </>
+                                        <small className="sidebar__hint">
+                                            {brushMode === TOOL_MODES.MAGIC_WAND
+                                                ? 'Клик — выделить похожие пиксели. Shift — добавить, Alt — вычесть.'
+                                                : 'Обведи область. Shift — добавить к выделению, Alt — вычесть.'}
+                                        </small>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.TEXT && (
-                                    <>
-                                        <div className="input-group">
-                                            <div className="sidebar__brush-row">
-                                                <label className="input-label sidebar__brush-label">Шрифт: {textFontSize}px</label>
+                                    <div className="sidebar__tool-panel">
+                                        <SliderControl
+                                            name="Размер шрифта"
+                                            value={textFontSize}
+                                            suffix=" px"
+                                            min={8}
+                                            max={200}
+                                            onChange={(value) => {
+                                                setTextFontSize(value);
+                                                editorRef?.current?.setTextOptions({ fontSize: value });
+                                            }}
+                                            trailing={(
                                                 <input
-                                                    type="range"
-                                                    className="sidebar__range sidebar__range--neutral"
-                                                    min="8"
-                                                    max="200"
-                                                    value={textFontSize}
-                                                    onChange={(e) => {
-                                                        const value = parseInt(e.target.value, 10);
-                                                        setTextFontSize(value);
-                                                        editorRef?.current?.setTextOptions({ fontSize: value });
-                                                    }}
-                                                    style={{ flex: 1 }}
+                                                    type="color"
+                                                    className="sidebar__color-picker"
+                                                    value={brushColor}
+                                                    onChange={(e) => setBrushColor(e.target.value)}
+                                                    title="Цвет текста"
                                                 />
-                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                            </div>
-                                        </div>
+                                            )}
+                                        />
                                         <small className="sidebar__hint">
                                             Клик по холсту — добавить текст. Клик вне текста завершает ввод.
                                         </small>
-                                    </>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.SHAPE && (
-                                    <>
-                                        <div className="sidebar__actions">
+                                    <div className="sidebar__tool-panel">
+                                        <div className="sidebar__segmented" role="radiogroup" aria-label="Тип фигуры">
                                             {[
-                                                { id: 'rect', label: 'Прямоуг.' },
+                                                { id: 'rect', label: 'Прямоугольник' },
                                                 { id: 'ellipse', label: 'Эллипс' },
                                                 { id: 'line', label: 'Линия' }
                                             ].map((kind) => (
                                                 <button
                                                     key={kind.id}
-                                                    className={`btn btn-secondary sidebar__action-btn ${shapeKind === kind.id ? 'sidebar__tool-btn--active' : ''}`}
+                                                    type="button"
+                                                    className={`sidebar__segmented-btn ${shapeKind === kind.id ? 'sidebar__segmented-btn--active' : ''}`}
+                                                    aria-pressed={shapeKind === kind.id}
                                                     onClick={() => {
                                                         setShapeKind(kind.id);
                                                         editorRef?.current?.setShapeOptions({ kind: kind.id });
@@ -801,87 +838,96 @@ const Sidebar = ({
                                                 </button>
                                             ))}
                                         </div>
-                                        <div className="input-group">
-                                            <div className="sidebar__brush-row">
-                                                <label className="input-label sidebar__brush-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={shapeOutlineOnly}
-                                                        onChange={(e) => {
-                                                            setShapeOutlineOnly(e.target.checked);
-                                                            editorRef?.current?.setShapeOptions({ outlineOnly: e.target.checked });
-                                                        }}
-                                                    />
-                                                    Только контур
-                                                </label>
-                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                            </div>
-                                        </div>
-                                        {(shapeOutlineOnly || shapeKind === 'line') && (
-                                            <div className="input-group">
-                                                <label className="input-label">Толщина: {shapeStrokeWidth}px</label>
+                                        <div className="sidebar__control-row">
+                                            <label className="sidebar__checkbox" style={{ flex: 1 }}>
                                                 <input
-                                                    type="range"
-                                                    className="sidebar__range sidebar__range--neutral"
-                                                    min="1"
-                                                    max="50"
-                                                    value={shapeStrokeWidth}
+                                                    type="checkbox"
+                                                    checked={shapeOutlineOnly}
                                                     onChange={(e) => {
-                                                        const value = parseInt(e.target.value, 10);
-                                                        setShapeStrokeWidth(value);
-                                                        editorRef?.current?.setShapeOptions({ strokeWidth: value });
+                                                        setShapeOutlineOnly(e.target.checked);
+                                                        editorRef?.current?.setShapeOptions({ outlineOnly: e.target.checked });
                                                     }}
                                                 />
-                                            </div>
+                                                Только контур
+                                            </label>
+                                            <input
+                                                type="color"
+                                                className="sidebar__color-picker"
+                                                value={brushColor}
+                                                onChange={(e) => setBrushColor(e.target.value)}
+                                                title="Цвет фигуры"
+                                            />
+                                        </div>
+                                        {(shapeOutlineOnly || shapeKind === 'line') && (
+                                            <SliderControl
+                                                name="Толщина линии"
+                                                value={shapeStrokeWidth}
+                                                suffix=" px"
+                                                min={1}
+                                                max={50}
+                                                onChange={(value) => {
+                                                    setShapeStrokeWidth(value);
+                                                    editorRef?.current?.setShapeOptions({ strokeWidth: value });
+                                                }}
+                                            />
                                         )}
                                         <small className="sidebar__hint">
                                             Протяни по холсту, чтобы нарисовать фигуру. Редактируется в режиме курсора.
                                         </small>
-                                    </>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.FILL && (
-                                    <>
-                                        <div className="input-group">
-                                            <div className="sidebar__brush-row">
-                                                <label className="input-label sidebar__brush-label">Допуск: {fillTolerance}</label>
+                                    <div className="sidebar__tool-panel">
+                                        <SliderControl
+                                            name="Допуск"
+                                            value={fillTolerance}
+                                            min={0}
+                                            max={128}
+                                            onChange={(value) => {
+                                                setFillTolerance(value);
+                                                editorRef?.current?.setFillTolerance(value);
+                                            }}
+                                            trailing={(
                                                 <input
-                                                    type="range"
-                                                    className="sidebar__range sidebar__range--neutral"
-                                                    min="0"
-                                                    max="128"
-                                                    value={fillTolerance}
-                                                    onChange={(e) => {
-                                                        const value = parseInt(e.target.value, 10);
-                                                        setFillTolerance(value);
-                                                        editorRef?.current?.setFillTolerance(value);
-                                                    }}
-                                                    style={{ flex: 1 }}
+                                                    type="color"
+                                                    className="sidebar__color-picker"
+                                                    value={brushColor}
+                                                    onChange={(e) => setBrushColor(e.target.value)}
+                                                    title="Цвет заливки"
                                                 />
-                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
-                                            </div>
-                                        </div>
+                                            )}
+                                        />
                                         <small className="sidebar__hint">
                                             Клик внутри выделения зальёт его; без выделения работает как «ведро» по похожим пикселям.
                                         </small>
-                                    </>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.GRADIENT && (
-                                    <>
-                                        <div className="input-group">
-                                            <div className="sidebar__brush-row">
-                                                <label className="input-label sidebar__brush-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={gradientToTransparent}
-                                                        onChange={(e) => {
-                                                            setGradientToTransparent(e.target.checked);
-                                                            editorRef?.current?.setGradientOptions({ toTransparent: e.target.checked });
-                                                        }}
-                                                    />
-                                                    В прозрачность
-                                                </label>
-                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} title="Начальный цвет" />
-                                                {!gradientToTransparent && (
+                                    <div className="sidebar__tool-panel">
+                                        <div className="sidebar__control-row">
+                                            <label className="sidebar__checkbox" style={{ flex: 1 }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={gradientToTransparent}
+                                                    onChange={(e) => {
+                                                        setGradientToTransparent(e.target.checked);
+                                                        editorRef?.current?.setGradientOptions({ toTransparent: e.target.checked });
+                                                    }}
+                                                />
+                                                В прозрачность
+                                            </label>
+                                            <div className="sidebar__swatch-field">
+                                                <input
+                                                    type="color"
+                                                    className="sidebar__color-picker"
+                                                    value={brushColor}
+                                                    onChange={(e) => setBrushColor(e.target.value)}
+                                                    title="Начальный цвет"
+                                                />
+                                                <span className="sidebar__swatch-label">от</span>
+                                            </div>
+                                            {!gradientToTransparent && (
+                                                <div className="sidebar__swatch-field">
                                                     <input
                                                         type="color"
                                                         className="sidebar__color-picker"
@@ -892,21 +938,24 @@ const Sidebar = ({
                                                         }}
                                                         title="Конечный цвет"
                                                     />
-                                                )}
-                                            </div>
+                                                    <span className="sidebar__swatch-label">до</span>
+                                                </div>
+                                            )}
                                         </div>
                                         <small className="sidebar__hint">
                                             Протяни линию направления градиента по активному слою.
                                         </small>
-                                    </>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.EYEDROPPER && (
-                                    <small className="sidebar__hint">
-                                        Клик по холсту — взять цвет в кисть.
-                                    </small>
+                                    <div className="sidebar__tool-panel">
+                                        <small className="sidebar__hint">
+                                            Клик по холсту — взять цвет в кисть.
+                                        </small>
+                                    </div>
                                 )}
                                 {brushMode === TOOL_MODES.CROP && (
-                                    <>
+                                    <div className="sidebar__tool-panel">
                                         <small className="sidebar__hint">
                                             Протяни рамку по холсту. Enter — применить, Esc — отмена. Контент за рамкой сохраняется.
                                         </small>
@@ -1029,23 +1078,10 @@ const Sidebar = ({
                                             </div>
                                             <small className="sidebar__hint">Слои остаются на месте, рамка растёт/сжимается от якоря.</small>
                                         </div>
-                                    </>
-                                )}
-                                {brushMode === 'clone_stamp' && (
-                                    <small className="sidebar__hint">
-                                        Штамп: зажми Alt и кликни по источнику, затем рисуй в зоне назначения.
-                                    </small>
-                                )}
-                                {brushMode === 'spot_heal' && (
-                                    <small className="sidebar__hint">
-                                        Точечная кисть (J): закрась мелкий дефект маской и запусти генерацию для локальной ретуши.
-                                    </small>
+                                    </div>
                                 )}
                                 {brushMode === 'quick_select' && (
-                                    <>
-                                        <small className="sidebar__hint">
-                                            Quick Select (W): зажми ЛКМ и обведи контур объекта, затем скопируй и вставь рядом.
-                                        </small>
+                                    <div className="sidebar__tool-panel">
                                         <div className="sidebar__actions">
                                             <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionCopy}>
                                                 Копировать
@@ -1059,7 +1095,10 @@ const Sidebar = ({
                                                 Перегенерировать выделение
                                             </button>
                                         </div>
-                                    </>
+                                        <small className="sidebar__hint">
+                                            Зажми ЛКМ и обведи контур объекта, затем скопируй и вставь рядом.
+                                        </small>
+                                    </div>
                                 )}
                             </>
                         )}
