@@ -314,6 +314,20 @@
     margin-bottom: 0;
 }
 
+.sidebar__adjustments {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__adjustments .sidebar__action-btn {
+    font-size: var(--font-xs);
+    padding: 6px 4px;
+    white-space: normal;
+    line-height: 1.2;
+}
+
 .sidebar__tool-group-label {
     display: block;
     font-size: var(--font-xs);

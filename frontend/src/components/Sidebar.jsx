@@ -8,11 +8,31 @@ import {
 } from '../constants';
 import ModelManager from './ModelManager';
 import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
+import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
+import { ADJUSTMENT_LABELS } from './AdjustmentsDialog';
 import './Sidebar.css';
 
 const DIRECT_NUMBER_FIELDS = ['cfg', 'denoising_strength', 'mask_blur', 'mask_padding'];
 // Режимы, где есть кисть и уместен слайдер размера.
 const BRUSH_SIZE_TOOL_MODES = [...DRAWING_TOOL_MODES, TOOL_MODES.SPOT_HEAL, TOOL_MODES.CLONE_STAMP];
+
+const ADJUSTMENT_BUTTONS = [
+    ADJUSTMENT_TYPES.BRIGHTNESS_CONTRAST,
+    ADJUSTMENT_TYPES.LEVELS,
+    ADJUSTMENT_TYPES.CURVES,
+    ADJUSTMENT_TYPES.HUE_SATURATION,
+    ADJUSTMENT_TYPES.INVERT,
+    ADJUSTMENT_TYPES.GAUSSIAN_BLUR,
+    ADJUSTMENT_TYPES.SHARPEN,
+    ADJUSTMENT_TYPES.NOISE
+];
+
+const ADJUSTMENT_FAIL_MESSAGES = {
+    candidate: 'Сначала прими или отмени сгенерированного кандидата.',
+    busy: 'Сначала закрой открытую коррекцию.',
+    'no-target': 'Нет растрового слоя для коррекции.',
+    'not-ready': 'Холст ещё не готов.'
+};
 const TEXT_NUMBER_FIELDS = ['seed', 'steps'];
 const LAYER_BLEND_MODES = [
     { id: 'normal', label: 'Обычный' },
@@ -721,6 +741,30 @@ const Sidebar = ({
                                 )}
                             </>
                         )}
+
+                        <div className="input-group">
+                            <h4 className="sidebar__layers-title">Коррекция</h4>
+                            <div className="sidebar__adjustments">
+                                {ADJUSTMENT_BUTTONS.map((type) => (
+                                    <button
+                                        key={type}
+                                        type="button"
+                                        className="btn btn-secondary sidebar__action-btn"
+                                        onClick={() => {
+                                            const result = editorRef?.current?.openAdjustment(type);
+                                            if (!result?.ok) {
+                                                showToastInfo?.(ADJUSTMENT_FAIL_MESSAGES[result?.reason] || ADJUSTMENT_FAIL_MESSAGES['no-target']);
+                                            }
+                                        }}
+                                    >
+                                        {ADJUSTMENT_LABELS[type]}
+                                    </button>
+                                ))}
+                            </div>
+                            <small className="sidebar__hint">
+                                Применяется к активному слою; активное выделение ограничивает область.
+                            </small>
+                        </div>
 
                         <div className="input-group sidebar__layers-panel">
                             <h4 className="sidebar__layers-title">Слои</h4>

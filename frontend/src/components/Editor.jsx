@@ -47,6 +47,9 @@ import {
     traceSelectionOutline
 } from './editor/selectionEngine';
 import { setupSelectionToolHandling } from './editor/selectionController';
+import { createAdjustmentSession } from './editor/adjustmentSession';
+import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
+import AdjustmentsDialog from './AdjustmentsDialog';
 import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
@@ -123,6 +126,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const selectionOverlayRef = useRef(null);
     const selectionAntsTimerRef = useRef(null);
     const magicWandToleranceRef = useRef(32);
+    const adjustmentSessionRef = useRef(null);
+    const [activeAdjustment, setActiveAdjustment] = useState(null);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -761,15 +766,24 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         getUndoSnapshotParams
     });
 
-    const performUndo = async () => undoEditorChange({
-        fabricCanvas,
-        genFrame,
-        enqueueCanvasMutation,
-        popUndoSnapshot,
-        restoreUndoSnapshot,
-        getUndoRestoreParams,
-        genFrameVisualRef
-    });
+    const performUndo = async () => {
+        // Открытая коррекция держит подменённый элемент слоя — откатываем её
+        // перед восстановлением снапшота.
+        if (adjustmentSessionRef.current) {
+            adjustmentSessionRef.current.cancel();
+            adjustmentSessionRef.current = null;
+            setActiveAdjustment(null);
+        }
+        return undoEditorChange({
+            fabricCanvas,
+            genFrame,
+            enqueueCanvasMutation,
+            popUndoSnapshot,
+            restoreUndoSnapshot,
+            getUndoRestoreParams,
+            genFrameVisualRef
+        });
+    };
 
     const performDeleteActiveObject = () => deleteActiveObject({
         fabricCanvas,
@@ -1401,6 +1415,96 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
     useEffect(() => () => stopSelectionAntsAnimation(), []);
 
+    // --- Коррекции и фильтры ---
+    const resolveAdjustmentTarget = () => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const activeObject = fabricCanvas.getActiveObject();
+        if (
+            activeObject
+            && activeObject.type === 'image'
+            && activeObject.editorLayerLocked !== true
+            && (isBaseRasterObject(activeObject, genFrame) || isCandidateObject(activeObject, genFrame))
+        ) {
+            return activeObject;
+        }
+        return [...fabricCanvas.getObjects()].reverse().find((object) => (
+            object.visible !== false
+            && object.type === 'image'
+            && object.editorLayerLocked !== true
+            && isBaseRasterObject(object, genFrame)
+        )) || null;
+    };
+
+    const finishAdjustmentCommit = (target) => {
+        markUndoDirty(target);
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+    };
+
+    const closeAdjustment = () => {
+        adjustmentSessionRef.current = null;
+        setActiveAdjustment(null);
+    };
+
+    const handleAdjustmentApply = (params) => {
+        const session = adjustmentSessionRef.current;
+        if (!session || !activeAdjustment) {
+            return;
+        }
+        session.commit(activeAdjustment.type, params);
+        finishAdjustmentCommit(session.targetObject);
+        closeAdjustment();
+    };
+
+    const handleAdjustmentCancel = () => {
+        adjustmentSessionRef.current?.cancel();
+        closeAdjustment();
+    };
+
+    const handleAdjustmentPreview = (params) => {
+        if (!activeAdjustment) {
+            return;
+        }
+        adjustmentSessionRef.current?.update(activeAdjustment.type, params);
+    };
+
+    const openAdjustment = (type) => {
+        if (!fabricCanvas || !genFrame) {
+            return { ok: false, reason: 'not-ready' };
+        }
+        if (candidateRef.current) {
+            return { ok: false, reason: 'candidate' };
+        }
+        if (adjustmentSessionRef.current) {
+            return { ok: false, reason: 'busy' };
+        }
+
+        const target = resolveAdjustmentTarget();
+        if (!target) {
+            return { ok: false, reason: 'no-target' };
+        }
+
+        const session = createAdjustmentSession({
+            canvas: fabricCanvas,
+            targetObject: target,
+            selection: selectionRef.current
+        });
+        if (!session) {
+            return { ok: false, reason: 'no-target' };
+        }
+
+        if (type === ADJUSTMENT_TYPES.INVERT) {
+            session.commit(type, {});
+            finishAdjustmentCommit(target);
+            return { ok: true, instant: true };
+        }
+
+        adjustmentSessionRef.current = session;
+        setActiveAdjustment({ type });
+        return { ok: true };
+    };
+
     useEffect(() => {
         if (!fabricCanvas || !genFrame) {
             return undefined;
@@ -1486,6 +1590,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         setMagicWandTolerance: (value) => {
             magicWandToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
         },
+
+        openAdjustment,
 
         exportForQuickSelectRefine,
 
@@ -1807,6 +1913,17 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
                         </div>
                     </div>
                 </div>
+            )}
+
+            {activeAdjustment && (
+                <AdjustmentsDialog
+                    type={activeAdjustment.type}
+                    onPreview={handleAdjustmentPreview}
+                    onApply={handleAdjustmentApply}
+                    onCancel={handleAdjustmentCancel}
+                    getHistogram={() => adjustmentSessionRef.current?.getHistogram()}
+                    selectionMissesLayer={adjustmentSessionRef.current?.selectionMissesLayer}
+                />
             )}
 
             {candidateUrl && (
