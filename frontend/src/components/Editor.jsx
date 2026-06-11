@@ -1306,7 +1306,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             return;
         }
         fabricCanvas.getObjects()
-            .filter((object) => object.editorRole === 'selection-overlay' && object !== null)
+            .filter((object) => object.editorRole === 'selection-overlay')
             .forEach((object) => fabricCanvas.remove(object));
         selectionOverlayRef.current = null;
     };

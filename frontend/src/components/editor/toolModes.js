@@ -72,6 +72,26 @@ export const getCursorForToolMode = (mode) => {
     return 'default';
 };
 
+// Горячие клавиши инструментов (event.code → режим). Массив — циклический
+// переключатель (M: rect↔ellipse, G: заливка↔градиент, как в Photoshop).
+export const TOOL_SHORTCUT_BINDINGS = {
+    KeyV: TOOL_MODES.CURSOR,
+    KeyH: TOOL_MODES.HAND,
+    KeyM: [TOOL_MODES.MARQUEE_RECT, TOOL_MODES.MARQUEE_ELLIPSE],
+    KeyL: TOOL_MODES.LASSO,
+    KeyA: TOOL_MODES.MAGIC_WAND,
+    KeyW: TOOL_MODES.QUICK_SELECT,
+    KeyB: TOOL_MODES.SKETCH,
+    KeyT: TOOL_MODES.TEXT,
+    KeyU: TOOL_MODES.SHAPE,
+    KeyG: [TOOL_MODES.FILL, TOOL_MODES.GRADIENT],
+    KeyI: TOOL_MODES.EYEDROPPER,
+    KeyE: TOOL_MODES.ERASER,
+    KeyS: TOOL_MODES.CLONE_STAMP,
+    KeyJ: TOOL_MODES.SPOT_HEAL,
+    KeyC: TOOL_MODES.CROP
+};
+
 export const TOOL_GROUPS = [
     {
         id: 'navigation',

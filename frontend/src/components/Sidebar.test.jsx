@@ -152,6 +152,65 @@ describe('Sidebar', () => {
     expect(showToastInfo).toHaveBeenCalledWith('Трансформер: stub (42 мс)');
   });
 
+  it('кнопки инструментов сгруппированы и переключают режим', () => {
+    const setBrushMode = vi.fn();
+    render(<Sidebar {...createBaseProps({ setBrushMode })} />);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /Лассо/ }));
+    expect(setBrushMode).toHaveBeenCalledWith('lasso');
+
+    fireEvent.click(screen.getByRole('button', { name: /Текст/ }));
+    expect(setBrushMode).toHaveBeenCalledWith('text');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Кадр$/ }));
+    expect(setBrushMode).toHaveBeenCalledWith('crop');
+  });
+
+  it('кнопки коррекций вызывают openAdjustment и показывают toast при отказе', () => {
+    const openAdjustment = vi.fn()
+      .mockReturnValueOnce({ ok: true })
+      .mockReturnValueOnce({ ok: false, reason: 'candidate' });
+    const showToastInfo = vi.fn();
+    render(
+      <Sidebar
+        {...createBaseProps({
+          editorRef: { current: { setGenFrameSize: vi.fn(), openAdjustment } },
+          showToastInfo
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+
+    const curvesButton = screen.getByRole('button', { name: 'Кривые' });
+    fireEvent.click(curvesButton);
+    expect(openAdjustment).toHaveBeenCalledWith('curves');
+    expect(showToastInfo).not.toHaveBeenCalled();
+
+    fireEvent.click(curvesButton);
+    expect(showToastInfo).toHaveBeenCalledWith('Сначала прими или отмени сгенерированного кандидата.');
+  });
+
+  it('панель опций выделения видна в режиме волшебной палочки', () => {
+    const setMagicWandTolerance = vi.fn();
+    render(
+      <Sidebar
+        {...createBaseProps({
+          brushMode: 'magic_wand',
+          editorRef: { current: { setGenFrameSize: vi.fn(), setMagicWandTolerance } }
+        })}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+
+    expect(screen.getByText(/Допуск/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Инвертировать' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'В маску инпейнта' })).toBeInTheDocument();
+  });
+
   it('показывает toast-ошибку при неудачном AI-transform', async () => {
     axios.post.mockRejectedValue({
       response: {

@@ -1,3 +1,5 @@
+import { TOOL_SHORTCUT_BINDINGS } from './toolModes';
+
 const isTextInputTarget = (target) => {
     if (!target || typeof target.tagName !== 'string') {
         return false;
@@ -65,21 +67,14 @@ export const setupEditorKeyboardShortcuts = ({
             return;
         }
 
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyW') {
+        const toolBinding = TOOL_SHORTCUT_BINDINGS[event.code];
+        if (toolBinding && !event.ctrlKey && !event.metaKey && !event.altKey) {
             event.preventDefault();
-            setBrushModeRef.current?.('quick_select');
-            return;
-        }
-
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyS') {
-            event.preventDefault();
-            setBrushModeRef.current?.('clone_stamp');
-            return;
-        }
-
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyJ') {
-            event.preventDefault();
-            setBrushModeRef.current?.('spot_heal');
+            // Массив — циклическое переключение вариантов одной клавишей.
+            const nextMode = Array.isArray(toolBinding)
+                ? toolBinding[(toolBinding.indexOf(brushModeRef.current) + 1) % toolBinding.length]
+                : toolBinding;
+            setBrushModeRef.current?.(nextMode);
             return;
         }
 
