@@ -12,7 +12,8 @@ import {
     isBaseRasterObject,
     isCandidateObject,
     isMaskObject,
-    isSketchObject
+    isSketchObject,
+    UI_OVERLAY_ROLES
 } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
 import {
@@ -28,7 +29,10 @@ import {
     clearEditorOverlays,
     deleteActiveObject,
     discardCandidate,
+    resizeDocumentCanvas,
+    resizeDocumentImage,
     restoreHistoryDocument,
+    setGenerationFrameRect,
     setGenerationFrameSize,
     undoEditorChange
 } from './editor/commands';
@@ -40,6 +44,21 @@ import {
 } from './editor/interactionController';
 import { setupEditorKeyboardShortcuts } from './editor/keyboardController';
 import { setupCanvasViewportAndTransform } from './editor/transformController';
+import {
+    combineSelections,
+    featherSelection,
+    invertSelection,
+    traceSelectionOutline
+} from './editor/selectionEngine';
+import { setupSelectionToolHandling } from './editor/selectionController';
+import { createAdjustmentSession } from './editor/adjustmentSession';
+import { setupDrawingToolHandling } from './editor/drawingToolsController';
+import { setupCropToolHandling } from './editor/cropController';
+import { TOOL_MODES } from './editor/toolModes';
+import { magicWandMask, sampleMaskForLayer, sampleSelectionAt } from './editor/selectionEngine';
+import { cloneCanvasElement, ensureWritableCanvasElement, worldPointToLocal } from './editor/rasterUtils';
+import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
+import AdjustmentsDialog from './AdjustmentsDialog';
 import { useEditorDocumentState } from './editor/useEditorDocumentState';
 import { useEditorUndo } from './editor/useEditorUndo';
 import './Editor.css';
@@ -98,13 +117,14 @@ const clampLayerPercent = (value, fallback = 100) => {
     return Math.max(0, Math.min(100, Math.round(numeric)));
 };
 
-const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange }, ref) => {
+const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange, onToolNotify }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
     const [isMutatingCanvas, setIsMutatingCanvas] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [activeImageResolution, setActiveImageResolution] = useState(null);
+    const [isCanvasEmpty, setIsCanvasEmpty] = useState(true);
     const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
     const previewFrameBoundsRef = useRef(null);
     const quickSelectionOverlayRef = useRef(null);
@@ -112,6 +132,19 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const quickSelectionDraftPointsRef = useRef([]);
     const quickClipboardRef = useRef(null);
     const layerCounterRef = useRef(1);
+    const selectionRef = useRef(null);
+    const selectionOverlayRef = useRef(null);
+    const selectionAntsTimerRef = useRef(null);
+    const magicWandToleranceRef = useRef(32);
+    const adjustmentSessionRef = useRef(null);
+    const [activeAdjustment, setActiveAdjustment] = useState(null);
+    const textOptionsRef = useRef({ fontSize: 32 });
+    const shapeOptionsRef = useRef({ kind: 'rect', outlineOnly: false, strokeWidth: 2 });
+    const fillToleranceRef = useRef(32);
+    const gradientOptionsRef = useRef({ toTransparent: true, endColor: '#000000' });
+    const setBrushColorRef = useRef(setBrushColor);
+    const onToolNotifyRef = useRef(onToolNotify);
+    const cropRectRef = useRef(null);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -201,7 +234,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         && object !== genFrame
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
-        && object.editorRole !== 'quick-select-overlay'
+        && !UI_OVERLAY_ROLES.includes(object.editorRole)
     );
 
     const cloneCanvasObject = (source) => (
@@ -302,11 +335,14 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         return visualOrderTopFirst.map((object, index) => {
             const kind = resolveLayerKind(object);
             const style = getLayerStyle(object);
+            const vectorLabel = object.type === 'i-text'
+                ? 'Text'
+                : (['rect', 'ellipse', 'line'].includes(object.type) ? 'Shape' : null);
             return {
                 id: ensureLayerId(object),
                 name: getLayerDisplayName(object, visualOrderTopFirst.length - index),
                 kind,
-                kindLabel: LAYER_KIND_LABELS[kind] || 'Layer',
+                kindLabel: vectorLabel || LAYER_KIND_LABELS[kind] || 'Layer',
                 visible: object.visible !== false,
                 isActive: object === activeObject,
                 opacity: style.opacity,
@@ -318,10 +354,12 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     }, [fabricCanvas, genFrame]);
 
     const emitLayersSnapshot = React.useCallback(() => {
+        const layersSnapshot = buildLayersSnapshot();
+        setIsCanvasEmpty(layersSnapshot.length === 0);
         if (typeof onLayersChange !== 'function') {
             return;
         }
-        onLayersChange(buildLayersSnapshot());
+        onLayersChange(layersSnapshot);
     }, [onLayersChange, buildLayersSnapshot]);
 
     const findLayerObjectById = (layerId) => {
@@ -452,6 +490,11 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         brushColorRef.current = brushColor;
         brushSizeRef.current = brushSize;
     }, [brushMode, brushColor, brushSize]);
+
+    useEffect(() => {
+        setBrushColorRef.current = setBrushColor;
+        onToolNotifyRef.current = onToolNotify;
+    });
 
     useEffect(() => {
         if (!fabricCanvas) {
@@ -750,15 +793,24 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         getUndoSnapshotParams
     });
 
-    const performUndo = async () => undoEditorChange({
-        fabricCanvas,
-        genFrame,
-        enqueueCanvasMutation,
-        popUndoSnapshot,
-        restoreUndoSnapshot,
-        getUndoRestoreParams,
-        genFrameVisualRef
-    });
+    const performUndo = async () => {
+        // Открытая коррекция держит подменённый элемент слоя — откатываем её
+        // перед восстановлением снапшота.
+        if (adjustmentSessionRef.current) {
+            adjustmentSessionRef.current.cancel();
+            adjustmentSessionRef.current = null;
+            setActiveAdjustment(null);
+        }
+        return undoEditorChange({
+            fabricCanvas,
+            genFrame,
+            enqueueCanvasMutation,
+            popUndoSnapshot,
+            restoreUndoSnapshot,
+            getUndoRestoreParams,
+            genFrameVisualRef
+        });
+    };
 
     const performDeleteActiveObject = () => deleteActiveObject({
         fabricCanvas,
@@ -1190,6 +1242,675 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         };
     };
 
+    const getFrameRect = () => {
+        if (!genFrame) {
+            return null;
+        }
+        return {
+            left: genFrame.left ?? 0,
+            top: genFrame.top ?? 0,
+            width: Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1))),
+            height: Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)))
+        };
+    };
+
+    const renderFrameCompositeImageData = () => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const frameRect = getFrameRect();
+        const compositeCanvas = fabric.util.createCanvasElement();
+        compositeCanvas.width = frameRect.width;
+        compositeCanvas.height = frameRect.height;
+        const context = compositeCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            return null;
+        }
+
+        const rasterObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && (isBaseRasterObject(object, genFrame) || isCandidateObject(object, genFrame))
+        ));
+        if (rasterObjects.length === 0) {
+            return null;
+        }
+
+        rasterObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-frameRect.left, -frameRect.top);
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        return context.getImageData(0, 0, frameRect.width, frameRect.height);
+    };
+
+    const buildSelectionPathString = (loops) => loops
+        .map((loop) => `M ${loop.map((point) => `${point.x} ${point.y}`).join(' L ')} Z`)
+        .join(' ');
+
+    const stopSelectionAntsAnimation = () => {
+        if (selectionAntsTimerRef.current) {
+            window.clearInterval(selectionAntsTimerRef.current);
+            selectionAntsTimerRef.current = null;
+        }
+    };
+
+    const removeSelectionOverlay = () => {
+        if (!fabricCanvas) {
+            return;
+        }
+        fabricCanvas.getObjects()
+            .filter((object) => object.editorRole === 'selection-overlay')
+            .forEach((object) => fabricCanvas.remove(object));
+        selectionOverlayRef.current = null;
+    };
+
+    const updateSelectionOverlay = () => {
+        if (!fabricCanvas) {
+            return;
+        }
+        removeSelectionOverlay();
+
+        const selection = selectionRef.current;
+        const loops = selection ? traceSelectionOutline(selection) : [];
+        if (loops.length === 0) {
+            stopSelectionAntsAnimation();
+            fabricCanvas.requestRenderAll();
+            return;
+        }
+
+        const overlay = new fabric.Path(buildSelectionPathString(loops), {
+            fill: 'rgba(0, 212, 255, 0.07)',
+            fillRule: 'evenodd',
+            stroke: '#00d4ff',
+            strokeWidth: 1.2,
+            strokeUniform: true,
+            strokeDashArray: [5, 4],
+            selectable: false,
+            evented: false,
+            hasControls: false,
+            hasBorders: false,
+            objectCaching: false,
+            excludeFromExport: true,
+            editorRole: 'selection-overlay'
+        });
+        fabricCanvas.add(overlay);
+        overlay.bringToFront();
+        selectionOverlayRef.current = overlay;
+
+        // «Муравьи»: медленный интервал, чтобы не перерисовывать все слои
+        // каждый кадр (objectCaching у изображений выключен).
+        if (!selectionAntsTimerRef.current) {
+            selectionAntsTimerRef.current = window.setInterval(() => {
+                const antsOverlay = selectionOverlayRef.current;
+                if (!antsOverlay || !fabricCanvas) {
+                    return;
+                }
+                antsOverlay.set({ strokeDashOffset: ((antsOverlay.strokeDashOffset || 0) + 2) % 9 });
+                fabricCanvas.requestRenderAll();
+            }, 150);
+        }
+        fabricCanvas.requestRenderAll();
+    };
+
+    const applyIncomingSelection = (incoming, operation = 'replace') => {
+        selectionRef.current = combineSelections(selectionRef.current, incoming, operation);
+        updateSelectionOverlay();
+    };
+
+    const deselectSelection = () => {
+        if (!selectionRef.current) {
+            return false;
+        }
+        selectionRef.current = null;
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const invertActiveSelection = () => {
+        const frameRect = getFrameRect();
+        if (!frameRect) {
+            return false;
+        }
+        selectionRef.current = invertSelection(selectionRef.current, frameRect);
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const featherActiveSelection = (radius) => {
+        if (!selectionRef.current) {
+            return false;
+        }
+        selectionRef.current = featherSelection(selectionRef.current, radius);
+        updateSelectionOverlay();
+        return true;
+    };
+
+    const convertSelectionToInpaintMask = () => {
+        const selection = selectionRef.current;
+        if (!selection || !fabricCanvas || !genFrame) {
+            return false;
+        }
+        const loops = traceSelectionOutline(selection);
+        if (loops.length === 0) {
+            return false;
+        }
+
+        const maskPath = new fabric.Path(buildSelectionPathString(loops), {
+            fill: 'rgba(255, 0, 0, 1.0)',
+            fillRule: 'evenodd',
+            stroke: null,
+            editorRole: CANVAS_OBJECT_ROLES.MASK,
+            isMask: true,
+            selectable: false,
+            evented: false,
+            opacity: 1.0
+        });
+
+        let maskGroup = getMaskGroupFromCanvas(fabricCanvas);
+        if (!maskGroup) {
+            maskGroup = new fabric.Group([], {
+                id: 'maskGroup',
+                editorRole: CANVAS_OBJECT_ROLES.MASK,
+                selectable: false,
+                evented: false,
+                opacity: 0.5,
+                objectCaching: true
+            });
+            fabricCanvas.add(maskGroup);
+        }
+        maskGroup.addWithUpdate(maskPath);
+        markUndoDirty(maskGroup);
+        if (candidateRef.current && !maskOverlayVisibleRef.current) {
+            maskGroup.set({ visible: false });
+        }
+        enforceCanvasLayerOrder(fabricCanvas, genFrame);
+        syncMaskStateFromCanvas(fabricCanvas);
+        fabricCanvas.requestRenderAll();
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        return true;
+    };
+
+    useEffect(() => () => stopSelectionAntsAnimation(), []);
+
+    // --- Коррекции и фильтры ---
+    const resolveAdjustmentTarget = () => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const activeObject = fabricCanvas.getActiveObject();
+        if (
+            activeObject
+            && activeObject.type === 'image'
+            && activeObject.editorLayerLocked !== true
+            && (isBaseRasterObject(activeObject, genFrame) || isCandidateObject(activeObject, genFrame))
+        ) {
+            return activeObject;
+        }
+        return [...fabricCanvas.getObjects()].reverse().find((object) => (
+            object.visible !== false
+            && object.type === 'image'
+            && object.editorLayerLocked !== true
+            && isBaseRasterObject(object, genFrame)
+        )) || null;
+    };
+
+    const finishAdjustmentCommit = (target) => {
+        markUndoDirty(target);
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+    };
+
+    const closeAdjustment = () => {
+        adjustmentSessionRef.current = null;
+        setActiveAdjustment(null);
+    };
+
+    const handleAdjustmentApply = (params) => {
+        const session = adjustmentSessionRef.current;
+        if (!session || !activeAdjustment) {
+            return;
+        }
+        session.commit(activeAdjustment.type, params);
+        finishAdjustmentCommit(session.targetObject);
+        closeAdjustment();
+    };
+
+    const handleAdjustmentCancel = () => {
+        adjustmentSessionRef.current?.cancel();
+        closeAdjustment();
+    };
+
+    const handleAdjustmentPreview = (params) => {
+        if (!activeAdjustment) {
+            return;
+        }
+        adjustmentSessionRef.current?.update(activeAdjustment.type, params);
+    };
+
+    const openAdjustment = (type) => {
+        if (!fabricCanvas || !genFrame) {
+            return { ok: false, reason: 'not-ready' };
+        }
+        if (candidateRef.current) {
+            return { ok: false, reason: 'candidate' };
+        }
+        if (adjustmentSessionRef.current) {
+            return { ok: false, reason: 'busy' };
+        }
+
+        const target = resolveAdjustmentTarget();
+        if (!target) {
+            return { ok: false, reason: 'no-target' };
+        }
+
+        const session = createAdjustmentSession({
+            canvas: fabricCanvas,
+            targetObject: target,
+            selection: selectionRef.current
+        });
+        if (!session) {
+            return { ok: false, reason: 'no-target' };
+        }
+
+        if (type === ADJUSTMENT_TYPES.INVERT) {
+            session.commit(type, {});
+            finishAdjustmentCommit(target);
+            return { ok: true, instant: true };
+        }
+
+        adjustmentSessionRef.current = session;
+        setActiveAdjustment({ type });
+        return { ok: true };
+    };
+
+    // --- Заливка, градиент, пипетка ---
+    const hexToRgb = (hex) => {
+        const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+        if (!match) {
+            return { r: 0, g: 0, b: 0 };
+        }
+        const value = parseInt(match[1], 16);
+        return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+    };
+
+    const sampleCompositeColor = (point) => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const sampleCanvas = fabric.util.createCanvasElement();
+        sampleCanvas.width = 1;
+        sampleCanvas.height = 1;
+        const context = sampleCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            return null;
+        }
+
+        const contentObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && object !== genFrame
+            && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+            && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+            && !UI_OVERLAY_ROLES.includes(object.editorRole)
+            && !isMaskObject(object, genFrame)
+        ));
+
+        contentObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-Math.round(point.x), -Math.round(point.y));
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+        if (a === 0) {
+            return null;
+        }
+        const toHex = (channel) => channel.toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    };
+
+    const handleEyedropperPoint = (point) => {
+        const hex = sampleCompositeColor(point);
+        if (hex) {
+            setBrushColorRef.current?.(hex);
+        } else {
+            onToolNotifyRef.current?.('Под пипеткой нет пикселей.');
+        }
+    };
+
+    const resolvePixelToolTarget = () => {
+        if (candidateRef.current) {
+            onToolNotifyRef.current?.('Сначала прими или отмени сгенерированного кандидата.');
+            return null;
+        }
+        const target = resolveAdjustmentTarget();
+        if (!target) {
+            onToolNotifyRef.current?.('Нет растрового слоя для этой операции.');
+            return null;
+        }
+        if (!ensureWritableCanvasElement(target)) {
+            return null;
+        }
+        return target;
+    };
+
+    const commitPixelToolResult = (target, workCanvas) => {
+        target.setElement(workCanvas);
+        // Новый asset id — иначе мутация элемента портит старые undo-снапшоты.
+        target.set({ assetId: null, dirty: true });
+        markUndoDirty(target);
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+    };
+
+    const handleFillPoint = (point) => {
+        const target = resolvePixelToolTarget();
+        if (!target) {
+            return;
+        }
+        const element = target.getElement();
+        const width = element.width;
+        const height = element.height;
+        const selection = selectionRef.current;
+
+        let localMask = null;
+        if (selection && sampleSelectionAt(selection, point.x, point.y) > 0) {
+            localMask = sampleMaskForLayer(selection, target, width, height);
+            if (!localMask) {
+                onToolNotifyRef.current?.('Выделение не пересекает активный слой.');
+                return;
+            }
+        } else {
+            const local = worldPointToLocal(target, point);
+            if (local.x < 0 || local.y < 0 || local.x >= width || local.y >= height) {
+                onToolNotifyRef.current?.('Клик вне активного слоя.');
+                return;
+            }
+            const context = element.getContext('2d', { willReadFrequently: true });
+            const imageData = context.getImageData(0, 0, width, height);
+            const wandSelection = magicWandMask(
+                { data: imageData.data, width, height },
+                local.x,
+                local.y,
+                { tolerance: fillToleranceRef.current }
+            );
+            if (!wandSelection) {
+                return;
+            }
+            localMask = new Uint8ClampedArray(width * height);
+            for (let y = 0; y < wandSelection.height; y += 1) {
+                const sourceOffset = y * wandSelection.width;
+                const targetOffset = (y + wandSelection.top) * width + wandSelection.left;
+                localMask.set(
+                    wandSelection.mask.subarray(sourceOffset, sourceOffset + wandSelection.width),
+                    targetOffset
+                );
+            }
+        }
+
+        const workCanvas = cloneCanvasElement(element);
+        const workContext = workCanvas.getContext('2d', { willReadFrequently: true });
+        const imageData = workContext.getImageData(0, 0, width, height);
+        const { data } = imageData;
+        const { r, g, b } = hexToRgb(brushColorRef.current);
+
+        for (let pixel = 0; pixel < localMask.length; pixel += 1) {
+            const coverage = localMask[pixel] / 255;
+            if (coverage === 0) {
+                continue;
+            }
+            const offset = pixel * 4;
+            const dstAlpha = data[offset + 3] / 255;
+            const outAlpha = coverage + dstAlpha * (1 - coverage);
+            if (outAlpha === 0) {
+                continue;
+            }
+            data[offset] = (r * coverage + data[offset] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 1] = (g * coverage + data[offset + 1] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 2] = (b * coverage + data[offset + 2] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 3] = outAlpha * 255;
+        }
+
+        workContext.putImageData(imageData, 0, 0);
+        commitPixelToolResult(target, workCanvas);
+    };
+
+    const handleGradientApply = (start, end) => {
+        const target = resolvePixelToolTarget();
+        if (!target) {
+            return;
+        }
+        const element = target.getElement();
+        const width = element.width;
+        const height = element.height;
+
+        const overlayCanvas = fabric.util.createCanvasElement();
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        const overlayContext = overlayCanvas.getContext('2d', { willReadFrequently: true });
+
+        const localStart = worldPointToLocal(target, start);
+        const localEnd = worldPointToLocal(target, end);
+        const { r, g, b } = hexToRgb(brushColorRef.current);
+        const options = gradientOptionsRef.current || {};
+        const gradient = overlayContext.createLinearGradient(localStart.x, localStart.y, localEnd.x, localEnd.y);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1)`);
+        if (options.toTransparent) {
+            gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+        } else {
+            const endColor = hexToRgb(options.endColor || '#000000');
+            gradient.addColorStop(1, `rgba(${endColor.r}, ${endColor.g}, ${endColor.b}, 1)`);
+        }
+        overlayContext.fillStyle = gradient;
+        overlayContext.fillRect(0, 0, width, height);
+
+        const selection = selectionRef.current;
+        if (selection) {
+            const localMask = sampleMaskForLayer(selection, target, width, height);
+            if (!localMask) {
+                onToolNotifyRef.current?.('Выделение не пересекает активный слой.');
+                return;
+            }
+            const overlayData = overlayContext.getImageData(0, 0, width, height);
+            for (let pixel = 0; pixel < localMask.length; pixel += 1) {
+                overlayData.data[pixel * 4 + 3] = (overlayData.data[pixel * 4 + 3] * localMask[pixel]) / 255;
+            }
+            overlayContext.putImageData(overlayData, 0, 0);
+        }
+
+        const workCanvas = cloneCanvasElement(element);
+        workCanvas.getContext('2d').drawImage(overlayCanvas, 0, 0);
+        commitPixelToolResult(target, workCanvas);
+    };
+
+    // --- Кадрирование и трансформации документа ---
+    const updateCropOverlay = (rect) => {
+        if (!fabricCanvas) {
+            return;
+        }
+        fabricCanvas.getObjects()
+            .filter((object) => object.editorRole === 'crop-overlay')
+            .forEach((object) => fabricCanvas.remove(object));
+
+        if (rect) {
+            const HUGE = 100000;
+            const right = rect.left + rect.width;
+            const bottom = rect.top + rect.height;
+            const overlay = new fabric.Path(
+                `M ${-HUGE} ${-HUGE} L ${HUGE} ${-HUGE} L ${HUGE} ${HUGE} L ${-HUGE} ${HUGE} Z `
+                + `M ${rect.left} ${rect.top} L ${right} ${rect.top} L ${right} ${bottom} L ${rect.left} ${bottom} Z`,
+                {
+                    fill: 'rgba(0, 0, 0, 0.45)',
+                    fillRule: 'evenodd',
+                    stroke: '#ffffff',
+                    strokeWidth: 1.2,
+                    strokeUniform: true,
+                    strokeDashArray: [6, 4],
+                    selectable: false,
+                    evented: false,
+                    hasControls: false,
+                    hasBorders: false,
+                    objectCaching: false,
+                    excludeFromExport: true,
+                    editorRole: 'crop-overlay'
+                }
+            );
+            fabricCanvas.add(overlay);
+            overlay.bringToFront();
+        }
+        fabricCanvas.requestRenderAll();
+    };
+
+    const cancelCropAction = () => {
+        cropRectRef.current = null;
+        updateCropOverlay(null);
+    };
+
+    const applyCropRect = (rect) => setGenerationFrameRect({
+        rect,
+        genFrame,
+        genFrameVisual: genFrameVisualRef.current,
+        fabricCanvas,
+        syncFrameVisualState,
+        setGenDimensions,
+        enforceCanvasLayerOrder,
+        syncCanvasInteractionMode,
+        markUndoDirty,
+        commitUndoSnapshot,
+        getUndoSnapshotParams
+    });
+
+    const applyCropAction = () => {
+        const rect = cropRectRef.current;
+        if (!rect) {
+            onToolNotifyRef.current?.('Сначала выдели область кадрирования.');
+            return false;
+        }
+        const applied = applyCropRect(rect);
+        cancelCropAction();
+        return applied;
+    };
+
+    const cropToSelectionAction = () => {
+        const selection = selectionRef.current;
+        if (!selection) {
+            onToolNotifyRef.current?.('Сначала создай выделение.');
+            return false;
+        }
+        cancelCropAction();
+        return applyCropRect({
+            left: selection.left,
+            top: selection.top,
+            width: selection.width,
+            height: selection.height
+        });
+    };
+
+    const flipActiveObject = (axis) => {
+        if (!fabricCanvas || !genFrame) {
+            return false;
+        }
+        const activeObject = fabricCanvas.getActiveObject();
+        const target = (
+            activeObject
+            && activeObject !== genFrame
+            && isLayerPanelObject(activeObject)
+            && activeObject.editorLayerLocked !== true
+        ) ? activeObject : resolveAdjustmentTarget();
+        if (!target) {
+            onToolNotifyRef.current?.('Нет слоя для отражения.');
+            return false;
+        }
+        if (axis === 'y') {
+            target.set({ flipY: !target.flipY });
+        } else {
+            target.set({ flipX: !target.flipX });
+        }
+        target.setCoords();
+        markUndoDirty(target);
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+        return true;
+    };
+
+    useEffect(() => {
+        if (brushMode !== TOOL_MODES.CROP && cropRectRef.current) {
+            cancelCropAction();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [brushMode]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+        return setupCropToolHandling({
+            canvas: fabricCanvas,
+            brushModeRef,
+            onCropDraft: (rect) => updateCropOverlay(rect),
+            onCropCommit: (rect) => {
+                cropRectRef.current = rect;
+                updateCropOverlay(rect);
+            }
+        });
+    }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+        return setupDrawingToolHandling({
+            canvas: fabricCanvas,
+            frameObject: genFrame,
+            brushModeRef,
+            brushColorRef,
+            setBrushModeRef,
+            textOptionsRef,
+            shapeOptionsRef,
+            clampPointToFrame,
+            canvasObjectRoles: CANVAS_OBJECT_ROLES,
+            enforceCanvasLayerOrder,
+            markUndoDirty,
+            commitUndoSnapshot,
+            getUndoSnapshotParams,
+            onFillPoint: handleFillPoint,
+            onGradientApply: handleGradientApply,
+            onEyedropperPoint: handleEyedropperPoint
+        });
+    }, [fabricCanvas, genFrame]);
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+        return setupSelectionToolHandling({
+            canvas: fabricCanvas,
+            brushModeRef,
+            clampPointToFrame,
+            getFrameBounds: getFrameRect,
+            renderFrameImageData: renderFrameCompositeImageData,
+            magicWandToleranceRef,
+            applySelection: applyIncomingSelection
+        });
+    }, [fabricCanvas, genFrame]);
+
     useImperativeHandle(ref, () => ({
         setGenFrameSize: (width, height) => setGenerationFrameSize({
             width,
@@ -1245,6 +1966,96 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         hasQuickClipboard: () => Boolean(quickClipboardRef.current),
 
+        getSelection: () => selectionRef.current,
+
+        hasSelection: () => Boolean(selectionRef.current),
+
+        deselectSelection,
+
+        invertSelection: invertActiveSelection,
+
+        featherSelection: featherActiveSelection,
+
+        convertSelectionToInpaintMask,
+
+        setMagicWandTolerance: (value) => {
+            magicWandToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
+        },
+
+        openAdjustment,
+
+        setTextOptions: (patch) => {
+            textOptionsRef.current = { ...textOptionsRef.current, ...patch };
+        },
+
+        setShapeOptions: (patch) => {
+            shapeOptionsRef.current = { ...shapeOptionsRef.current, ...patch };
+        },
+
+        setFillTolerance: (value) => {
+            fillToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
+        },
+
+        setGradientOptions: (patch) => {
+            gradientOptionsRef.current = { ...gradientOptionsRef.current, ...patch };
+        },
+
+        applyCrop: applyCropAction,
+
+        cancelCrop: cancelCropAction,
+
+        cropToSelection: cropToSelectionAction,
+
+        flipActiveObject,
+
+        getFrameSize: () => {
+            const frameRect = getFrameRect();
+            return frameRect ? { width: frameRect.width, height: frameRect.height } : null;
+        },
+
+        resizeImage: (width, height) => {
+            if (!(width >= 1) || !(height >= 1)) {
+                return false;
+            }
+            return resizeDocumentImage({
+                width,
+                height,
+                fabricCanvas,
+                genFrame,
+                genFrameVisual: genFrameVisualRef.current,
+                isLayerContentObject: isLayerPanelObject,
+                syncFrameVisualState,
+                setGenDimensions,
+                enforceCanvasLayerOrder,
+                syncCanvasInteractionMode,
+                markUndoDirty,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+        },
+
+        resizeCanvas: (width, height, anchorX = 0.5, anchorY = 0.5) => {
+            if (!(width >= 1) || !(height >= 1)) {
+                return false;
+            }
+            return resizeDocumentCanvas({
+                width,
+                height,
+                anchorX,
+                anchorY,
+                fabricCanvas,
+                genFrame,
+                genFrameVisual: genFrameVisualRef.current,
+                syncFrameVisualState,
+                setGenDimensions,
+                enforceCanvasLayerOrder,
+                syncCanvasInteractionMode,
+                markUndoDirty,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+        },
+
         exportForQuickSelectRefine,
 
         getLayers: () => buildLayersSnapshot(),
@@ -1279,22 +2090,26 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
 
         exportHistorySnapshot: async () => exportDocumentSnapshot(fabricCanvas, genFrame),
 
-        restoreHistoryDocument: async (url) => restoreHistoryDocument({
-            url,
-            fabricCanvas,
-            genFrame,
-            genFrameVisual: genFrameVisualRef.current,
-            candidateRef,
-            setCandidateState,
-            enforceCanvasLayerOrder,
-            syncMaskStateFromCanvas,
-            syncCanvasInteractionMode,
-            syncFrameVisualState,
-            setGenDimensions,
-            markUndoDirty,
-            commitUndoSnapshot,
-            getUndoSnapshotParams
-        }),
+        restoreHistoryDocument: async (url) => {
+            // Выделение относится к старому документу — снимаем.
+            deselectSelection();
+            return restoreHistoryDocument({
+                url,
+                fabricCanvas,
+                genFrame,
+                genFrameVisual: genFrameVisualRef.current,
+                candidateRef,
+                setCandidateState,
+                enforceCanvasLayerOrder,
+                syncMaskStateFromCanvas,
+                syncCanvasInteractionMode,
+                syncFrameVisualState,
+                setGenDimensions,
+                markUndoDirty,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+        },
 
         undo: performUndo,
 
@@ -1318,6 +2133,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const pasteQuickSelectionRef = useRef(pasteQuickSelection);
     const performDeleteActiveObjectRef = useRef(performDeleteActiveObject);
     const syncCanvasInteractionModeRef = useRef(syncCanvasInteractionMode);
+    const deselectSelectionRef = useRef(deselectSelection);
+    const applyCropActionRef = useRef(applyCropAction);
+    const cancelCropActionRef = useRef(cancelCropAction);
     useEffect(() => {
         performUndoRef.current = performUndo;
         setBrushModeRef.current = setBrushMode;
@@ -1325,6 +2143,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         pasteQuickSelectionRef.current = pasteQuickSelection;
         performDeleteActiveObjectRef.current = performDeleteActiveObject;
         syncCanvasInteractionModeRef.current = syncCanvasInteractionMode;
+        deselectSelectionRef.current = deselectSelection;
+        applyCropActionRef.current = applyCropAction;
+        cancelCropActionRef.current = cancelCropAction;
     });
 
     const toggleMaskOverlayPreview = () => {
@@ -1342,7 +2163,10 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
             pasteQuickSelectionRef,
             performUndoRef,
             performDeleteActiveObjectRef,
-            syncCanvasInteractionModeRef
+            syncCanvasInteractionModeRef,
+            deselectSelectionRef,
+            applyCropActionRef,
+            cancelCropActionRef
         });
     }, [fabricCanvas, genFrame]);
 
@@ -1518,6 +2342,34 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
                 </div>
             )}
 
+            {isCanvasEmpty && !isDragOver && previewFrameBounds?.visible && (
+                <div
+                    className="editor-empty-state"
+                    style={{
+                        left: `${previewFrameBounds.left}px`,
+                        top: `${previewFrameBounds.top}px`,
+                        width: `${previewFrameBounds.width}px`,
+                        height: `${previewFrameBounds.height}px`
+                    }}
+                >
+                    <div className="editor-empty-state__inner">
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <circle cx="9" cy="9" r="2" />
+                            <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+                        </svg>
+                        <span className="editor-empty-state__title">Холст пуст</span>
+                        <span className="editor-empty-state__text">
+                            Перетащи изображение сюда, импортируй файл<br />
+                            или напиши промпт и нажми «Сгенерировать»
+                        </span>
+                        <span className="editor-empty-state__sub">
+                            Колесо — масштаб · Space — панорама · Ctrl+Z — отмена
+                        </span>
+                    </div>
+                </div>
+            )}
+
             <div className="editor-resolution-badge">
                 {genDimensions.width} x {genDimensions.height}
             </div>
@@ -1558,6 +2410,17 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
                         </div>
                     </div>
                 </div>
+            )}
+
+            {activeAdjustment && (
+                <AdjustmentsDialog
+                    type={activeAdjustment.type}
+                    onPreview={handleAdjustmentPreview}
+                    onApply={handleAdjustmentApply}
+                    onCancel={handleAdjustmentCancel}
+                    getHistogram={() => adjustmentSessionRef.current?.getHistogram()}
+                    selectionMissesLayer={adjustmentSessionRef.current?.selectionMissesLayer}
+                />
             )}
 
             {candidateUrl && (

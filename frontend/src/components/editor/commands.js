@@ -118,6 +118,129 @@ export const setGenerationFrameSize = ({
     commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
 };
 
+// Кадрирование: рамка генерации переносится на выбранную область. Слои не
+// трогаем — контент за рамкой сохраняется (экспорт и так клипует по рамке).
+export const setGenerationFrameRect = ({
+    rect,
+    genFrame,
+    genFrameVisual,
+    fabricCanvas,
+    syncFrameVisualState,
+    setGenDimensions,
+    enforceCanvasLayerOrder,
+    syncCanvasInteractionMode,
+    markUndoDirty,
+    commitUndoSnapshot,
+    getUndoSnapshotParams
+}) => {
+    if (!genFrame || !fabricCanvas || !rect) return false;
+
+    const left = Math.round(rect.left);
+    const top = Math.round(rect.top);
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+
+    genFrame.set({ left, top, width, height, scaleX: 1, scaleY: 1 });
+    genFrame.setCoords();
+    syncFrameVisualState(genFrame, genFrameVisual);
+    markUndoDirty(genFrame);
+    markUndoDirty(genFrameVisual);
+    setGenDimensions({ width, height });
+    enforceCanvasLayerOrder(fabricCanvas, genFrame);
+    syncCanvasInteractionMode();
+    commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+    return true;
+};
+
+// «Размер изображения»: масштабирует все контентные объекты относительно
+// начала рамки и рамку вместе с ними. Ресемпла нет — экспорт растрирует
+// в размер рамки.
+export const resizeDocumentImage = ({
+    width,
+    height,
+    fabricCanvas,
+    genFrame,
+    genFrameVisual,
+    isLayerContentObject,
+    syncFrameVisualState,
+    setGenDimensions,
+    enforceCanvasLayerOrder,
+    syncCanvasInteractionMode,
+    markUndoDirty,
+    commitUndoSnapshot,
+    getUndoSnapshotParams
+}) => {
+    if (!genFrame || !fabricCanvas || !(width >= 1) || !(height >= 1)) return false;
+
+    const frameLeft = genFrame.left ?? 0;
+    const frameTop = genFrame.top ?? 0;
+    const oldWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+    const oldHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+    const factorX = width / oldWidth;
+    const factorY = height / oldHeight;
+
+    fabricCanvas.getObjects()
+        .filter((object) => isLayerContentObject(object))
+        .forEach((object) => {
+            object.set({
+                left: frameLeft + ((object.left ?? 0) - frameLeft) * factorX,
+                top: frameTop + ((object.top ?? 0) - frameTop) * factorY,
+                scaleX: (object.scaleX || 1) * factorX,
+                scaleY: (object.scaleY || 1) * factorY
+            });
+            object.setCoords();
+            markUndoDirty(object);
+        });
+
+    genFrame.set({ width: Math.round(width), height: Math.round(height), scaleX: 1, scaleY: 1 });
+    genFrame.setCoords();
+    syncFrameVisualState(genFrame, genFrameVisual);
+    markUndoDirty(genFrame);
+    markUndoDirty(genFrameVisual);
+    setGenDimensions({ width: Math.round(width), height: Math.round(height) });
+    enforceCanvasLayerOrder(fabricCanvas, genFrame);
+    syncCanvasInteractionMode();
+    commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+    return true;
+};
+
+// «Размер холста»: меняет рамку с привязкой по якорю (0 | 0.5 | 1),
+// слои остаются на месте.
+export const resizeDocumentCanvas = ({
+    width,
+    height,
+    anchorX = 0.5,
+    anchorY = 0.5,
+    fabricCanvas,
+    genFrame,
+    genFrameVisual,
+    syncFrameVisualState,
+    setGenDimensions,
+    enforceCanvasLayerOrder,
+    syncCanvasInteractionMode,
+    markUndoDirty,
+    commitUndoSnapshot,
+    getUndoSnapshotParams
+}) => {
+    if (!genFrame || !fabricCanvas || !(width >= 1) || !(height >= 1)) return false;
+
+    const oldWidth = Math.max(1, Math.round((genFrame.width ?? 0) * (genFrame.scaleX ?? 1)));
+    const oldHeight = Math.max(1, Math.round((genFrame.height ?? 0) * (genFrame.scaleY ?? 1)));
+    const left = Math.round((genFrame.left ?? 0) + (oldWidth - width) * anchorX);
+    const top = Math.round((genFrame.top ?? 0) + (oldHeight - height) * anchorY);
+
+    genFrame.set({ left, top, width: Math.round(width), height: Math.round(height), scaleX: 1, scaleY: 1 });
+    genFrame.setCoords();
+    syncFrameVisualState(genFrame, genFrameVisual);
+    markUndoDirty(genFrame);
+    markUndoDirty(genFrameVisual);
+    setGenDimensions({ width: Math.round(width), height: Math.round(height) });
+    enforceCanvasLayerOrder(fabricCanvas, genFrame);
+    syncCanvasInteractionMode();
+    commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+    return true;
+};
+
 export const addGeneratedImage = async ({
     url,
     fabricCanvas,

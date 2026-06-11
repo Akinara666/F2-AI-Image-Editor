@@ -36,7 +36,7 @@ describe('ToastProvider', () => {
     fireEvent.click(screen.getByText('success'));
     expect(screen.getByText('Успех')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: '✕' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть уведомление' }));
     expect(screen.queryByText('Успех')).not.toBeInTheDocument();
   });
 

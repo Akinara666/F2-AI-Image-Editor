@@ -1,3 +1,5 @@
+import { TOOL_SHORTCUT_BINDINGS } from './toolModes';
+
 const isTextInputTarget = (target) => {
     if (!target || typeof target.tagName !== 'string') {
         return false;
@@ -15,7 +17,10 @@ export const setupEditorKeyboardShortcuts = ({
     pasteQuickSelectionRef,
     performUndoRef,
     performDeleteActiveObjectRef,
-    syncCanvasInteractionModeRef
+    syncCanvasInteractionModeRef,
+    deselectSelectionRef,
+    applyCropActionRef,
+    cancelCropActionRef
 }) => {
     if (!fabricCanvas) {
         return () => {};
@@ -32,6 +37,24 @@ export const setupEditorKeyboardShortcuts = ({
             return;
         }
 
+        if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyD') {
+            event.preventDefault();
+            deselectSelectionRef?.current?.();
+            return;
+        }
+
+        if (event.key === 'Enter' && brushModeRef.current === 'crop') {
+            event.preventDefault();
+            applyCropActionRef?.current?.();
+            return;
+        }
+
+        if (event.key === 'Escape' && brushModeRef.current === 'crop') {
+            event.preventDefault();
+            cancelCropActionRef?.current?.();
+            return;
+        }
+
         if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyC' && brushModeRef.current === 'quick_select') {
             event.preventDefault();
             void copyQuickSelectionRef.current?.();
@@ -44,21 +67,14 @@ export const setupEditorKeyboardShortcuts = ({
             return;
         }
 
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyW') {
+        const toolBinding = TOOL_SHORTCUT_BINDINGS[event.code];
+        if (toolBinding && !event.ctrlKey && !event.metaKey && !event.altKey) {
             event.preventDefault();
-            setBrushModeRef.current?.('quick_select');
-            return;
-        }
-
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyS') {
-            event.preventDefault();
-            setBrushModeRef.current?.('clone_stamp');
-            return;
-        }
-
-        if (!event.ctrlKey && !event.metaKey && !event.altKey && event.code === 'KeyJ') {
-            event.preventDefault();
-            setBrushModeRef.current?.('spot_heal');
+            // Массив — циклическое переключение вариантов одной клавишей.
+            const nextMode = Array.isArray(toolBinding)
+                ? toolBinding[(toolBinding.indexOf(brushModeRef.current) + 1) % toolBinding.length]
+                : toolBinding;
+            setBrushModeRef.current?.(nextMode);
             return;
         }
 

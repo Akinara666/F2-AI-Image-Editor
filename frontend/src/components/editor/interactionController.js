@@ -1,94 +1,15 @@
 import { fabric } from 'fabric';
+import { TOOL_MODES, isDrawingToolMode, getCursorForToolMode } from './toolModes';
+import {
+    getObjectWorldBounds,
+    intersectsBrushCircle,
+    worldPointToLocal,
+    cloneCanvasElement,
+    ensureWritableCanvasElement
+} from './rasterUtils';
 
-const CLONE_STAMP_MODE = 'clone_stamp';
-const SPOT_HEAL_MODE = 'spot_heal';
-const QUICK_SELECT_MODE = 'quick_select';
-
-const getObjectWorldBounds = (object) => ({
-    left: object.left ?? 0,
-    top: object.top ?? 0,
-    width: Math.max(1, Math.round((object.width ?? 0) * (object.scaleX ?? 1))),
-    height: Math.max(1, Math.round((object.height ?? 0) * (object.scaleY ?? 1)))
-});
-
-const intersectsBrushCircle = (point, radius, bounds) => (
-    point.x >= bounds.left - radius
-    && point.x <= bounds.left + bounds.width + radius
-    && point.y >= bounds.top - radius
-    && point.y <= bounds.top + bounds.height + radius
-);
-
-const worldPointToLocal = (object, point) => ({
-    x: (point.x - (object.left ?? 0)) / (object.scaleX || 1),
-    y: (point.y - (object.top ?? 0)) / (object.scaleY || 1)
-});
-
-const cloneCanvasElement = (sourceElement) => {
-    const next = fabric.util.createCanvasElement();
-    next.width = sourceElement.width;
-    next.height = sourceElement.height;
-    const context = next.getContext('2d');
-    if (context) {
-        context.drawImage(sourceElement, 0, 0);
-    }
-    return next;
-};
-
-const ensureWritableCanvasElement = (object) => {
-    const element = typeof object.getElement === 'function'
-        ? object.getElement()
-        : object?._element;
-    if (!element) {
-        return null;
-    }
-
-    if (element instanceof HTMLCanvasElement) {
-        return element;
-    }
-
-    const width = Math.max(
-        1,
-        Math.round(
-            object.width
-            || element.naturalWidth
-            || element.videoWidth
-            || element.width
-            || 1
-        )
-    );
-    const height = Math.max(
-        1,
-        Math.round(
-            object.height
-            || element.naturalHeight
-            || element.videoHeight
-            || element.height
-            || 1
-        )
-    );
-
-    const writableCanvas = fabric.util.createCanvasElement();
-    writableCanvas.width = width;
-    writableCanvas.height = height;
-    const context = writableCanvas.getContext('2d');
-    if (context) {
-        context.drawImage(element, 0, 0, width, height);
-    }
-
-    if (typeof object.setElement === 'function') {
-        object.setElement(writableCanvas);
-    } else {
-        object._element = writableCanvas;
-        object._originalElement = writableCanvas;
-    }
-
-    object.set({
-        dirty: true,
-        objectCaching: false
-    });
-
-    return writableCanvas;
-};
+const CLONE_STAMP_MODE = TOOL_MODES.CLONE_STAMP;
+const SPOT_HEAL_MODE = TOOL_MODES.SPOT_HEAL;
 
 export const applyCanvasInteractionMode = ({
     canvas,
@@ -103,12 +24,10 @@ export const applyCanvasInteractionMode = ({
 }) => {
     if (!canvas || !frameObject) return;
 
-    const isDrawing = !['none', 'hand', CLONE_STAMP_MODE, SPOT_HEAL_MODE, QUICK_SELECT_MODE].includes(brushMode);
+    const isDrawing = isDrawingToolMode(brushMode);
     canvas.isDrawingMode = isDrawing;
     canvas.selection = brushMode === 'none';
-    canvas.defaultCursor = brushMode === 'hand'
-        ? 'grab'
-        : ((brushMode === CLONE_STAMP_MODE || brushMode === SPOT_HEAL_MODE || brushMode === QUICK_SELECT_MODE) ? 'crosshair' : 'default');
+    canvas.defaultCursor = getCursorForToolMode(brushMode);
 
     if (brushMode !== 'none' && canvas.getActiveObject()) {
         canvas.discardActiveObject();
@@ -148,7 +67,7 @@ export const applyCanvasInteractionMode = ({
                 lockMovementY: !interactive || isLayerLocked,
                 lockScalingX: !interactive || isLayerLocked,
                 lockScalingY: !interactive || isLayerLocked,
-                lockRotation: true,
+                lockRotation: !interactive || isLayerLocked,
                 hoverCursor: interactive ? 'move' : 'default'
             });
         }

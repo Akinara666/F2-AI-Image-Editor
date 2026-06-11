@@ -196,3 +196,46 @@
     border-radius: 8px;
     text-shadow: 0 0 10px rgba(0, 212, 255, 0.4);
 }
+
+/* Подсказка на пустом холсте: позиционируется поверх рамки генерации. */
+.editor-empty-state {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.editor-empty-state__inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    max-width: 90%;
+    padding: 18px 24px;
+    text-align: center;
+    color: var(--text-muted);
+    animation: fadeIn 0.3s;
+}
+
+.editor-empty-state__inner svg {
+    opacity: 0.5;
+}
+
+.editor-empty-state__title {
+    font-size: var(--font-lg);
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.editor-empty-state__text {
+    font-size: var(--font-sm);
+    line-height: 1.5;
+}
+
+.editor-empty-state__sub {
+    margin-top: 4px;
+    font-size: var(--font-xs);
+    opacity: 0.75;
+}

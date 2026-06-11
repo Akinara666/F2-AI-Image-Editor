@@ -6,6 +6,9 @@
     gap: var(--spacing-sm);
 }
 .sidebar__model-manage-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
@@ -14,6 +17,38 @@
     padding: 2px 8px;
     cursor: pointer;
     transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Кнопка-ссылка внутри подсказки (например, «Обновить список» моделей). */
+.sidebar__link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--primary);
+    font-size: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.sidebar__link-btn:hover {
+    color: var(--primary-hover);
+}
+
+/* Компактный спиннер для кнопок с длительными операциями. */
+.sidebar__btn-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: sidebar-btn-spin 0.8s linear infinite;
+}
+
+@keyframes sidebar-btn-spin {
+    to { transform: rotate(360deg); }
 }
 .sidebar__model-manage-btn:hover {
     color: var(--primary);
@@ -306,6 +341,101 @@
     flex-wrap: wrap;
 }
 
+.sidebar__tool-group {
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__tool-group .sidebar__tool-bar {
+    margin-bottom: 0;
+}
+
+.sidebar__adjustments {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
+}
+
+.sidebar__adjustments .sidebar__action-btn {
+    font-size: var(--font-xs);
+    padding: 6px 4px;
+    white-space: normal;
+    line-height: 1.2;
+}
+
+.sidebar__size-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.sidebar__size-row .input-field {
+    min-width: 0;
+    flex: 1;
+}
+
+.sidebar__size-x {
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+
+.sidebar__anchor-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 26px);
+    gap: 5px;
+    margin-top: var(--spacing-sm);
+    width: max-content;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.sidebar__anchor-cell {
+    position: relative;
+    width: 26px;
+    height: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+    cursor: pointer;
+    transition: background var(--trans-fast, 0.15s), border-color var(--trans-fast, 0.15s);
+}
+
+.sidebar__anchor-cell::after {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 6px;
+    height: 6px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.25);
+}
+
+.sidebar__anchor-cell:hover {
+    background: rgba(0, 212, 255, 0.2);
+    border-color: var(--primary);
+}
+
+.sidebar__anchor-cell--active {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.sidebar__anchor-cell--active::after {
+    background: #00222c;
+}
+
+.sidebar__tool-group-label {
+    display: block;
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: var(--spacing-xs);
+}
+
 @keyframes sidebarPromptSpin {
     from {
         transform: rotate(0deg);
@@ -348,27 +478,239 @@
     box-shadow: 0 0 8px rgba(255, 255, 255, 0.15);
 }
 
-.sidebar__brush-options {
+/* Карточка опций активного инструмента. */
+.sidebar__tool-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
     animation: fadeIn 0.2s;
 }
 
-.sidebar__brush-row {
+.sidebar__tool-panel .sidebar__hint {
+    margin: 0;
+}
+
+.sidebar__tool-panel-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar__tool-panel-title {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.sidebar__kbd {
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+}
+
+/* Шпаргалка горячих клавиш. */
+.sidebar__hotkeys {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 8px 12px;
+}
+
+.sidebar__hotkeys summary {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.sidebar__hotkeys summary:hover {
+    color: var(--text-main);
+}
+
+.sidebar__hotkeys-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: var(--spacing-md);
+}
+
+.sidebar__hotkeys-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.sidebar__hotkeys-row .sidebar__kbd {
+    flex: 0 0 88px;
+    text-align: center;
+}
+
+.sidebar__tool-panel .sidebar__actions {
+    margin: 0;
+}
+
+/* Контрол со значением: имя слева, значение справа, слайдер ниже. */
+.sidebar__control {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sidebar__control-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
     gap: var(--spacing-sm);
 }
 
-.sidebar__brush-label {
-    margin-bottom: 0;
-    width: 60px;
+.sidebar__control-name {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
-.sidebar__color-picker {
-    width: 30px;
-    height: 30px;
-    border: none;
-    padding: 0;
+.sidebar__control-value {
+    font-family: var(--font-mono);
+    font-size: var(--font-sm);
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.sidebar__control-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.sidebar__control-row .sidebar__range {
+    flex: 1;
+    min-width: 0;
+}
+
+.sidebar__inline-btn {
+    flex: 0 0 auto;
+    padding: 5px 10px;
+    font-size: var(--font-xs);
+}
+
+/* Чекбокс-строка. */
+.sidebar__checkbox {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    font-size: var(--font-sm);
+    color: var(--text-main);
+    cursor: pointer;
+    user-select: none;
+}
+
+.sidebar__checkbox input[type='checkbox'] {
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+/* Сегментный переключатель (тип фигуры и т.п.). */
+.sidebar__segmented {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.sidebar__segmented-btn {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 4px;
+    font-size: var(--font-xs);
     background: transparent;
+    border: none;
+    border-right: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background var(--trans-fast), color var(--trans-fast);
+}
+
+.sidebar__segmented-btn:last-child {
+    border-right: none;
+}
+
+.sidebar__segmented-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-main);
+}
+
+.sidebar__segmented-btn--active,
+.sidebar__segmented-btn--active:hover {
+    background: var(--primary);
+    color: #00222c;
+    font-weight: 600;
+}
+
+/* Цветовой свотч. */
+.sidebar__color-picker {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+    transition: border-color var(--trans-fast), transform var(--trans-fast);
+}
+
+.sidebar__color-picker:hover {
+    border-color: var(--primary);
+    transform: scale(1.07);
+}
+
+.sidebar__color-picker::-webkit-color-swatch-wrapper {
+    padding: 2px;
+}
+
+.sidebar__color-picker::-webkit-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+
+.sidebar__color-picker::-moz-color-swatch {
+    border: none;
+    border-radius: 4px;
+}
+
+/* Свотч с подписью (градиент: начало/конец). */
+.sidebar__swatch-field {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.sidebar__swatch-label {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
 }
 
 /* ===== Layers Panel ===== */
@@ -703,6 +1045,21 @@
     font-size: var(--font-xl);
     letter-spacing: 0.06em;
     text-transform: uppercase;
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.85), rgba(0, 122, 204, 0.9));
+    border: 1px solid rgba(0, 212, 255, 0.45);
+    color: #04222e;
+    text-shadow: none;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.25),
+        0 2px 12px rgba(0, 212, 255, 0.18);
+}
+
+.sidebar__generate-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(51, 221, 255, 0.95), rgba(0, 140, 230, 0.95));
+    border-color: rgba(51, 221, 255, 0.6);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.3),
+        0 4px 20px rgba(0, 212, 255, 0.3);
 }
 
 .sidebar__cancel-btn {
@@ -712,7 +1069,7 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     background: rgba(230, 57, 70, 0.08);
-    border-color: rgba(230, 57, 70, 0.2);
+    border: 1px solid rgba(230, 57, 70, 0.2);
     color: rgba(255, 200, 200, 0.9);
 }
 
