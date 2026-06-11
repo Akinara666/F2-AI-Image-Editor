@@ -217,6 +217,21 @@ const Sidebar = ({
     const [fillTolerance, setFillTolerance] = useState(32);
     const [gradientToTransparent, setGradientToTransparent] = useState(true);
     const [gradientEndColor, setGradientEndColor] = useState('#000000');
+    const [imageSizeDraft, setImageSizeDraft] = useState({ width: '', height: '' });
+    const [canvasSizeDraft, setCanvasSizeDraft] = useState({ width: '', height: '' });
+    const [canvasAnchor, setCanvasAnchor] = useState({ x: 0.5, y: 0.5 });
+
+    // При входе в режим кадрирования подтягиваем текущий размер рамки.
+    useEffect(() => {
+        if (brushMode !== TOOL_MODES.CROP) {
+            return;
+        }
+        const frameSize = editorRef?.current?.getFrameSize?.();
+        if (frameSize) {
+            setImageSizeDraft({ width: String(frameSize.width), height: String(frameSize.height) });
+            setCanvasSizeDraft({ width: String(frameSize.width), height: String(frameSize.height) });
+        }
+    }, [brushMode, editorRef]);
     const [importPanelOpen, setImportPanelOpen] = useState(false);
     const [importUrl, setImportUrl] = useState('');
     const [isImportingUrl, setIsImportingUrl] = useState(false);
@@ -621,6 +636,30 @@ const Sidebar = ({
                             ))}
                         </div>
 
+                        {brushMode === 'none' && (
+                            <>
+                                <div className="sidebar__actions">
+                                    <button
+                                        className="btn btn-secondary sidebar__action-btn"
+                                        onClick={() => editorRef?.current?.flipActiveObject('x')}
+                                        title="Отразить активный слой по горизонтали"
+                                    >
+                                        Отразить ↔
+                                    </button>
+                                    <button
+                                        className="btn btn-secondary sidebar__action-btn"
+                                        onClick={() => editorRef?.current?.flipActiveObject('y')}
+                                        title="Отразить активный слой по вертикали"
+                                    >
+                                        Отразить ↕
+                                    </button>
+                                </div>
+                                <small className="sidebar__hint">
+                                    Слой можно двигать, масштабировать и вращать за круглый маркер.
+                                </small>
+                            </>
+                        )}
+
                         {brushMode !== 'none' && (
                             <>
                                 {BRUSH_SIZE_TOOL_MODES.includes(brushMode) && (
@@ -865,6 +904,132 @@ const Sidebar = ({
                                     <small className="sidebar__hint">
                                         Клик по холсту — взять цвет в кисть.
                                     </small>
+                                )}
+                                {brushMode === TOOL_MODES.CROP && (
+                                    <>
+                                        <small className="sidebar__hint">
+                                            Протяни рамку по холсту. Enter — применить, Esc — отмена. Контент за рамкой сохраняется.
+                                        </small>
+                                        <div className="sidebar__actions">
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => editorRef?.current?.applyCrop()}
+                                            >
+                                                Применить
+                                            </button>
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => editorRef?.current?.cancelCrop()}
+                                            >
+                                                Отмена
+                                            </button>
+                                        </div>
+                                        <div className="sidebar__actions">
+                                            <button
+                                                className="btn btn-secondary sidebar__action-btn"
+                                                onClick={() => editorRef?.current?.cropToSelection()}
+                                            >
+                                                Кадр по выделению
+                                            </button>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label">Размер изображения</label>
+                                            <div className="sidebar__size-row">
+                                                <input
+                                                    type="number"
+                                                    className="input-field"
+                                                    min="1"
+                                                    max="8192"
+                                                    value={imageSizeDraft.width}
+                                                    onChange={(e) => setImageSizeDraft((prev) => ({ ...prev, width: e.target.value }))}
+                                                    placeholder="W"
+                                                />
+                                                <span className="sidebar__size-x">×</span>
+                                                <input
+                                                    type="number"
+                                                    className="input-field"
+                                                    min="1"
+                                                    max="8192"
+                                                    value={imageSizeDraft.height}
+                                                    onChange={(e) => setImageSizeDraft((prev) => ({ ...prev, height: e.target.value }))}
+                                                    placeholder="H"
+                                                />
+                                                <button
+                                                    className="btn btn-secondary sidebar__action-btn"
+                                                    onClick={() => {
+                                                        const width = parseInt(imageSizeDraft.width, 10);
+                                                        const height = parseInt(imageSizeDraft.height, 10);
+                                                        if (!(width >= 1) || !(height >= 1) || width > 8192 || height > 8192) {
+                                                            showToastInfo?.('Укажи размер от 1 до 8192.');
+                                                            return;
+                                                        }
+                                                        if (editorRef?.current?.resizeImage(width, height)) {
+                                                            showToastSuccess?.('Размер изображения изменён.');
+                                                        }
+                                                    }}
+                                                >
+                                                    ОК
+                                                </button>
+                                            </div>
+                                            <small className="sidebar__hint">Масштабирует все слои вместе с рамкой.</small>
+                                        </div>
+
+                                        <div className="input-group">
+                                            <label className="input-label">Размер холста</label>
+                                            <div className="sidebar__size-row">
+                                                <input
+                                                    type="number"
+                                                    className="input-field"
+                                                    min="1"
+                                                    max="8192"
+                                                    value={canvasSizeDraft.width}
+                                                    onChange={(e) => setCanvasSizeDraft((prev) => ({ ...prev, width: e.target.value }))}
+                                                    placeholder="W"
+                                                />
+                                                <span className="sidebar__size-x">×</span>
+                                                <input
+                                                    type="number"
+                                                    className="input-field"
+                                                    min="1"
+                                                    max="8192"
+                                                    value={canvasSizeDraft.height}
+                                                    onChange={(e) => setCanvasSizeDraft((prev) => ({ ...prev, height: e.target.value }))}
+                                                    placeholder="H"
+                                                />
+                                                <button
+                                                    className="btn btn-secondary sidebar__action-btn"
+                                                    onClick={() => {
+                                                        const width = parseInt(canvasSizeDraft.width, 10);
+                                                        const height = parseInt(canvasSizeDraft.height, 10);
+                                                        if (!(width >= 1) || !(height >= 1) || width > 8192 || height > 8192) {
+                                                            showToastInfo?.('Укажи размер от 1 до 8192.');
+                                                            return;
+                                                        }
+                                                        if (editorRef?.current?.resizeCanvas(width, height, canvasAnchor.x, canvasAnchor.y)) {
+                                                            showToastSuccess?.('Размер холста изменён.');
+                                                        }
+                                                    }}
+                                                >
+                                                    ОК
+                                                </button>
+                                            </div>
+                                            <div className="sidebar__anchor-grid" role="radiogroup" aria-label="Якорь холста">
+                                                {[0, 0.5, 1].map((anchorY) => (
+                                                    [0, 0.5, 1].map((anchorX) => (
+                                                        <button
+                                                            key={`${anchorX}-${anchorY}`}
+                                                            type="button"
+                                                            className={`sidebar__anchor-cell ${canvasAnchor.x === anchorX && canvasAnchor.y === anchorY ? 'sidebar__anchor-cell--active' : ''}`}
+                                                            onClick={() => setCanvasAnchor({ x: anchorX, y: anchorY })}
+                                                            aria-pressed={canvasAnchor.x === anchorX && canvasAnchor.y === anchorY}
+                                                        />
+                                                    ))
+                                                ))}
+                                            </div>
+                                            <small className="sidebar__hint">Слои остаются на месте, рамка растёт/сжимается от якоря.</small>
+                                        </div>
+                                    </>
                                 )}
                                 {brushMode === 'clone_stamp' && (
                                     <small className="sidebar__hint">

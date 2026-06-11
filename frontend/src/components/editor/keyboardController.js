@@ -16,7 +16,9 @@ export const setupEditorKeyboardShortcuts = ({
     performUndoRef,
     performDeleteActiveObjectRef,
     syncCanvasInteractionModeRef,
-    deselectSelectionRef
+    deselectSelectionRef,
+    applyCropActionRef,
+    cancelCropActionRef
 }) => {
     if (!fabricCanvas) {
         return () => {};
@@ -36,6 +38,18 @@ export const setupEditorKeyboardShortcuts = ({
         if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.code === 'KeyD') {
             event.preventDefault();
             deselectSelectionRef?.current?.();
+            return;
+        }
+
+        if (event.key === 'Enter' && brushModeRef.current === 'crop') {
+            event.preventDefault();
+            applyCropActionRef?.current?.();
+            return;
+        }
+
+        if (event.key === 'Escape' && brushModeRef.current === 'crop') {
+            event.preventDefault();
+            cancelCropActionRef?.current?.();
             return;
         }
 

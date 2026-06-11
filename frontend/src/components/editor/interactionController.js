@@ -67,7 +67,7 @@ export const applyCanvasInteractionMode = ({
                 lockMovementY: !interactive || isLayerLocked,
                 lockScalingX: !interactive || isLayerLocked,
                 lockScalingY: !interactive || isLayerLocked,
-                lockRotation: true,
+                lockRotation: !interactive || isLayerLocked,
                 hoverCursor: interactive ? 'move' : 'default'
             });
         }

@@ -241,6 +241,11 @@ export const setupCanvasViewportAndTransform = ({
         if (!target || !isTransformableObject(target)) {
             return;
         }
+        // Снэппинг к сетке считает границы без учёта угла — повернутые
+        // объекты двигаем свободно.
+        if (target.angle) {
+            return;
+        }
 
         target.set({
             left: snapPositionToGrid(target.left),
@@ -256,6 +261,9 @@ export const setupCanvasViewportAndTransform = ({
     const handleObjectScaling = (event) => {
         const target = event.target;
         if (!target || !isTransformableObject(target)) {
+            return;
+        }
+        if (target.angle) {
             return;
         }
 
@@ -285,7 +293,7 @@ export const setupCanvasViewportAndTransform = ({
             return;
         }
 
-        if (transformStart.action === 'scaling') {
+        if (transformStart.action === 'scaling' && !target.angle) {
             const corner = transformStart.corner || event.transform?.corner || '';
             const baseBounds = getDisplayBoundsFromTransform(transformStart.previous);
             const currentBounds = getDisplayBoundsFromObject(target);
