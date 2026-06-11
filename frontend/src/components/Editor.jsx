@@ -12,7 +12,8 @@ import {
     isBaseRasterObject,
     isCandidateObject,
     isMaskObject,
-    isSketchObject
+    isSketchObject,
+    UI_OVERLAY_ROLES
 } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
 import {
@@ -48,6 +49,9 @@ import {
 } from './editor/selectionEngine';
 import { setupSelectionToolHandling } from './editor/selectionController';
 import { createAdjustmentSession } from './editor/adjustmentSession';
+import { setupDrawingToolHandling } from './editor/drawingToolsController';
+import { magicWandMask, sampleMaskForLayer, sampleSelectionAt } from './editor/selectionEngine';
+import { cloneCanvasElement, ensureWritableCanvasElement, worldPointToLocal } from './editor/rasterUtils';
 import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
 import AdjustmentsDialog from './AdjustmentsDialog';
 import { useEditorDocumentState } from './editor/useEditorDocumentState';
@@ -108,7 +112,7 @@ const clampLayerPercent = (value, fallback = 100) => {
     return Math.max(0, Math.min(100, Math.round(numeric)));
 };
 
-const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange }, ref) => {
+const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor, brushSize, generationPreview, onSpotHealPoint, onLayersChange, onToolNotify }, ref) => {
     const canvasRef = useRef(null);
     const wrapperRef = useRef(null);
     const [fabricCanvas, setFabricCanvas] = useState(null);
@@ -128,6 +132,12 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
     const magicWandToleranceRef = useRef(32);
     const adjustmentSessionRef = useRef(null);
     const [activeAdjustment, setActiveAdjustment] = useState(null);
+    const textOptionsRef = useRef({ fontSize: 32 });
+    const shapeOptionsRef = useRef({ kind: 'rect', outlineOnly: false, strokeWidth: 2 });
+    const fillToleranceRef = useRef(32);
+    const gradientOptionsRef = useRef({ toTransparent: true, endColor: '#000000' });
+    const setBrushColorRef = useRef(setBrushColor);
+    const onToolNotifyRef = useRef(onToolNotify);
 
     const brushModeRef = useRef(brushMode);
     const brushColorRef = useRef(brushColor);
@@ -217,7 +227,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         && object !== genFrame
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
         && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
-        && object.editorRole !== 'quick-select-overlay'
+        && !UI_OVERLAY_ROLES.includes(object.editorRole)
     );
 
     const cloneCanvasObject = (source) => (
@@ -318,11 +328,14 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         return visualOrderTopFirst.map((object, index) => {
             const kind = resolveLayerKind(object);
             const style = getLayerStyle(object);
+            const vectorLabel = object.type === 'i-text'
+                ? 'Text'
+                : (['rect', 'ellipse', 'line'].includes(object.type) ? 'Shape' : null);
             return {
                 id: ensureLayerId(object),
                 name: getLayerDisplayName(object, visualOrderTopFirst.length - index),
                 kind,
-                kindLabel: LAYER_KIND_LABELS[kind] || 'Layer',
+                kindLabel: vectorLabel || LAYER_KIND_LABELS[kind] || 'Layer',
                 visible: object.visible !== false,
                 isActive: object === activeObject,
                 opacity: style.opacity,
@@ -468,6 +481,11 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         brushColorRef.current = brushColor;
         brushSizeRef.current = brushSize;
     }, [brushMode, brushColor, brushSize]);
+
+    useEffect(() => {
+        setBrushColorRef.current = setBrushColor;
+        onToolNotifyRef.current = onToolNotify;
+    });
 
     useEffect(() => {
         if (!fabricCanvas) {
@@ -1505,6 +1523,238 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         return { ok: true };
     };
 
+    // --- Заливка, градиент, пипетка ---
+    const hexToRgb = (hex) => {
+        const match = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+        if (!match) {
+            return { r: 0, g: 0, b: 0 };
+        }
+        const value = parseInt(match[1], 16);
+        return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 };
+    };
+
+    const sampleCompositeColor = (point) => {
+        if (!fabricCanvas || !genFrame) {
+            return null;
+        }
+        const sampleCanvas = fabric.util.createCanvasElement();
+        sampleCanvas.width = 1;
+        sampleCanvas.height = 1;
+        const context = sampleCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+            return null;
+        }
+
+        const contentObjects = fabricCanvas.getObjects().filter((object) => (
+            object.visible !== false
+            && object !== genFrame
+            && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME
+            && object.editorRole !== CANVAS_OBJECT_ROLES.FRAME_HIT_AREA
+            && !UI_OVERLAY_ROLES.includes(object.editorRole)
+            && !isMaskObject(object, genFrame)
+        ));
+
+        contentObjects.forEach((object) => {
+            const originalCanvas = object.canvas;
+            const originalDirty = object.dirty;
+            try {
+                object.canvas = null;
+                context.save();
+                context.translate(-Math.round(point.x), -Math.round(point.y));
+                object.render(context);
+                context.restore();
+            } finally {
+                object.canvas = originalCanvas;
+                object.dirty = originalDirty;
+            }
+        });
+
+        const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+        if (a === 0) {
+            return null;
+        }
+        const toHex = (channel) => channel.toString(16).padStart(2, '0');
+        return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+    };
+
+    const handleEyedropperPoint = (point) => {
+        const hex = sampleCompositeColor(point);
+        if (hex) {
+            setBrushColorRef.current?.(hex);
+        } else {
+            onToolNotifyRef.current?.('Под пипеткой нет пикселей.');
+        }
+    };
+
+    const resolvePixelToolTarget = () => {
+        if (candidateRef.current) {
+            onToolNotifyRef.current?.('Сначала прими или отмени сгенерированного кандидата.');
+            return null;
+        }
+        const target = resolveAdjustmentTarget();
+        if (!target) {
+            onToolNotifyRef.current?.('Нет растрового слоя для этой операции.');
+            return null;
+        }
+        if (!ensureWritableCanvasElement(target)) {
+            return null;
+        }
+        return target;
+    };
+
+    const commitPixelToolResult = (target, workCanvas) => {
+        target.setElement(workCanvas);
+        // Новый asset id — иначе мутация элемента портит старые undo-снапшоты.
+        target.set({ assetId: null, dirty: true });
+        markUndoDirty(target);
+        commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
+        fabricCanvas.requestRenderAll();
+    };
+
+    const handleFillPoint = (point) => {
+        const target = resolvePixelToolTarget();
+        if (!target) {
+            return;
+        }
+        const element = target.getElement();
+        const width = element.width;
+        const height = element.height;
+        const selection = selectionRef.current;
+
+        let localMask = null;
+        if (selection && sampleSelectionAt(selection, point.x, point.y) > 0) {
+            localMask = sampleMaskForLayer(selection, target, width, height);
+            if (!localMask) {
+                onToolNotifyRef.current?.('Выделение не пересекает активный слой.');
+                return;
+            }
+        } else {
+            const local = worldPointToLocal(target, point);
+            if (local.x < 0 || local.y < 0 || local.x >= width || local.y >= height) {
+                onToolNotifyRef.current?.('Клик вне активного слоя.');
+                return;
+            }
+            const context = element.getContext('2d', { willReadFrequently: true });
+            const imageData = context.getImageData(0, 0, width, height);
+            const wandSelection = magicWandMask(
+                { data: imageData.data, width, height },
+                local.x,
+                local.y,
+                { tolerance: fillToleranceRef.current }
+            );
+            if (!wandSelection) {
+                return;
+            }
+            localMask = new Uint8ClampedArray(width * height);
+            for (let y = 0; y < wandSelection.height; y += 1) {
+                const sourceOffset = y * wandSelection.width;
+                const targetOffset = (y + wandSelection.top) * width + wandSelection.left;
+                localMask.set(
+                    wandSelection.mask.subarray(sourceOffset, sourceOffset + wandSelection.width),
+                    targetOffset
+                );
+            }
+        }
+
+        const workCanvas = cloneCanvasElement(element);
+        const workContext = workCanvas.getContext('2d', { willReadFrequently: true });
+        const imageData = workContext.getImageData(0, 0, width, height);
+        const { data } = imageData;
+        const { r, g, b } = hexToRgb(brushColorRef.current);
+
+        for (let pixel = 0; pixel < localMask.length; pixel += 1) {
+            const coverage = localMask[pixel] / 255;
+            if (coverage === 0) {
+                continue;
+            }
+            const offset = pixel * 4;
+            const dstAlpha = data[offset + 3] / 255;
+            const outAlpha = coverage + dstAlpha * (1 - coverage);
+            if (outAlpha === 0) {
+                continue;
+            }
+            data[offset] = (r * coverage + data[offset] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 1] = (g * coverage + data[offset + 1] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 2] = (b * coverage + data[offset + 2] * dstAlpha * (1 - coverage)) / outAlpha;
+            data[offset + 3] = outAlpha * 255;
+        }
+
+        workContext.putImageData(imageData, 0, 0);
+        commitPixelToolResult(target, workCanvas);
+    };
+
+    const handleGradientApply = (start, end) => {
+        const target = resolvePixelToolTarget();
+        if (!target) {
+            return;
+        }
+        const element = target.getElement();
+        const width = element.width;
+        const height = element.height;
+
+        const overlayCanvas = fabric.util.createCanvasElement();
+        overlayCanvas.width = width;
+        overlayCanvas.height = height;
+        const overlayContext = overlayCanvas.getContext('2d', { willReadFrequently: true });
+
+        const localStart = worldPointToLocal(target, start);
+        const localEnd = worldPointToLocal(target, end);
+        const { r, g, b } = hexToRgb(brushColorRef.current);
+        const options = gradientOptionsRef.current || {};
+        const gradient = overlayContext.createLinearGradient(localStart.x, localStart.y, localEnd.x, localEnd.y);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, 1)`);
+        if (options.toTransparent) {
+            gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+        } else {
+            const endColor = hexToRgb(options.endColor || '#000000');
+            gradient.addColorStop(1, `rgba(${endColor.r}, ${endColor.g}, ${endColor.b}, 1)`);
+        }
+        overlayContext.fillStyle = gradient;
+        overlayContext.fillRect(0, 0, width, height);
+
+        const selection = selectionRef.current;
+        if (selection) {
+            const localMask = sampleMaskForLayer(selection, target, width, height);
+            if (!localMask) {
+                onToolNotifyRef.current?.('Выделение не пересекает активный слой.');
+                return;
+            }
+            const overlayData = overlayContext.getImageData(0, 0, width, height);
+            for (let pixel = 0; pixel < localMask.length; pixel += 1) {
+                overlayData.data[pixel * 4 + 3] = (overlayData.data[pixel * 4 + 3] * localMask[pixel]) / 255;
+            }
+            overlayContext.putImageData(overlayData, 0, 0);
+        }
+
+        const workCanvas = cloneCanvasElement(element);
+        workCanvas.getContext('2d').drawImage(overlayCanvas, 0, 0);
+        commitPixelToolResult(target, workCanvas);
+    };
+
+    useEffect(() => {
+        if (!fabricCanvas || !genFrame) {
+            return undefined;
+        }
+        return setupDrawingToolHandling({
+            canvas: fabricCanvas,
+            frameObject: genFrame,
+            brushModeRef,
+            brushColorRef,
+            setBrushModeRef,
+            textOptionsRef,
+            shapeOptionsRef,
+            clampPointToFrame,
+            canvasObjectRoles: CANVAS_OBJECT_ROLES,
+            enforceCanvasLayerOrder,
+            markUndoDirty,
+            commitUndoSnapshot,
+            getUndoSnapshotParams,
+            onFillPoint: handleFillPoint,
+            onGradientApply: handleGradientApply,
+            onEyedropperPoint: handleEyedropperPoint
+        });
+    }, [fabricCanvas, genFrame]);
+
     useEffect(() => {
         if (!fabricCanvas || !genFrame) {
             return undefined;
@@ -1592,6 +1842,22 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, brushSize, gen
         },
 
         openAdjustment,
+
+        setTextOptions: (patch) => {
+            textOptionsRef.current = { ...textOptionsRef.current, ...patch };
+        },
+
+        setShapeOptions: (patch) => {
+            shapeOptionsRef.current = { ...shapeOptionsRef.current, ...patch };
+        },
+
+        setFillTolerance: (value) => {
+            fillToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
+        },
+
+        setGradientOptions: (patch) => {
+            gradientOptionsRef.current = { ...gradientOptionsRef.current, ...patch };
+        },
 
         exportForQuickSelectRefine,
 

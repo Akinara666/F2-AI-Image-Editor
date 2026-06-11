@@ -827,10 +827,12 @@ function App() {
           brushMode={brushMode}
           setBrushMode={setBrushMode}
           brushColor={brushColor}
+          setBrushColor={setBrushColor}
           brushSize={brushSize}
           generationPreview={generationPreview}
           onSpotHealPoint={handleSpotHealPoint}
           onLayersChange={handleLayersChange}
+          onToolNotify={showInfo}
         />
       </div>
       <HistoryPanel

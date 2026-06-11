@@ -210,6 +210,13 @@ const Sidebar = ({
     const [layerViewMode, setLayerViewMode] = useState('list');
     const [wandTolerance, setWandTolerance] = useState(32);
     const [featherRadius, setFeatherRadius] = useState(4);
+    const [textFontSize, setTextFontSize] = useState(32);
+    const [shapeKind, setShapeKind] = useState('rect');
+    const [shapeOutlineOnly, setShapeOutlineOnly] = useState(false);
+    const [shapeStrokeWidth, setShapeStrokeWidth] = useState(2);
+    const [fillTolerance, setFillTolerance] = useState(32);
+    const [gradientToTransparent, setGradientToTransparent] = useState(true);
+    const [gradientEndColor, setGradientEndColor] = useState('#000000');
     const [importPanelOpen, setImportPanelOpen] = useState(false);
     const [importUrl, setImportUrl] = useState('');
     const [isImportingUrl, setIsImportingUrl] = useState(false);
@@ -708,6 +715,156 @@ const Sidebar = ({
                                             </button>
                                         </div>
                                     </>
+                                )}
+                                {brushMode === TOOL_MODES.TEXT && (
+                                    <>
+                                        <div className="input-group">
+                                            <div className="sidebar__brush-row">
+                                                <label className="input-label sidebar__brush-label">Шрифт: {textFontSize}px</label>
+                                                <input
+                                                    type="range"
+                                                    className="sidebar__range sidebar__range--neutral"
+                                                    min="8"
+                                                    max="200"
+                                                    value={textFontSize}
+                                                    onChange={(e) => {
+                                                        const value = parseInt(e.target.value, 10);
+                                                        setTextFontSize(value);
+                                                        editorRef?.current?.setTextOptions({ fontSize: value });
+                                                    }}
+                                                    style={{ flex: 1 }}
+                                                />
+                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <small className="sidebar__hint">
+                                            Клик по холсту — добавить текст. Клик вне текста завершает ввод.
+                                        </small>
+                                    </>
+                                )}
+                                {brushMode === TOOL_MODES.SHAPE && (
+                                    <>
+                                        <div className="sidebar__actions">
+                                            {[
+                                                { id: 'rect', label: 'Прямоуг.' },
+                                                { id: 'ellipse', label: 'Эллипс' },
+                                                { id: 'line', label: 'Линия' }
+                                            ].map((kind) => (
+                                                <button
+                                                    key={kind.id}
+                                                    className={`btn btn-secondary sidebar__action-btn ${shapeKind === kind.id ? 'sidebar__tool-btn--active' : ''}`}
+                                                    onClick={() => {
+                                                        setShapeKind(kind.id);
+                                                        editorRef?.current?.setShapeOptions({ kind: kind.id });
+                                                    }}
+                                                >
+                                                    {kind.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <div className="input-group">
+                                            <div className="sidebar__brush-row">
+                                                <label className="input-label sidebar__brush-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={shapeOutlineOnly}
+                                                        onChange={(e) => {
+                                                            setShapeOutlineOnly(e.target.checked);
+                                                            editorRef?.current?.setShapeOptions({ outlineOnly: e.target.checked });
+                                                        }}
+                                                    />
+                                                    Только контур
+                                                </label>
+                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
+                                            </div>
+                                        </div>
+                                        {(shapeOutlineOnly || shapeKind === 'line') && (
+                                            <div className="input-group">
+                                                <label className="input-label">Толщина: {shapeStrokeWidth}px</label>
+                                                <input
+                                                    type="range"
+                                                    className="sidebar__range sidebar__range--neutral"
+                                                    min="1"
+                                                    max="50"
+                                                    value={shapeStrokeWidth}
+                                                    onChange={(e) => {
+                                                        const value = parseInt(e.target.value, 10);
+                                                        setShapeStrokeWidth(value);
+                                                        editorRef?.current?.setShapeOptions({ strokeWidth: value });
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+                                        <small className="sidebar__hint">
+                                            Протяни по холсту, чтобы нарисовать фигуру. Редактируется в режиме курсора.
+                                        </small>
+                                    </>
+                                )}
+                                {brushMode === TOOL_MODES.FILL && (
+                                    <>
+                                        <div className="input-group">
+                                            <div className="sidebar__brush-row">
+                                                <label className="input-label sidebar__brush-label">Допуск: {fillTolerance}</label>
+                                                <input
+                                                    type="range"
+                                                    className="sidebar__range sidebar__range--neutral"
+                                                    min="0"
+                                                    max="128"
+                                                    value={fillTolerance}
+                                                    onChange={(e) => {
+                                                        const value = parseInt(e.target.value, 10);
+                                                        setFillTolerance(value);
+                                                        editorRef?.current?.setFillTolerance(value);
+                                                    }}
+                                                    style={{ flex: 1 }}
+                                                />
+                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <small className="sidebar__hint">
+                                            Клик внутри выделения зальёт его; без выделения работает как «ведро» по похожим пикселям.
+                                        </small>
+                                    </>
+                                )}
+                                {brushMode === TOOL_MODES.GRADIENT && (
+                                    <>
+                                        <div className="input-group">
+                                            <div className="sidebar__brush-row">
+                                                <label className="input-label sidebar__brush-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={gradientToTransparent}
+                                                        onChange={(e) => {
+                                                            setGradientToTransparent(e.target.checked);
+                                                            editorRef?.current?.setGradientOptions({ toTransparent: e.target.checked });
+                                                        }}
+                                                    />
+                                                    В прозрачность
+                                                </label>
+                                                <input type="color" className="sidebar__color-picker" value={brushColor} onChange={(e) => setBrushColor(e.target.value)} title="Начальный цвет" />
+                                                {!gradientToTransparent && (
+                                                    <input
+                                                        type="color"
+                                                        className="sidebar__color-picker"
+                                                        value={gradientEndColor}
+                                                        onChange={(e) => {
+                                                            setGradientEndColor(e.target.value);
+                                                            editorRef?.current?.setGradientOptions({ endColor: e.target.value });
+                                                        }}
+                                                        title="Конечный цвет"
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
+                                        <small className="sidebar__hint">
+                                            Протяни линию направления градиента по активному слою.
+                                        </small>
+                                    </>
+                                )}
+                                {brushMode === TOOL_MODES.EYEDROPPER && (
+                                    <small className="sidebar__hint">
+                                        Клик по холсту — взять цвет в кисть.
+                                    </small>
                                 )}
                                 {brushMode === 'clone_stamp' && (
                                     <small className="sidebar__hint">
