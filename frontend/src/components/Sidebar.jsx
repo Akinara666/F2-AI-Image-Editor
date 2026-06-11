@@ -173,6 +173,31 @@ const TOOL_ICONS = {
     )
 };
 
+const TOOL_LOOKUP = TOOL_GROUPS
+    .flatMap((group) => group.tools)
+    .reduce((accumulator, tool) => {
+        accumulator[tool.id] = tool;
+        return accumulator;
+    }, {});
+
+// Карточка опций инструмента с заголовком: имя активного инструмента
+// и его горячая клавиша — видно, к чему относятся настройки ниже.
+const ToolPanel = ({ toolId, label, children }) => {
+    const tool = TOOL_LOOKUP[toolId];
+    const title = label || (tool ? tool.title.replace(/\s*\([A-Z]\)$/, '') : null);
+    return (
+        <div className="sidebar__tool-panel">
+            {title && (
+                <div className="sidebar__tool-panel-header">
+                    <span className="sidebar__tool-panel-title">{title}</span>
+                    {tool?.shortcut && <kbd className="sidebar__kbd">{tool.shortcut}</kbd>}
+                </div>
+            )}
+            {children}
+        </div>
+    );
+};
+
 // Слайдер с заголовком и значением: имя слева, значение справа, ползунок
 // на всю ширину, опциональный элемент (свотч/кнопка) справа от ползунка.
 const SliderControl = ({ name, value, suffix = '', min, max, onChange, trailing = null }) => (
@@ -452,7 +477,7 @@ const Sidebar = ({
                         className={`btn sidebar__tab-btn ${activeTab === 'generation' ? 'sidebar__tab-btn--active' : ''}`}
                         onClick={() => setActiveTab('generation')}
                     >
-                        Generation
+                        Генерация
                     </button>
                     <button
                         type="button"
@@ -461,7 +486,7 @@ const Sidebar = ({
                         className={`btn sidebar__tab-btn ${activeTab === 'tools' ? 'sidebar__tab-btn--active' : ''}`}
                         onClick={() => setActiveTab('tools')}
                     >
-                        Tools
+                        Инструменты
                     </button>
                 </div>
 
@@ -633,7 +658,6 @@ const Sidebar = ({
                 {activeTab === 'tools' && (
                     <>
                         <div className="input-group">
-                            <h3 className="sidebar__section-title">Инструменты</h3>
                             {TOOL_GROUPS.map((group) => (
                                 <div key={group.id} className="sidebar__tool-group">
                                     <span className="sidebar__tool-group-label">{group.label}</span>
@@ -659,7 +683,7 @@ const Sidebar = ({
                         </div>
 
                         {brushMode === 'none' && (
-                            <div className="sidebar__tool-panel">
+                            <ToolPanel toolId="none" label="Трансформация слоя">
                                 <div className="sidebar__actions">
                                     <button
                                         className="btn btn-secondary sidebar__action-btn"
@@ -679,13 +703,13 @@ const Sidebar = ({
                                 <small className="sidebar__hint">
                                     Слой можно двигать, масштабировать и вращать за круглый маркер.
                                 </small>
-                            </div>
+                            </ToolPanel>
                         )}
 
                         {brushMode !== 'none' && (
                             <>
                                 {BRUSH_SIZE_TOOL_MODES.includes(brushMode) && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={brushMode}>
                                         <SliderControl
                                             name="Размер кисти"
                                             value={brushSize}
@@ -713,10 +737,10 @@ const Sidebar = ({
                                                 Кликни по мелкому дефекту — он будет закрашен локальной ретушью.
                                             </small>
                                         )}
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {SELECTION_TOOL_MODES.includes(brushMode) && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={brushMode}>
                                         {brushMode === TOOL_MODES.MAGIC_WAND && (
                                             <SliderControl
                                                 name="Допуск"
@@ -787,10 +811,10 @@ const Sidebar = ({
                                                 ? 'Клик — выделить похожие пиксели. Shift — добавить, Alt — вычесть.'
                                                 : 'Обведи область. Shift — добавить к выделению, Alt — вычесть.'}
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.TEXT && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.TEXT}>
                                         <SliderControl
                                             name="Размер шрифта"
                                             value={textFontSize}
@@ -814,10 +838,10 @@ const Sidebar = ({
                                         <small className="sidebar__hint">
                                             Клик по холсту — добавить текст. Клик вне текста завершает ввод.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.SHAPE && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.SHAPE}>
                                         <div className="sidebar__segmented" role="radiogroup" aria-label="Тип фигуры">
                                             {[
                                                 { id: 'rect', label: 'Прямоугольник' },
@@ -874,10 +898,10 @@ const Sidebar = ({
                                         <small className="sidebar__hint">
                                             Протяни по холсту, чтобы нарисовать фигуру. Редактируется в режиме курсора.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.FILL && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.FILL}>
                                         <SliderControl
                                             name="Допуск"
                                             value={fillTolerance}
@@ -900,10 +924,10 @@ const Sidebar = ({
                                         <small className="sidebar__hint">
                                             Клик внутри выделения зальёт его; без выделения работает как «ведро» по похожим пикселям.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.GRADIENT && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.GRADIENT}>
                                         <div className="sidebar__control-row">
                                             <label className="sidebar__checkbox" style={{ flex: 1 }}>
                                                 <input
@@ -945,17 +969,17 @@ const Sidebar = ({
                                         <small className="sidebar__hint">
                                             Протяни линию направления градиента по активному слою.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.EYEDROPPER && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.EYEDROPPER}>
                                         <small className="sidebar__hint">
                                             Клик по холсту — взять цвет в кисть.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === TOOL_MODES.CROP && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId={TOOL_MODES.CROP}>
                                         <small className="sidebar__hint">
                                             Протяни рамку по холсту. Enter — применить, Esc — отмена. Контент за рамкой сохраняется.
                                         </small>
@@ -1078,10 +1102,10 @@ const Sidebar = ({
                                             </div>
                                             <small className="sidebar__hint">Слои остаются на месте, рамка растёт/сжимается от якоря.</small>
                                         </div>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                                 {brushMode === 'quick_select' && (
-                                    <div className="sidebar__tool-panel">
+                                    <ToolPanel toolId="quick_select">
                                         <div className="sidebar__actions">
                                             <button className="btn btn-secondary sidebar__action-btn" onClick={onQuickSelectionCopy}>
                                                 Копировать
@@ -1098,7 +1122,7 @@ const Sidebar = ({
                                         <small className="sidebar__hint">
                                             Зажми ЛКМ и обведи контур объекта, затем скопируй и вставь рядом.
                                         </small>
-                                    </div>
+                                    </ToolPanel>
                                 )}
                             </>
                         )}
@@ -1273,6 +1297,40 @@ const Sidebar = ({
                                 </div>
                             )}
                         </div>
+
+                        <details className="sidebar__hotkeys">
+                            <summary>Горячие клавиши</summary>
+                            <div className="sidebar__hotkeys-grid">
+                                {[
+                                    ['V', 'Курсор'],
+                                    ['H', 'Рука (панорама)'],
+                                    ['M', 'Выделение: прямоугольник / эллипс'],
+                                    ['L', 'Лассо'],
+                                    ['A', 'Волшебная палочка'],
+                                    ['W', 'Быстрое выделение'],
+                                    ['B', 'Кисть-скетч'],
+                                    ['T', 'Текст'],
+                                    ['U', 'Фигура'],
+                                    ['G', 'Заливка / градиент'],
+                                    ['I', 'Пипетка'],
+                                    ['E', 'Ластик'],
+                                    ['J', 'Точечная кисть'],
+                                    ['S', 'Штамп'],
+                                    ['C', 'Кадрирование'],
+                                    ['Ctrl+Z', 'Отменить действие'],
+                                    ['Ctrl+D', 'Снять выделение'],
+                                    ['Shift / Alt', 'Добавить / вычесть выделение'],
+                                    ['Space', 'Панорама холста'],
+                                    ['Del', 'Удалить активный объект'],
+                                    ['Enter / Esc', 'Кадр: применить / отмена']
+                                ].map(([keys, description]) => (
+                                    <div key={keys} className="sidebar__hotkeys-row">
+                                        <kbd className="sidebar__kbd">{keys}</kbd>
+                                        <span>{description}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </details>
 
                         {brushMode === 'mask' && (
                             <div className="input-group sidebar__mask-panel">

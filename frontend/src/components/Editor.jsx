@@ -124,6 +124,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
     const [isMutatingCanvas, setIsMutatingCanvas] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [activeImageResolution, setActiveImageResolution] = useState(null);
+    const [isCanvasEmpty, setIsCanvasEmpty] = useState(true);
     const [previewFrameBounds, setPreviewFrameBounds] = useState(null);
     const previewFrameBoundsRef = useRef(null);
     const quickSelectionOverlayRef = useRef(null);
@@ -353,10 +354,12 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
     }, [fabricCanvas, genFrame]);
 
     const emitLayersSnapshot = React.useCallback(() => {
+        const layersSnapshot = buildLayersSnapshot();
+        setIsCanvasEmpty(layersSnapshot.length === 0);
         if (typeof onLayersChange !== 'function') {
             return;
         }
-        onLayersChange(buildLayersSnapshot());
+        onLayersChange(layersSnapshot);
     }, [onLayersChange, buildLayersSnapshot]);
 
     const findLayerObjectById = (layerId) => {
@@ -2336,6 +2339,34 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             {isDragOver && (
                 <div className="editor__drag-overlay">
                     <span className="editor__drag-overlay__label">Отпустите для импорта</span>
+                </div>
+            )}
+
+            {isCanvasEmpty && !isDragOver && previewFrameBounds?.visible && (
+                <div
+                    className="editor-empty-state"
+                    style={{
+                        left: `${previewFrameBounds.left}px`,
+                        top: `${previewFrameBounds.top}px`,
+                        width: `${previewFrameBounds.width}px`,
+                        height: `${previewFrameBounds.height}px`
+                    }}
+                >
+                    <div className="editor-empty-state__inner">
+                        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="3" y="3" width="18" height="18" rx="2" />
+                            <circle cx="9" cy="9" r="2" />
+                            <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+                        </svg>
+                        <span className="editor-empty-state__title">Холст пуст</span>
+                        <span className="editor-empty-state__text">
+                            Перетащи изображение сюда, импортируй файл<br />
+                            или напиши промпт и нажми «Сгенерировать»
+                        </span>
+                        <span className="editor-empty-state__sub">
+                            Колесо — масштаб · Space — панорама · Ctrl+Z — отмена
+                        </span>
+                    </div>
                 </div>
             )}
 

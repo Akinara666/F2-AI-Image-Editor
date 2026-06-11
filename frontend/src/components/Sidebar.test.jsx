@@ -156,7 +156,7 @@ describe('Sidebar', () => {
     const setBrushMode = vi.fn();
     render(<Sidebar {...createBaseProps({ setBrushMode })} />);
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Инструменты' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Лассо/ }));
     expect(setBrushMode).toHaveBeenCalledWith('lasso');
@@ -182,7 +182,7 @@ describe('Sidebar', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Инструменты' }));
 
     const curvesButton = screen.getByRole('button', { name: 'Кривые' });
     fireEvent.click(curvesButton);
@@ -204,7 +204,7 @@ describe('Sidebar', () => {
       />
     );
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Инструменты' }));
 
     expect(screen.getByText(/Допуск/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Инвертировать' })).toBeInTheDocument();

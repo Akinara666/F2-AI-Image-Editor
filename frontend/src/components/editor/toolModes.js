@@ -109,7 +109,7 @@ export const TOOL_GROUPS = [
             { id: TOOL_MODES.MARQUEE_ELLIPSE, label: 'Эллипс', title: 'Эллиптическое выделение (M)', color: 'var(--primary)', shortcut: 'M' },
             { id: TOOL_MODES.LASSO, label: 'Лассо', title: 'Лассо (L)', color: 'var(--primary)', shortcut: 'L' },
             { id: TOOL_MODES.MAGIC_WAND, label: 'Палочка', title: 'Волшебная палочка (A)', color: 'var(--primary)', shortcut: 'A' },
-            { id: TOOL_MODES.QUICK_SELECT, label: 'Select', title: 'Быстрое выделение (W)', color: 'var(--primary)', shortcut: 'W' }
+            { id: TOOL_MODES.QUICK_SELECT, label: 'Быстрое', title: 'Быстрое выделение (W)', color: 'var(--primary)', shortcut: 'W' }
         ]
     },
     {
@@ -130,7 +130,7 @@ export const TOOL_GROUPS = [
         label: 'Ретушь',
         tools: [
             { id: TOOL_MODES.MASK, label: 'Маска', title: 'Маска инпейнта', color: 'var(--danger)', shortcut: null },
-            { id: TOOL_MODES.SPOT_HEAL, label: 'Heal', title: 'Spot Healing Brush / Точечная восстановительная кисть (J)', color: 'var(--success)', shortcut: 'J' },
+            { id: TOOL_MODES.SPOT_HEAL, label: 'Точечная', title: 'Точечная восстановительная кисть (J)', color: 'var(--success)', shortcut: 'J' },
             { id: TOOL_MODES.CLONE_STAMP, label: 'Штамп', title: 'Штамп (S)', color: 'var(--accent)', shortcut: 'S' }
         ]
     },

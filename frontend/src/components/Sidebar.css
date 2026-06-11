@@ -346,28 +346,50 @@
 
 .sidebar__anchor-grid {
     display: grid;
-    grid-template-columns: repeat(3, 22px);
-    gap: 4px;
+    grid-template-columns: repeat(3, 26px);
+    gap: 5px;
     margin-top: var(--spacing-sm);
+    width: max-content;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.02);
 }
 
 .sidebar__anchor-cell {
-    width: 22px;
-    height: 22px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    position: relative;
+    width: 26px;
+    height: 26px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
     background: var(--bg-hover, rgba(255, 255, 255, 0.06));
     cursor: pointer;
-    transition: background var(--trans-fast, 0.15s);
+    transition: background var(--trans-fast, 0.15s), border-color var(--trans-fast, 0.15s);
+}
+
+.sidebar__anchor-cell::after {
+    content: '';
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: 6px;
+    height: 6px;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.25);
 }
 
 .sidebar__anchor-cell:hover {
     background: rgba(0, 212, 255, 0.2);
+    border-color: var(--primary);
 }
 
 .sidebar__anchor-cell--active {
     background: var(--primary);
     border-color: var(--primary);
+}
+
+.sidebar__anchor-cell--active::after {
+    background: #00222c;
 }
 
 .sidebar__tool-group-label {
@@ -436,6 +458,72 @@
 
 .sidebar__tool-panel .sidebar__hint {
     margin: 0;
+}
+
+.sidebar__tool-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar__tool-panel-title {
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.sidebar__kbd {
+    font-family: var(--font-mono);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+}
+
+/* Шпаргалка горячих клавиш. */
+.sidebar__hotkeys {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 8px 12px;
+}
+
+.sidebar__hotkeys summary {
+    font-size: var(--font-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.sidebar__hotkeys summary:hover {
+    color: var(--text-main);
+}
+
+.sidebar__hotkeys-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: var(--spacing-md);
+}
+
+.sidebar__hotkeys-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+}
+
+.sidebar__hotkeys-row .sidebar__kbd {
+    flex: 0 0 88px;
+    text-align: center;
 }
 
 .sidebar__tool-panel .sidebar__actions {
