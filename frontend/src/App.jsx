@@ -3,6 +3,7 @@ import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
 import { resolveBackendMode } from './components/editor/generationModes';
+import { TOOL_MODES } from './components/editor/toolModes';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
 import {
@@ -221,6 +222,18 @@ function App() {
     } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [params, generationMode, brushMode, brushColor, brushSize]);
 
+  // Смена режима подтягивает уместный инструмент: в inpaint сразу даём кисть
+  // маски, в «вся картинка» уводим на курсор. Outpaint инструмент не трогает —
+  // его зону задаёт прозрачность кадра (ручки холста — отдельный слайс).
+  const handleGenerationModeChange = (nextMode) => {
+    setGenerationMode(nextMode);
+    if (nextMode === 'inpaint') {
+      setBrushMode(TOOL_MODES.MASK);
+    } else if (nextMode === 'whole') {
+      setBrushMode(TOOL_MODES.CURSOR);
+    }
+  };
+
   // Ссылка на публичные методы редактора.
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
@@ -299,6 +312,13 @@ function App() {
       void pollGenerationPreview(requestId, previewController.signal);
       // 1. Получаем подготовленные данные из редактора.
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
+
+      // В режиме inpaint без маски бэкенд вернёт 400 — ловим это заранее и
+      // подсказываем, что делать (finally сбросит статус и preview).
+      if (generationMode === 'inpaint' && !maskImageBlob) {
+        showError('Inpaint: нарисуйте маску на области, которую нужно изменить.');
+        return;
+      }
 
       // 2. Собираем FormData для запроса генерации.
       const formData = new FormData();
@@ -793,7 +813,7 @@ function App() {
           params={params}
           setParams={setParams}
           generationMode={generationMode}
-          setGenerationMode={setGenerationMode}
+          setGenerationMode={handleGenerationModeChange}
           isGenerating={isGenerating}
           isBusy={isBusy}
           generationStatus={generationStatus}
