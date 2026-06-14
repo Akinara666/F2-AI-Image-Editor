@@ -222,6 +222,16 @@ function App() {
     } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [params, generationMode, brushMode, brushColor, brushSize]);
 
+  // Живое превью растушёвки/расширения маски на холсте: реагирует на слайдеры
+  // mask_blur/mask_padding и включается только в режимах с маской.
+  React.useEffect(() => {
+    editorRef.current?.setMaskFeatherPreview?.({
+      blur: params.mask_blur,
+      padding: params.mask_padding,
+      enabled: generationMode === 'inpaint' || generationMode === 'outpaint'
+    });
+  }, [params.mask_blur, params.mask_padding, generationMode]);
+
   // Смена режима подтягивает уместный инструмент: в inpaint сразу даём кисть
   // маски, в «вся картинка» уводим на курсор. Outpaint инструмент не трогает —
   // его зону задаёт прозрачность кадра (ручки холста — отдельный слайс).

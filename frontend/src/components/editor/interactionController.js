@@ -93,7 +93,8 @@ export const setupPathCreationHandling = ({
     getUndoSnapshotParams,
     getMaskGroupFromCanvas,
     enqueueCanvasMutation,
-    applyEraserPathToCanvas
+    applyEraserPathToCanvas,
+    onMaskChanged
 }) => {
     if (!canvas || !frameObject) {
         return () => {};
@@ -135,6 +136,7 @@ export const setupPathCreationHandling = ({
             }
             enforceCanvasLayerOrder(canvas, frameObject);
             syncMaskStateFromCanvas(canvas);
+            onMaskChanged?.(canvas);
             canvas.requestRenderAll();
             commitUndoSnapshot(getUndoSnapshotParams(canvas, frameObject));
             return;

@@ -693,6 +693,37 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         return setMaskOverlayVisibility(visible, canvas);
     };
 
+    // Живое превью растушёвки/расширения маски: мягкое красное свечение вокруг
+    // maskGroup, пропорциональное mask_blur/mask_padding. Это ЧИСТО визуальная
+    // подсказка на холсте (без undo) — в экспортируемую бинарную маску она не
+    // попадает: в exportCanvasState тень снимается с клона.
+    const maskFeatherPreviewRef = useRef({ blur: 0, padding: 0, enabled: false });
+
+    const applyMaskFeatherPreview = (canvas = fabricCanvas) => {
+        const maskGroup = getMaskGroupFromCanvas(canvas);
+        if (!maskGroup) {
+            return;
+        }
+        const { blur, padding, enabled } = maskFeatherPreviewRef.current;
+        // padding расширяет зону жёстко, blur размягчает край — для подсказки
+        // достаточно одного свечения, суммирующего оба эффекта наружу.
+        const glow = enabled ? Math.max(0, blur) + Math.max(0, padding) * 0.5 : 0;
+        maskGroup.set('shadow', glow > 0
+            ? new fabric.Shadow({ color: 'rgba(229, 75, 74, 0.6)', blur: glow, offsetX: 0, offsetY: 0 })
+            : null);
+        maskGroup.dirty = true;
+        canvas?.requestRenderAll();
+    };
+
+    const setMaskFeatherPreview = ({ blur, padding, enabled }) => {
+        maskFeatherPreviewRef.current = {
+            blur: Number(blur) || 0,
+            padding: Number(padding) || 0,
+            enabled: Boolean(enabled)
+        };
+        applyMaskFeatherPreview();
+    };
+
     const syncActiveImageResolution = (target = fabricCanvas?.getActiveObject()) => {
         if (!target) {
             setActiveImageResolution(null);
@@ -764,7 +795,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             getUndoSnapshotParams,
             getMaskGroupFromCanvas,
             enqueueCanvasMutation,
-            applyEraserPathToCanvas
+            applyEraserPathToCanvas,
+            onMaskChanged: applyMaskFeatherPreview
         });
     }, [fabricCanvas, genFrame]);
 
@@ -1435,6 +1467,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         }
         enforceCanvasLayerOrder(fabricCanvas, genFrame);
         syncMaskStateFromCanvas(fabricCanvas);
+        applyMaskFeatherPreview(fabricCanvas);
         fabricCanvas.requestRenderAll();
         commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
         return true;
@@ -1977,6 +2010,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         featherSelection: featherActiveSelection,
 
         convertSelectionToInpaintMask,
+
+        setMaskFeatherPreview,
 
         setMagicWandTolerance: (value) => {
             magicWandToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));

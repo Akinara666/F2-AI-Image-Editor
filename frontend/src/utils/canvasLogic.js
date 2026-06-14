@@ -429,7 +429,10 @@ export const exportCanvasState = async (canvas, frame) => {
         const maskClone = await cloneFabricObject(maskGroup);
         maskClone.set({
             visible: true,
-            opacity: 1.0
+            opacity: 1.0,
+            // Снимаем превью-свечение растушёвки: в генерацию должна уйти
+            // чёткая бинарная маска, а feather делает уже бэкенд.
+            shadow: null
         });
         maskClone.getObjects().forEach((child) => {
             child.set({
