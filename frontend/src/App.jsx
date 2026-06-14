@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
+import { resolveBackendMode } from './components/editor/generationModes';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
 import {
@@ -202,6 +203,7 @@ function App() {
   const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
   const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
   const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
+  const [generationMode, setGenerationMode] = useState(initialAppSettings.generationMode);
   const [layers, setLayers] = useState([]);
 
   React.useEffect(() => {
@@ -209,6 +211,7 @@ function App() {
       localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify({
         version: APP_SETTINGS_STORAGE_VERSION,
         params,
+        generationMode,
         brush: {
           brushMode,
           brushColor,
@@ -216,7 +219,7 @@ function App() {
         }
       }));
     } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
-  }, [params, brushMode, brushColor, brushSize]);
+  }, [params, generationMode, brushMode, brushColor, brushSize]);
 
   // Ссылка на публичные методы редактора.
   const editorRef = React.useRef();
@@ -313,8 +316,11 @@ function App() {
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
       formData.append('active_tool', brushMode);
-      // В smart-режиме backend сам решает, нужен ли mask/img2img или txt2img.
-      formData.append('mode', 'auto');
+      // Явный режим из UI: пользователь сам выбрал «вся картинка / inpaint /
+      // outpaint». В режиме «вся картинка» маску не отправляем, даже если она
+      // нарисована, — никакого backend-угадывания.
+      const { mode: backendMode, sendMask } = resolveBackendMode(generationMode);
+      formData.append('mode', backendMode);
 
       formData.append('width', width);
       formData.append('height', height);
@@ -322,7 +328,7 @@ function App() {
       if (initImageBlob) {
         formData.append('init_image', initImageBlob, 'init.png');
       }
-      if (maskImageBlob) {
+      if (sendMask && maskImageBlob) {
         formData.append('mask_image', maskImageBlob, 'mask.png');
       }
 
@@ -786,6 +792,8 @@ function App() {
           onModelsRefresh={refreshModels}
           params={params}
           setParams={setParams}
+          generationMode={generationMode}
+          setGenerationMode={setGenerationMode}
           isGenerating={isGenerating}
           isBusy={isBusy}
           generationStatus={generationStatus}

@@ -37,6 +37,12 @@ export const DEFAULT_BRUSH_SETTINGS = {
   brushSize: 20
 };
 
+export const DEFAULT_GENERATION_MODE = 'whole';
+const GENERATION_MODE_IDS = new Set(['whole', 'inpaint', 'outpaint']);
+const sanitizeGenerationMode = (value) => (
+  GENERATION_MODE_IDS.has(value) ? value : DEFAULT_GENERATION_MODE
+);
+
 const getSanitizedNumericParam = (rawParams, name) => {
   const parsed = parseGenerationNumericParam(name, rawParams[name]);
   return parsed.valid ? parsed.value : parsed.rule?.defaultValue;
@@ -105,7 +111,8 @@ export const loadAppSettingsFromStorage = () => {
     if (!saved) {
       return {
         params: { ...DEFAULT_PARAMS },
-        brush: { ...DEFAULT_BRUSH_SETTINGS }
+        brush: { ...DEFAULT_BRUSH_SETTINGS },
+        generationMode: DEFAULT_GENERATION_MODE
       };
     }
 
@@ -114,6 +121,7 @@ export const loadAppSettingsFromStorage = () => {
     const rawBrush = parsed?.brush && typeof parsed.brush === 'object' ? parsed.brush : {};
 
     return {
+      generationMode: sanitizeGenerationMode(parsed?.generationMode),
       params: {
         prompt: typeof rawParams.prompt === 'string' ? rawParams.prompt : DEFAULT_PARAMS.prompt,
         negative_prompt: typeof rawParams.negative_prompt === 'string' ? rawParams.negative_prompt : DEFAULT_PARAMS.negative_prompt,
@@ -138,7 +146,8 @@ export const loadAppSettingsFromStorage = () => {
   } catch {
     return {
       params: { ...DEFAULT_PARAMS },
-      brush: { ...DEFAULT_BRUSH_SETTINGS }
+      brush: { ...DEFAULT_BRUSH_SETTINGS },
+      generationMode: DEFAULT_GENERATION_MODE
     };
   }
 };

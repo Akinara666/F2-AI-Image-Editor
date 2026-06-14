@@ -7,6 +7,7 @@ import {
     parseGenerationNumericParam
 } from '../constants';
 import ModelManager from './ModelManager';
+import GenerationModePanel from './editor/GenerationModePanel';
 import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
 import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
 import { ADJUSTMENT_LABELS } from './AdjustmentsDialog';
@@ -238,6 +239,7 @@ const Sidebar = ({
     availableModels,
     onModelsRefresh,
     params, setParams,
+    generationMode, setGenerationMode,
     isGenerating, isBusy, generationStatus, onGenerate, onCancel,
     brushMode, setBrushMode,
     brushColor, setBrushColor,
@@ -508,6 +510,13 @@ const Sidebar = ({
 
                 {activeTab === 'generation' && (
                     <>
+                        <GenerationModePanel
+                            mode={generationMode}
+                            onModeChange={setGenerationMode}
+                            params={params}
+                            setParams={setParams}
+                        />
+
                         {/* Модель и сэмплер. */}
                         <div className="input-group">
                             <div className="sidebar__label-row">
