@@ -1539,7 +1539,6 @@ async def generate_image(
                             image_input,
                             result_image,
                             blend_mask_input,
-                            generation_mask_input,
                         )
 
             # 4.5 Check for cancellation
@@ -1658,7 +1657,7 @@ async def tool_spot_heal(
         mask_blur=mask_blur,
     )
     healed = source.filter(ImageFilter.MedianFilter(size=5)).filter(ImageFilter.GaussianBlur(radius=1.4))
-    result = feather_blend(source, healed, blend_mask, generation_mask)
+    result = feather_blend(source, healed, blend_mask)
 
     filename = _save_tool_image(
         result,
