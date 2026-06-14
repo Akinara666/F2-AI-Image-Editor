@@ -9,6 +9,8 @@
 # Что делает:
 #   * ставит зависимости backend прямо в окружение инстанса (torch НЕ трогает,
 #     если CUDA-torch уже стоит — типично для vast pytorch-образов);
+#   * по умолчанию скачивает GGUF-модель Qwen для prompt-трансформации,
+#     ставит llama-cpp-python и включает провайдер qwen_gguf (см. --no-llm);
 #   * поднимает uvicorn на 0.0.0.0:8000;
 #   * (по умолчанию) поднимает Cloudflare quick-tunnel и печатает публичный
 #     https://<random>.trycloudflare.com — это адрес API;
@@ -19,9 +21,12 @@
 #   --no-tunnel      без cloudflared (доступ по проброшенному порту vast / ssh -L)
 #   --no-venv        ставить в текущий python, а не в venv deploy/.venv-vast
 #   --optional       доустановить requirements-optional (xformers, llama-cpp-python)
-#   --reinstall      переустановить зависимости, даже если уже стоят
+#   --no-llm         не скачивать Qwen-GGUF и не включать провайдер qwen_gguf
+#   --llm-url U      URL GGUF-модели (по умолчанию Qwen3-1.7B-Q8_0)
+#   --reinstall      переустановить зависимости и перекачать GGUF, даже если есть
 #   --port N         порт backend (по умолчанию 8000)
-#   --torch-index U  индекс колёс torch (по умолчанию cu121)
+#   --torch-index U  индекс колёс torch (по умолчанию cu128 — нужен для
+#                    Blackwell/sm_120, RTX 50xx; для старых карт можно cu121)
 #   -h | --help      показать справку
 #
 set -euo pipefail
@@ -33,9 +38,11 @@ WITH_TUNNEL=1
 USE_VENV=1
 OPTIONAL=0
 REINSTALL=0
+WITH_LLM=1
+LLM_MODEL_URL="https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"
 PORT=8000
 HOST="0.0.0.0"
-TORCH_INDEX="https://download.pytorch.org/whl/cu121"
+TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 
 c_blue="\033[1;34m"; c_yellow="\033[1;33m"; c_red="\033[1;31m"; c_green="\033[1;32m"; c_off="\033[0m"
 log()  { printf "${c_blue}[vast]${c_off} %s\n" "$*"; }
@@ -49,6 +56,8 @@ while [ $# -gt 0 ]; do
     --no-tunnel) WITH_TUNNEL=0 ;;
     --no-venv) USE_VENV=0 ;;
     --optional) OPTIONAL=1 ;;
+    --no-llm) WITH_LLM=0 ;;
+    --llm-url) shift; LLM_MODEL_URL="${1:?--llm-url требует значение}" ;;
     --reinstall) REINSTALL=1 ;;
     --port) shift; PORT="${1:?--port требует значение}" ;;
     --torch-index) shift; TORCH_INDEX="${1:?--torch-index требует значение}" ;;
@@ -111,6 +120,38 @@ if ! "$PY" -c "import torch; assert torch.cuda.is_available()" >/dev/null 2>&1; 
   warn "Проверь, что инстанс реально с GPU и драйвер виден (nvidia-smi)."
 fi
 
+# ---------- LLM (Qwen GGUF для prompt-трансформации) ----------
+# Путь до файла нужен и для скачивания, и для проброса в env ниже.
+LLM_DIR="$REPO_ROOT/backend/models/llm"
+LLM_FILE="$LLM_DIR/$(basename "$LLM_MODEL_URL")"
+if [ "$WITH_LLM" -eq 1 ]; then
+  if [ -f "$LLM_FILE" ] && [ "$REINSTALL" -ne 1 ]; then
+    ok "GGUF-модель уже на месте: $LLM_FILE"
+  else
+    mkdir -p "$LLM_DIR"
+    log "Скачиваю GGUF-модель: $LLM_MODEL_URL ..."
+    # .part + переименование, чтобы оборванная загрузка не выглядела готовой.
+    if curl -fL --retry 3 -o "$LLM_FILE.part" "$LLM_MODEL_URL"; then
+      mv "$LLM_FILE.part" "$LLM_FILE"
+      ok "GGUF-модель готова: $LLM_FILE"
+    else
+      rm -f "$LLM_FILE.part"
+      err "Не удалось скачать GGUF-модель ($LLM_MODEL_URL)."
+      err "Запусти позже вручную или с --llm-url <URL>; пока продолжаю без LLM."
+      WITH_LLM=0
+    fi
+  fi
+
+  # Провайдеру qwen_gguf нужен llama-cpp-python (он в requirements-optional).
+  if [ "$WITH_LLM" -eq 1 ] && ! "$PY" -c "import llama_cpp" >/dev/null 2>&1; then
+    log "Ставлю llama-cpp-python (нужен для qwen_gguf) ..."
+    if ! "$PY" -m pip install "llama-cpp-python>=0.2.56"; then
+      warn "llama-cpp-python не встал — провайдер qwen_gguf будет недоступен."
+      WITH_LLM=0
+    fi
+  fi
+fi
+
 # ---------- env ----------
 ENV_FILE="$SCRIPT_DIR/backend.vast.env"
 if [ ! -f "$ENV_FILE" ]; then
@@ -119,6 +160,29 @@ if [ ! -f "$ENV_FILE" ]; then
   ok "Создан deploy/backend.vast.env из шаблона (отредактируй при необходимости)."
 else
   log "Использую существующий deploy/backend.vast.env"
+fi
+
+# Идемпотентно выставить KEY=VALUE в env-файле (| как разделитель — в путях
+# и значениях его нет, а в CORS-regex есть слэши, которые ломали бы /.../).
+set_env_kv() {
+  local key="$1" val="$2" file="$3"
+  if grep -q "^${key}=" "$file"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$val" >>"$file"
+  fi
+}
+
+# Шаблон backend.env.example прописывает LLM_MODEL_PATH=/app/models/llm/model.gguf
+# (путь из Docker) — на vast его надо заменить реальным путём скачанного файла,
+# иначе backend не найдёт модель.
+if [ "$WITH_LLM" -eq 1 ] && [ -f "$LLM_FILE" ]; then
+  set_env_kv LLM_MODEL_PATH "$LLM_FILE" "$ENV_FILE"
+  set_env_kv PROMPT_TRANSFORM_ENABLED true "$ENV_FILE"
+  set_env_kv PROMPT_TRANSFORM_PROVIDER qwen_gguf "$ENV_FILE"
+  ok "LLM подключён: provider=qwen_gguf, LLM_MODEL_PATH=$LLM_FILE"
+else
+  log "LLM не подключён (--no-llm или модель недоступна) — prompt-трансформация как в env."
 fi
 
 # ---------- запуск backend ----------
