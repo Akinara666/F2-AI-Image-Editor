@@ -1363,6 +1363,22 @@ async def generate_image(
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
+            # NSFW-фильтр включён → safety-checker нужен ПЕРЕД генерацией:
+            # подгружаем (скачивается при первом разе) и fail-fast, чтобы не
+            # тратить SD-прогон, если классификатор недоступен.
+            if settings.NSFW_FILTER_ENABLED:
+                checker_ready = await asyncio.to_thread(nsfw_safety_checker.is_available)
+                if not checker_ready:
+                    generation_preview_store.clear(request_id)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "NSFW-фильтр включён, но safety-checker не загрузился "
+                            f"('{settings.NSFW_SAFETY_CHECKER_MODEL}'). Проверьте доступ к "
+                            "модели или отключите фильтр: NSFW_FILTER_ENABLED=false."
+                        ),
+                    )
+
             pipe = await model_manager.get_model(
                 runtime_model_id,
                 model_family=model_family,
@@ -1558,10 +1574,10 @@ async def generate_image(
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
-        # 4.6 NSFW gate. Каждая готовая картинка проверяется классификатором,
-        # пока ALLOW_NSFW не выставлен в .env. Fail-closed: если классификатор
-        # недоступен — картинку НЕ отдаём (чтобы непроверенное не утекло).
-        if result_image is not None and not settings.ALLOW_NSFW:
+        # 4.6 NSFW gate. Когда фильтр включён, каждая готовая картинка проходит
+        # классификатор (модель уже подгружена выше). Fail-closed: если он вдруг
+        # недоступен — картинку НЕ отдаём.
+        if result_image is not None and settings.NSFW_FILTER_ENABLED:
             verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
             if verdict is None:
                 logger.error(
@@ -1574,7 +1590,8 @@ async def generate_image(
                     detail=(
                         "NSFW-фильтр недоступен (safety-checker не загрузился). "
                         "Картинка заблокирована. Проверьте доступ к модели "
-                        f"'{settings.NSFW_SAFETY_CHECKER_MODEL}' или задайте ALLOW_NSFW=true в .env."
+                        f"'{settings.NSFW_SAFETY_CHECKER_MODEL}' или отключите фильтр: "
+                        "NSFW_FILTER_ENABLED=false."
                     ),
                 )
             if verdict is True:
