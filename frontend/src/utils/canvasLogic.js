@@ -5,8 +5,104 @@ import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
 export const UI_OVERLAY_ROLES = [
     'quick-select-overlay',
     'selection-overlay',
-    'crop-overlay'
+    'crop-overlay',
+    'mask-boundary-overlay'
 ];
+
+// Из силуэта маски строит наглядную карту зоны генерации, РАЗДЕЛЯЯ два эффекта:
+//   * расширение (padding) — жёсткая дилатация: чёткая линия границы на
+//     расстоянии padding (двигает саму границу наружу);
+//   * размытие (blur) — мягкая растушёвка: ГРАДИЕНТНАЯ полоса шириной blur
+//     снаружи от линии (плавное угасание = зона блендинга).
+//
+// Расстояние считается через distance transform (двухпроходный chamfer), а НЕ
+// через gaussian blur: blur скругляет форму в круг и сливает штрихи в каплю,
+// тогда как distance transform честно «отодвигает» контур, сохраняя форму
+// (как MaxFilter на бэкенде). Возвращает { canvas, margin }. Чистая функция над
+// 2D-canvas (в jsdom-тестах без canvas не вызывается).
+export const buildMaskBoundaryCanvas = (silhouetteCanvas, paddingPx, blurPx, options = {}) => {
+    const padding = Math.max(0, Math.min(400, Math.round(paddingPx)));
+    const blur = Math.max(0, Math.min(400, Math.round(blurPx)));
+    const thickness = Math.max(1, options.thickness ?? 2);
+    const fill = options.fill ?? [56, 189, 248];
+    const edge = options.edge ?? [255, 255, 255];
+    // Линия границы лежит сразу ЗА расстоянием padding, растушёвка — за линией.
+    const edgeStart = padding;
+    const featherStart = padding + thickness;
+    const outer = featherStart + blur;
+    const margin = outer + 2;
+    const w = silhouetteCanvas.width + margin * 2;
+    const h = silhouetteCanvas.height + margin * 2;
+
+    const off = document.createElement('canvas');
+    off.width = w;
+    off.height = h;
+    const ctx = off.getContext('2d');
+    if (!ctx) {
+        return { canvas: off, margin };
+    }
+
+    ctx.drawImage(silhouetteCanvas, margin, margin);
+    const image = ctx.getImageData(0, 0, w, h);
+    const data = image.data;
+
+    // Расстояние до ближайшего пикселя маски (0 внутри, иначе ~евклид).
+    // Двухпроходный chamfer (вес 1 по прямой, √2 по диагонали).
+    const INF = 1e9;
+    const A = 1;
+    const B = Math.SQRT2;
+    const dist = new Float64Array(w * h);
+    for (let i = 0, p = 3; i < w * h; i += 1, p += 4) {
+        dist[i] = data[p] > 40 ? 0 : INF;
+    }
+    for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+            const i = y * w + x;
+            if (dist[i] === 0) continue;
+            let d = dist[i];
+            if (x > 0) d = Math.min(d, dist[i - 1] + A);
+            if (y > 0) d = Math.min(d, dist[i - w] + A);
+            if (x > 0 && y > 0) d = Math.min(d, dist[i - w - 1] + B);
+            if (x < w - 1 && y > 0) d = Math.min(d, dist[i - w + 1] + B);
+            dist[i] = d;
+        }
+    }
+    for (let y = h - 1; y >= 0; y -= 1) {
+        for (let x = w - 1; x >= 0; x -= 1) {
+            const i = y * w + x;
+            if (dist[i] === 0) continue;
+            let d = dist[i];
+            if (x < w - 1) d = Math.min(d, dist[i + 1] + A);
+            if (y < h - 1) d = Math.min(d, dist[i + w] + A);
+            if (x < w - 1 && y < h - 1) d = Math.min(d, dist[i + w + 1] + B);
+            if (x > 0 && y < h - 1) d = Math.min(d, dist[i + w - 1] + B);
+            dist[i] = d;
+        }
+    }
+
+    const CORE_ALPHA = 36;     // лёгкая заливка зоны 100% генерации
+    const FEATHER_ALPHA = 120; // старт градиента растушёвки у линии границы
+    for (let i = 0, p = 0; i < w * h; i += 1, p += 4) {
+        const d = dist[i];
+        if (d > outer) {
+            data[p + 3] = 0;
+        } else if (d > featherStart) {
+            // Мягкая растушёвка: градиент шириной blur, угасает от линии наружу.
+            const t = blur > 0 ? (d - featherStart) / blur : 1;
+            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2];
+            data[p + 3] = Math.round(FEATHER_ALPHA * (1 - t));
+        } else if (d > edgeStart) {
+            // Жёсткая граница зоны генерации (двигается параметром padding).
+            data[p] = edge[0]; data[p + 1] = edge[1]; data[p + 2] = edge[2]; data[p + 3] = 255;
+        } else {
+            // Ядро: сама маска + расширенная зона до padding — 100% генерации.
+            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = CORE_ALPHA;
+        }
+    }
+
+    ctx.putImageData(image, 0, 0);
+    return { canvas: off, margin };
+};
 
 const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.FRAME_HIT_AREA]: -1,
@@ -14,7 +110,9 @@ const LAYER_PRIORITY = {
     [CANVAS_OBJECT_ROLES.CANDIDATE]: 1,
     [CANVAS_OBJECT_ROLES.SKETCH]: 2,
     [CANVAS_OBJECT_ROLES.MASK]: 3,
-    [CANVAS_OBJECT_ROLES.FRAME]: 4
+    [CANVAS_OBJECT_ROLES.FRAME]: 4,
+    // Превью границы маски — поверх всего, чтобы кромка была всегда видна.
+    'mask-boundary-overlay': 5
 };
 
 const cloneFabricObject = (object) => (

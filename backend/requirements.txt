@@ -1,9 +1,14 @@
 fastapi>=0.104.0
 uvicorn>=0.24.0
-torch>=2.0.0
-diffusers>=0.25.0
-transformers>=4.36.0
-accelerate>=0.25.0
+# Blackwell / sm_120 (RTX 50xx) требует cu128-колёса torch.
+# Ставится отдельно с CUDA-индексом (см. deploy/run-vast.sh --torch-index,
+# backend/Dockerfile TORCH_INDEX_URL): pip install --index-url .../whl/cu128 torch
+torch>=2.7.0
+diffusers==0.38.0
+# transformers 5.x ломает single-file загрузку CLIP в diffusers
+# ('CLIPTextModel' object has no attribute 'text_model'). Держим 4.x.
+transformers==4.57.6
+accelerate==1.14.0
 safetensors>=0.4.0
 Pillow>=10.0.0
 python-multipart>=0.0.6

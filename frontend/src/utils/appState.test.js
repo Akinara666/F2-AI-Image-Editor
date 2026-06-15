@@ -115,7 +115,8 @@ describe('appState', () => {
   it('возвращает значения по умолчанию, если сохранённых настроек нет', () => {
     expect(loadAppSettingsFromStorage()).toEqual({
       params: DEFAULT_PARAMS,
-      brush: DEFAULT_BRUSH_SETTINGS
+      brush: DEFAULT_BRUSH_SETTINGS,
+      generationMode: 'whole'
     });
   });
 

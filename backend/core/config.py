@@ -40,10 +40,18 @@ class Settings:
     # Optional one-off tiny inference right after load to pay CUDA kernel
     # compilation / allocation cost up front so the first real request is fast.
     SD_WARMUP: bool = os.getenv("SD_WARMUP", "false").lower() == "true"
+    # Единый тумблер NSFW-защиты (default true): дописывает негатив-промпт И
+    # включает классификатор, который проверяет каждую готовую картинку. Модель
+    # safety-checker подгружается ПЕРЕД генерацией (fail-fast), и только когда
+    # фильтр включён. Разрешить NSFW можно ТОЛЬКО явно: NSFW_FILTER_ENABLED=false.
     NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
     NSFW_NEGATIVE_PROMPT: str = os.getenv(
         "NSFW_NEGATIVE_PROMPT",
         "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
+    )
+    NSFW_SAFETY_CHECKER_MODEL: str = os.getenv(
+        "NSFW_SAFETY_CHECKER_MODEL",
+        "CompVis/stable-diffusion-safety-checker",
     )
     CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
     LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "approx_nn").strip().lower()

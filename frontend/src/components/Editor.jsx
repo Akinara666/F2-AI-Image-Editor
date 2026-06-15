@@ -13,6 +13,7 @@ import {
     isCandidateObject,
     isMaskObject,
     isSketchObject,
+    buildMaskBoundaryCanvas,
     UI_OVERLAY_ROLES
 } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
@@ -693,6 +694,74 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         return setMaskOverlayVisibility(visible, canvas);
     };
 
+    // Живое превью зоны генерации: поверх маски кладём временный оверлей с
+    // полупрозрачной заливкой расширенной области и ЧЁТКОЙ кромкой по границе
+    // (padding+blur наружу). Роль 'mask-boundary-overlay' входит в
+    // UI_OVERLAY_ROLES, поэтому оверлей не попадает ни в undo, ни в экспорт.
+    const maskFeatherPreviewRef = useRef({ blur: 0, padding: 0, enabled: false });
+
+    const applyMaskFeatherPreview = (canvas = fabricCanvas) => {
+        if (!canvas) {
+            return;
+        }
+        const prev = canvas.getObjects().find((object) => object.editorRole === 'mask-boundary-overlay');
+        if (prev) {
+            canvas.remove(prev);
+        }
+
+        const maskGroup = getMaskGroupFromCanvas(canvas);
+        const { blur, padding, enabled } = maskFeatherPreviewRef.current;
+        // maskGroup.visible === false — маска спрятана (показан результат
+        // генерации); превью-кромку в этом случае не рисуем.
+        if (!enabled || !maskGroup || maskGroup.visible === false || maskGroup.getObjects().length === 0) {
+            canvas.requestRenderAll();
+            return;
+        }
+
+        // Силуэт снимаем при полной непрозрачности (группа рисуется с opacity
+        // 0.5 — после dilate альфа просела бы ниже порога и контур исчез) и без
+        // тени (на случай легаси-shadow на группе).
+        const savedShadow = maskGroup.shadow;
+        const savedOpacity = maskGroup.opacity;
+        maskGroup.shadow = null;
+        maskGroup.opacity = 1;
+        const silhouette = maskGroup.toCanvasElement({ enableRetinaScaling: false });
+        maskGroup.shadow = savedShadow;
+        maskGroup.opacity = savedOpacity;
+
+        const bbox = maskGroup.getBoundingRect(true, true);
+        // padding и blur передаём раздельно: padding двигает жёсткую границу,
+        // blur рисует градиентную полосу растушёвки — их видно по отдельности.
+        const { canvas: haloCanvas, margin } = buildMaskBoundaryCanvas(
+            silhouette,
+            Math.max(0, padding),
+            Math.max(0, blur)
+        );
+
+        const overlay = new fabric.Image(haloCanvas, {
+            left: bbox.left - margin,
+            top: bbox.top - margin,
+            selectable: false,
+            evented: false,
+            objectCaching: false,
+            excludeFromExport: true,
+            hoverCursor: 'default',
+            editorRole: 'mask-boundary-overlay'
+        });
+        canvas.add(overlay);
+        overlay.bringToFront();
+        canvas.requestRenderAll();
+    };
+
+    const setMaskFeatherPreview = ({ blur, padding, enabled }) => {
+        maskFeatherPreviewRef.current = {
+            blur: Number(blur) || 0,
+            padding: Number(padding) || 0,
+            enabled: Boolean(enabled)
+        };
+        applyMaskFeatherPreview();
+    };
+
     const syncActiveImageResolution = (target = fabricCanvas?.getActiveObject()) => {
         if (!target) {
             setActiveImageResolution(null);
@@ -764,9 +833,22 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             getUndoSnapshotParams,
             getMaskGroupFromCanvas,
             enqueueCanvasMutation,
-            applyEraserPathToCanvas
+            applyEraserPathToCanvas,
+            onMaskChanged: applyMaskFeatherPreview
         });
     }, [fabricCanvas, genFrame]);
+
+    // Превью-кромка живёт отдельным оверлеем (роль mask-boundary-overlay), и её
+    // не удаляют команды, чистящие маску по isMaskObject (очистка, принятие
+    // результата, удаление). Снимаем оверлей всегда, когда исчезает maskGroup.
+    // Превью-кромку держим в синхроне с состоянием маски: появилась/спряталась/
+    // удалилась (рисование, очистка, показ результата генерации, его отмена,
+    // тумблер видимости). applyMaskFeatherPreview сам решает — перерисовать или
+    // снять оверлей (учитывает наличие маски и maskGroup.visible).
+    useEffect(() => {
+        applyMaskFeatherPreview();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [hasMaskOverlay, isMaskOverlayVisible]);
 
     const discardCandidateHelper = () => discardCandidate({
         fabricCanvas,
@@ -1435,6 +1517,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         }
         enforceCanvasLayerOrder(fabricCanvas, genFrame);
         syncMaskStateFromCanvas(fabricCanvas);
+        applyMaskFeatherPreview(fabricCanvas);
         fabricCanvas.requestRenderAll();
         commitUndoSnapshot(getUndoSnapshotParams(fabricCanvas, genFrame));
         return true;
@@ -1978,6 +2061,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
 
         convertSelectionToInpaintMask,
 
+        setMaskFeatherPreview,
+
         setMagicWandTolerance: (value) => {
             magicWandToleranceRef.current = Math.max(0, Math.min(255, Number(value) || 0));
         },
@@ -2113,18 +2198,23 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
 
         undo: performUndo,
 
-        clearAll: () => clearEditorOverlays({
-            fabricCanvas,
-            genFrame,
-            isMaskObject,
-            isSketchObject,
-            enforceCanvasLayerOrder,
-            syncCandidateFromCanvas,
-            syncMaskStateFromCanvas,
-            syncCanvasInteractionMode,
-            commitUndoSnapshot,
-            getUndoSnapshotParams
-        })
+        clearAll: () => {
+            clearEditorOverlays({
+                fabricCanvas,
+                genFrame,
+                isMaskObject,
+                isSketchObject,
+                enforceCanvasLayerOrder,
+                syncCandidateFromCanvas,
+                syncMaskStateFromCanvas,
+                syncCanvasInteractionMode,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+            // Превью-кромка — отдельный оверлей (не isMaskObject), очисткой выше
+            // не удаляется; пересчитываем превью — без маски оно само снимется.
+            applyMaskFeatherPreview();
+        }
     }));
 
     const performUndoRef = useRef(performUndo);

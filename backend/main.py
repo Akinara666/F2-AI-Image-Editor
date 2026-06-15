@@ -53,6 +53,7 @@ from core.utils import (
 )
 from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
+from core.safety_checker import nsfw_safety_checker
 from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
 from core.model_downloads import (
@@ -1362,6 +1363,22 @@ async def generate_image(
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
+            # NSFW-фильтр включён → safety-checker нужен ПЕРЕД генерацией:
+            # подгружаем (скачивается при первом разе) и fail-fast, чтобы не
+            # тратить SD-прогон, если классификатор недоступен.
+            if settings.NSFW_FILTER_ENABLED:
+                checker_ready = await asyncio.to_thread(nsfw_safety_checker.is_available)
+                if not checker_ready:
+                    generation_preview_store.clear(request_id)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "NSFW-фильтр включён, но safety-checker не загрузился "
+                            f"('{settings.NSFW_SAFETY_CHECKER_MODEL}'). Проверьте доступ к "
+                            "модели или отключите фильтр: NSFW_FILTER_ENABLED=false."
+                        ),
+                    )
+
             pipe = await model_manager.get_model(
                 runtime_model_id,
                 model_family=model_family,
@@ -1532,19 +1549,58 @@ async def generate_image(
                 # COMPOSITING
                 # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
                 # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-                if image_input and blend_mask_input:
-                    if result_image.size == image_input.size == blend_mask_input.size:
-                        # Use new feather_blend logic for seamless edges
-                        result_image = feather_blend(
-                            image_input,
-                            result_image,
-                            blend_mask_input,
-                            generation_mask_input,
-                        )
+                if image_input and blend_mask_input and result_image.size == image_input.size == blend_mask_input.size:
+                    blend_background = image_input
+                    if (
+                        has_transparency
+                        and outpaint_generation_mask is not None
+                        and outpaint_generation_mask.size == result_image.size
+                    ):
+                        # Для outpaint фон блендинга должен быть ЧИСТЫМ: резкий
+                        # оригинал там, где он есть, и сгенерированный результат
+                        # в дыре. Иначе перо шва подмешивает blur-заливку с шумом
+                        # (которой засеяна дыра) → шумный стык. Подменяем дыру
+                        # результатом до растушёвки.
+                        blend_background = image_input.copy()
+                        blend_background.paste(result_image, mask=outpaint_generation_mask)
+                    # Use feather_blend logic for seamless edges
+                    result_image = feather_blend(
+                        blend_background,
+                        result_image,
+                        blend_mask_input,
+                    )
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+        # 4.6 NSFW gate. Когда фильтр включён, каждая готовая картинка проходит
+        # классификатор (модель уже подгружена выше). Fail-closed: если он вдруг
+        # недоступен — картинку НЕ отдаём.
+        if result_image is not None and settings.NSFW_FILTER_ENABLED:
+            verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
+            if verdict is None:
+                logger.error(
+                    "NSFW gate: safety checker unavailable — blocking output (request_id=%s)",
+                    request_id,
+                )
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "NSFW-фильтр недоступен (safety-checker не загрузился). "
+                        "Картинка заблокирована. Проверьте доступ к модели "
+                        f"'{settings.NSFW_SAFETY_CHECKER_MODEL}' или отключите фильтр: "
+                        "NSFW_FILTER_ENABLED=false."
+                    ),
+                )
+            if verdict is True:
+                logger.warning("NSFW gate: blocked flagged image (request_id=%s)", request_id)
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=422,
+                    detail="Результат заблокирован NSFW-фильтром.",
+                )
 
         # 5. Save & Return
         if result_image:
@@ -1658,7 +1714,7 @@ async def tool_spot_heal(
         mask_blur=mask_blur,
     )
     healed = source.filter(ImageFilter.MedianFilter(size=5)).filter(ImageFilter.GaussianBlur(radius=1.4))
-    result = feather_blend(source, healed, blend_mask, generation_mask)
+    result = feather_blend(source, healed, blend_mask)
 
     filename = _save_tool_image(
         result,

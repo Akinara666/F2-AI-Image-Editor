@@ -7,6 +7,7 @@ import {
     parseGenerationNumericParam
 } from '../constants';
 import ModelManager from './ModelManager';
+import GenerationModePanel from './editor/GenerationModePanel';
 import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
 import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
 import { ADJUSTMENT_LABELS } from './AdjustmentsDialog';
@@ -238,6 +239,7 @@ const Sidebar = ({
     availableModels,
     onModelsRefresh,
     params, setParams,
+    generationMode, setGenerationMode,
     isGenerating, isBusy, generationStatus, onGenerate, onCancel,
     brushMode, setBrushMode,
     brushColor, setBrushColor,
@@ -394,13 +396,21 @@ const Sidebar = ({
 
             if (response.data.status === 'success') {
                 const result = response.data.data;
+                if (result.transform_status === 'disabled') {
+                    showToastInfo(
+                        'Улучшение промпта выключено на сервере. Включите в backend/.env: '
+                        + 'PROMPT_TRANSFORM_ENABLED=true и PROMPT_TRANSFORM_PROVIDER=qwen_gguf '
+                        + '(нужны llama-cpp-python и GGUF-модель), затем перезапустите backend.'
+                    );
+                    return;
+                }
                 setParams(prev => ({
                     ...prev,
                     prompt: result.transformed_prompt || prev.prompt,
                     negative_prompt: result.transformed_negative_prompt || prev.negative_prompt
                 }));
                 showToastSuccess("Промпт успешно улучшен.");
-                if (result.transform_status && result.transform_status !== 'disabled') {
+                if (result.transform_status) {
                     showToastInfo(`Трансформер: ${result.provider} (${result.latency_ms} мс)`);
                 }
             }
@@ -508,6 +518,13 @@ const Sidebar = ({
 
                 {activeTab === 'generation' && (
                     <>
+                        <GenerationModePanel
+                            mode={generationMode}
+                            onModeChange={setGenerationMode}
+                            params={params}
+                            setParams={setParams}
+                        />
+
                         {/* Модель и сэмплер. */}
                         <div className="input-group">
                             <div className="sidebar__label-row">
@@ -712,6 +729,15 @@ const Sidebar = ({
                 {/* Управление кистью. */}
                 {activeTab === 'tools' && (
                     <>
+                        <div className="sidebar__actions">
+                            <button className="btn btn-secondary sidebar__action-btn" onClick={onUndo}>
+                                ↶ Отменить
+                            </button>
+                            <button className="btn btn-secondary sidebar__action-btn sidebar__action-btn--danger" onClick={onClear}>
+                                Очистить
+                            </button>
+                        </div>
+
                         <div className="input-group">
                             {TOOL_GROUPS.map((group) => (
                                 <div key={group.id} className="sidebar__tool-group">
@@ -793,6 +819,21 @@ const Sidebar = ({
                                             <small className="sidebar__hint">
                                                 Кликни по мелкому дефекту — он будет закрашен локальной ретушью.
                                             </small>
+                                        )}
+                                        {brushMode === 'mask' && (
+                                            <div className="sidebar__mask-panel">
+                                                <div className="input-group sidebar__mask-group">
+                                                    <label className="input-label" htmlFor="param-mask-blur">Размытие маски ({params.mask_blur})</label>
+                                                    <input id="param-mask-blur" type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
+                                                </div>
+                                                <div className="input-group sidebar__mask-group">
+                                                    <label className="input-label" htmlFor="param-mask-padding">Расширение маски ({params.mask_padding})</label>
+                                                    <input id="param-mask-padding" type="range" className="input-range sidebar__range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} />
+                                                </div>
+                                                <small className="sidebar__mask-hint">
+                                                    Blur размягчает край, Padding расширяет зону правки.
+                                                </small>
+                                            </div>
                                         )}
                                     </ToolPanel>
                                 )}
@@ -1401,34 +1442,6 @@ const Sidebar = ({
                                 ))}
                             </div>
                         </details>
-
-                        {brushMode === 'mask' && (
-                            <div className="input-group sidebar__mask-panel">
-                                <h4 className="sidebar__mask-title">Маска инпейнта</h4>
-
-                                <div className="input-group sidebar__mask-group">
-                                    <label className="input-label" htmlFor="param-mask-blur">Размытие маски ({params.mask_blur})</label>
-                                    <input id="param-mask-blur" type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
-                                </div>
-
-                                <div className="input-group sidebar__mask-group">
-                                    <label className="input-label" htmlFor="param-mask-padding">Расширение маски ({params.mask_padding})</label>
-                                    <input id="param-mask-padding" type="range" className="input-range sidebar__range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} />
-                                </div>
-                                <small className="sidebar__mask-hint">
-                                    Blur размягчает край, Padding расширяет зону правки.
-                                </small>
-                            </div>
-                        )}
-
-                        <div className="sidebar__actions">
-                            <button className="btn btn-secondary sidebar__action-btn" onClick={onUndo}>
-                                ↶ Отменить
-                            </button>
-                            <button className="btn btn-secondary sidebar__action-btn sidebar__action-btn--danger" onClick={onClear}>
-                                Очистить
-                            </button>
-                        </div>
 
                         <div className="sidebar__actions">
                             <button

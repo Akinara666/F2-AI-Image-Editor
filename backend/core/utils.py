@@ -106,12 +106,16 @@ def process_mask_for_inpainting(
     if blur_growth_radius > 0:
         generation_mask = generation_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(blur_growth_radius)))
 
+    # Soft blend mask for the final composite. We dilate the mask by mask_blur
+    # and THEN Gaussian-blur it: the dilation shifts the ramp outward so the
+    # interior stays a smooth 1.0 without a hard "core". The earlier approach
+    # (max of the blur with an *eroded* core) left a visible step where the solid
+    # core met the Gaussian tail (~45/255 jump) — exactly the harsh transition
+    # between the solid and feathered parts of the mask. Dilate→blur removes it.
     blend_mask = base_mask
     if mask_blur > 0:
-        blend_mask = base_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
-
-    # Keep the original masked region fully opaque in the final composite.
-    blend_mask = _combine_masks_max(blend_mask, base_mask)
+        blend_mask = base_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_blur)))
+        blend_mask = blend_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
 
     return generation_mask, blend_mask
 
@@ -119,23 +123,23 @@ def feather_blend(
     original_image: Image.Image,
     generated_image: Image.Image,
     blend_mask: Image.Image,
-    generation_mask: Image.Image | None = None,
 ) -> Image.Image:
     """
     Blend the generated image back into the untouched source image.
 
-    `blend_mask` controls the feathered transition near the border.
-    `generation_mask`, when present, keeps the original edited region fully generated.
+    `blend_mask` is a soft alpha (255 = fully generated, 0 = keep original) that
+    already feathers across the mask boundary and stays fully opaque on the
+    interior core (see ``process_mask_for_inpainting``). Driving the composite
+    from it alone keeps the unmasked area bit-exact while the transition stays
+    smooth — we deliberately do NOT re-assert a hard binary mask here, since that
+    would reintroduce a sharp seam at the mask edge.
     """
     if original_image.size != generated_image.size or original_image.size != blend_mask.size:
         return generated_image # Fallback if sizes mismatch somehow
-        
+
     orig = np.array(original_image.convert("RGB"), dtype=np.float32)
     gen = np.array(generated_image.convert("RGB"), dtype=np.float32)
     alpha = np.array(blend_mask.convert("L"), dtype=np.float32) / 255.0
-    if generation_mask is not None and generation_mask.size == blend_mask.size:
-        generation_alpha = np.array(generation_mask.convert("L"), dtype=np.float32) / 255.0
-        alpha = np.maximum(alpha, generation_alpha)
     alpha_3 = alpha[..., None]
 
     blended = (orig * (1.0 - alpha_3)) + (gen * alpha_3)
@@ -155,6 +159,65 @@ def merge_generation_masks(
         _combine_masks_max(manual_blend_mask, outpaint_blend_mask),
     )
 
+def _blur_fill_from_opaque(
+    image: Image.Image,
+    scale: int = 8,
+    iterations: int = 40,
+) -> Image.Image:
+    """
+    Build a smooth low-frequency background for outpainting using ONLY the opaque
+    pixels of an RGBA image.
+
+    A naive ``image.resize(...).convert("RGB")`` averages the transparent void's
+    RGB (usually black) into the result, so the model is seeded from a dark muddy
+    wash near the border instead of a real extension of the picture's colors.
+    Here we diffuse the opaque colors into the void (heat-equation style) so the
+    seed is derived purely from actual content. Returns an RGB image the size of
+    the input.
+    """
+    rgba = np.asarray(image.convert("RGBA"), dtype=np.float32)
+    rgb = rgba[..., :3]
+    known = rgba[..., 3] >= 255  # fully opaque == real content
+    h, w = known.shape
+
+    if known.all():
+        # Nothing transparent — the wash is irrelevant, return content as-is.
+        return image.convert("RGB")
+    if not known.any():
+        # No content to derive colors from — neutral grey beats a black cliff.
+        return Image.new("RGB", (w, h), (127, 127, 127))
+
+    # Work at reduced resolution: cheap, and we only need a low-frequency wash.
+    sw, sh = max(1, w // scale), max(1, h // scale)
+    small_rgb = np.asarray(
+        Image.fromarray(rgb.astype(np.uint8)).resize((sw, sh), Image.BILINEAR),
+        dtype=np.float32,
+    )
+    small_known = np.asarray(
+        Image.fromarray((known * 255).astype(np.uint8)).resize((sw, sh), Image.BILINEAR),
+        dtype=np.float32,
+    ) > 127
+    if not small_known.any():
+        small_known[sh // 2, sw // 2] = True  # guarantee a seed survives downscale
+
+    seed = small_rgb[small_known].mean(axis=0)
+    fill = small_rgb.copy()
+    fill[~small_known] = seed
+    known3 = small_known[..., None]
+
+    # Diffuse opaque colors into the void; clamp the known pixels back each step
+    # so content edges keep pushing their colors outward.
+    for _ in range(iterations):
+        blurred = np.asarray(
+            Image.fromarray(fill.astype(np.uint8)).filter(ImageFilter.GaussianBlur(2)),
+            dtype=np.float32,
+        )
+        fill = np.where(known3, small_rgb, blurred)
+
+    big = Image.fromarray(fill.astype(np.uint8)).resize((w, h), Image.BICUBIC)
+    return big.convert("RGB")
+
+
 def prepare_image_for_outpainting(
     image: Image.Image,
     mask_padding: int = 32,
@@ -162,13 +225,13 @@ def prepare_image_for_outpainting(
 ) -> tuple[Image.Image, Image.Image, Image.Image]:
     """
     Prepares an RGBA image for outpainting/inpainting.
-    
+
     Strategy (Blur Fill + Noise):
     1. Detect void (Alpha=0). Create generation mask.
-    2. Fill void with a blurred version of the original image + noise.
-       This gives the model color context and texture to hallucinate from, 
-       avoiding "black cliffs".
-    
+    2. Fill void with a content-derived color wash + noise. The wash is built
+       only from opaque pixels (see ``_blur_fill_from_opaque``), giving the model
+       color context to hallucinate from without "black cliffs" at the border.
+
     Returns:
         (filled_rgb_image, mask_image)
     """
@@ -176,35 +239,31 @@ def prepare_image_for_outpainting(
     # Mask: 255 (White) = Void/Edit, 0 (Black) = Content/Keep
     if image.mode != 'RGBA':
         image = image.convert('RGBA')
-        
+
     alpha = image.getchannel('A')
     # Invert alpha for mask: Transparent(0) -> Mask(255), Opaque(255) -> Keep(0)
     mask = Image.eval(alpha, lambda a: 255 if a < 255 else 0)
-    
-    # 2. Create Infill Background (Blur Fill)
-    # Downscale and Upscale to create average color wash
-    small_w = max(1, image.width // 8)
-    small_h = max(1, image.height // 8)
-    small = image.resize((small_w, small_h), resample=Image.BICUBIC)
-    bg_filled = small.resize(image.size, resample=Image.BICUBIC).convert("RGB")
-    
+
+    # 2. Create Infill Background from opaque content only (no void contamination)
+    bg_filled = _blur_fill_from_opaque(image)
+
     # 3. Add Noise to Background (Texture seeding)
     # Convert to numpy to add noise efficienty. Use int32 to prevent uint8 overflow (which causes glitchy colors)
     bg_arr = np.array(bg_filled).astype(np.int32)
     noise = np.random.randint(-15, 15, (bg_arr.shape[0], bg_arr.shape[1], 3), dtype=np.int32)
     bg_arr = np.clip(bg_arr + noise, 0, 255).astype(np.uint8)
     bg_filled = Image.fromarray(bg_arr)
-    
+
     # 4. Composite: Original Content ON TOP of Infill Background
     # We use the original alpha as the mask for pasting
     final_image = bg_filled.copy()
     final_image.paste(image, mask=alpha)
-    
+
     # 5. Process Mask (Feathering)
     generation_mask, blend_mask = process_mask_for_inpainting(
         mask,
         mask_padding=mask_padding,
         mask_blur=mask_blur
     )
-    
+
     return final_image, generation_mask, blend_mask

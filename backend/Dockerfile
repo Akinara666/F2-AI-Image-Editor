@@ -21,7 +21,8 @@ RUN pip install --upgrade pip \
 ARG INSTALL_AI_RUNTIME=false
 ARG INSTALL_OPTIONAL_RUNTIME=false
 # Оставь пустым для CPU-сборки (torch с обычного PyPI).
-# Для GPU-хоста передай CUDA-индекс, например: https://download.pytorch.org/whl/cu121
+# Для GPU-хоста передай CUDA-индекс, например: https://download.pytorch.org/whl/cu128
+# (cu128 нужен для Blackwell/sm_120 — RTX 50xx; для старых карт подойдёт cu121)
 # cu-колёса torch self-contained (cudart/cudnn/cublas внутри); хосту нужен только
 # NVIDIA-драйвер + nvidia-container-toolkit. Ставим torch первым, чтобы requirements.txt
 # увидел его уже удовлетворённым и не подтянул CPU-сборку поверх.

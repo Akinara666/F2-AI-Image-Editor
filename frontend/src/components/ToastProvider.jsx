@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { createClientId } from '../constants';
 import './ToastProvider.css';
 
@@ -47,12 +47,19 @@ export const ToastProvider = ({ children }) => {
         timersRef.current.clear();
     }, []);
 
-    const showSuccess = (msg) => addToast(msg, 'success');
-    const showError = (msg) => addToast(msg, 'error');
-    const showInfo = (msg) => addToast(msg, 'info');
+    // Стабильные идентичности: иначе каждый тост ре-рендерит провайдер, меняет
+    // ссылки showError/… и перезапускает у потребителей эффекты на них (напр.
+    // загрузку моделей) — вплоть до бесконечного цикла запрос→ошибка→тост.
+    const showSuccess = useCallback((msg) => addToast(msg, 'success'), [addToast]);
+    const showError = useCallback((msg) => addToast(msg, 'error'), [addToast]);
+    const showInfo = useCallback((msg) => addToast(msg, 'info'), [addToast]);
+    const contextValue = useMemo(
+        () => ({ showSuccess, showError, showInfo }),
+        [showSuccess, showError, showInfo]
+    );
 
     return (
-        <ToastContext.Provider value={{ showSuccess, showError, showInfo }}>
+        <ToastContext.Provider value={contextValue}>
             {children}
             <div className="toast-container" aria-live="polite" aria-label="Уведомления">
                 {toasts.map(toast => (
