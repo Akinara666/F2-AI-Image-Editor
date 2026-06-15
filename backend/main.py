@@ -53,6 +53,7 @@ from core.utils import (
 )
 from core.config import STYLE_PRESETS, settings
 from core.prompt_transformer import prompt_transformer
+from core.safety_checker import nsfw_safety_checker
 from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
 from core.model_downloads import (
@@ -1556,6 +1557,33 @@ async def generate_image(
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+        # 4.6 NSFW gate. Каждая готовая картинка проверяется классификатором,
+        # пока ALLOW_NSFW не выставлен в .env. Fail-closed: если классификатор
+        # недоступен — картинку НЕ отдаём (чтобы непроверенное не утекло).
+        if result_image is not None and not settings.ALLOW_NSFW:
+            verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
+            if verdict is None:
+                logger.error(
+                    "NSFW gate: safety checker unavailable — blocking output (request_id=%s)",
+                    request_id,
+                )
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "NSFW-фильтр недоступен (safety-checker не загрузился). "
+                        "Картинка заблокирована. Проверьте доступ к модели "
+                        f"'{settings.NSFW_SAFETY_CHECKER_MODEL}' или задайте ALLOW_NSFW=true в .env."
+                    ),
+                )
+            if verdict is True:
+                logger.warning("NSFW gate: blocked flagged image (request_id=%s)", request_id)
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=422,
+                    detail="Результат заблокирован NSFW-фильтром.",
+                )
 
         # 5. Save & Return
         if result_image:

@@ -45,6 +45,15 @@ class Settings:
         "NSFW_NEGATIVE_PROMPT",
         "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
     )
+    # Жёсткая защита: классификатор проверяет КАЖДУЮ готовую картинку. По
+    # умолчанию NSFW запрещён и блокируется. Разрешить можно ТОЛЬКО явно в .env.
+    ALLOW_NSFW: bool = os.getenv("ALLOW_NSFW", "false").lower() == "true"
+    # Fail-closed: если safety-checker не загрузился, генерация НЕ отдаёт картинку
+    # (чтобы непроверенное не утекло). Снять — ALLOW_NSFW=true.
+    NSFW_SAFETY_CHECKER_MODEL: str = os.getenv(
+        "NSFW_SAFETY_CHECKER_MODEL",
+        "CompVis/stable-diffusion-safety-checker",
+    )
     CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
     LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "approx_nn").strip().lower()
     LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
