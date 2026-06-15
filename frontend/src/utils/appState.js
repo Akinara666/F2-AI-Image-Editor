@@ -38,7 +38,7 @@ export const DEFAULT_BRUSH_SETTINGS = {
 };
 
 export const DEFAULT_GENERATION_MODE = 'whole';
-const GENERATION_MODE_IDS = new Set(['whole', 'inpaint', 'outpaint']);
+const GENERATION_MODE_IDS = new Set(['whole', 'inpaint']);
 const sanitizeGenerationMode = (value) => (
   GENERATION_MODE_IDS.has(value) ? value : DEFAULT_GENERATION_MODE
 );

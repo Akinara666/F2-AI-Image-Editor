@@ -228,7 +228,7 @@ function App() {
     editorRef.current?.setMaskFeatherPreview?.({
       blur: params.mask_blur,
       padding: params.mask_padding,
-      enabled: generationMode === 'inpaint' || generationMode === 'outpaint'
+      enabled: generationMode === 'inpaint'
     });
   }, [params.mask_blur, params.mask_padding, generationMode]);
 

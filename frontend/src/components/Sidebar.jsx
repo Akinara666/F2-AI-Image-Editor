@@ -8,7 +8,6 @@ import {
 } from '../constants';
 import ModelManager from './ModelManager';
 import GenerationModePanel from './editor/GenerationModePanel';
-import OutpaintExpandPanel from './editor/OutpaintExpandPanel';
 import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
 import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
 import { ADJUSTMENT_LABELS } from './AdjustmentsDialog';
@@ -518,14 +517,6 @@ const Sidebar = ({
                             setParams={setParams}
                         />
 
-                        {generationMode === 'outpaint' && (
-                            <OutpaintExpandPanel
-                                editorRef={editorRef}
-                                showToastSuccess={showToastSuccess}
-                                showToastError={showToastError}
-                            />
-                        )}
-
                         {/* Модель и сэмплер. */}
                         <div className="input-group">
                             <div className="sidebar__label-row">
@@ -730,6 +721,15 @@ const Sidebar = ({
                 {/* Управление кистью. */}
                 {activeTab === 'tools' && (
                     <>
+                        <div className="sidebar__actions">
+                            <button className="btn btn-secondary sidebar__action-btn" onClick={onUndo}>
+                                ↶ Отменить
+                            </button>
+                            <button className="btn btn-secondary sidebar__action-btn sidebar__action-btn--danger" onClick={onClear}>
+                                Очистить
+                            </button>
+                        </div>
+
                         <div className="input-group">
                             {TOOL_GROUPS.map((group) => (
                                 <div key={group.id} className="sidebar__tool-group">
@@ -1438,15 +1438,6 @@ const Sidebar = ({
                                 </small>
                             </div>
                         )}
-
-                        <div className="sidebar__actions">
-                            <button className="btn btn-secondary sidebar__action-btn" onClick={onUndo}>
-                                ↶ Отменить
-                            </button>
-                            <button className="btn btn-secondary sidebar__action-btn sidebar__action-btn--danger" onClick={onClear}>
-                                Очистить
-                            </button>
-                        </div>
 
                         <div className="sidebar__actions">
                             <button

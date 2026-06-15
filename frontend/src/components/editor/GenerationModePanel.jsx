@@ -1,7 +1,7 @@
 import { GENERATION_MODE_OPTIONS, INTENT_PRESETS } from './generationModes';
 
-// Верх панели генерации: явный выбор режима (вся картинка / inpaint / outpaint)
-// и пресеты-намерения. Пресет выставляет числовые параметры через setParams,
+// Верх панели генерации: явный выбор режима (вся картинка / inpaint) и
+// пресеты-намерения. Пресет выставляет числовые параметры через setParams,
 // сам режим живёт в App (нужен при сборке запроса генерации).
 const GenerationModePanel = ({ mode, onModeChange, params, setParams }) => {
     const activeOption = GENERATION_MODE_OPTIONS.find((option) => option.id === mode)

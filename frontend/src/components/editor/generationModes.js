@@ -3,8 +3,7 @@
 // решает, отправлять ли маску.
 export const GENERATION_MODES = {
     WHOLE: 'whole',
-    INPAINT: 'inpaint',
-    OUTPAINT: 'outpaint'
+    INPAINT: 'inpaint'
 };
 
 const GENERATION_MODE_IDS = new Set(Object.values(GENERATION_MODES));
@@ -21,11 +20,6 @@ export const GENERATION_MODE_OPTIONS = [
         id: GENERATION_MODES.INPAINT,
         label: 'Inpaint',
         hint: 'Перерисует только закрашенную маской область, остальное останется как есть.'
-    },
-    {
-        id: GENERATION_MODES.OUTPAINT,
-        label: 'Outpaint',
-        hint: 'Дорисует продолжение в прозрачных зонах кадра (расширение сцены).'
     }
 ];
 
@@ -40,9 +34,6 @@ export const INTENT_PRESETS = {
         { id: 'replace', label: 'Заменить объект', params: { denoising_strength: 0.7, mask_blur: 8, mask_padding: 32 } },
         { id: 'remove', label: 'Удалить объект', params: { denoising_strength: 0.92, mask_blur: 12, mask_padding: 40 } },
         { id: 'detail', label: 'Добавить деталь', params: { denoising_strength: 0.4, mask_blur: 6, mask_padding: 16 } }
-    ],
-    [GENERATION_MODES.OUTPAINT]: [
-        { id: 'expand', label: 'Расширить сцену', params: { denoising_strength: 0.98, mask_blur: 16, mask_padding: 48 } }
     ]
 };
 
@@ -52,9 +43,6 @@ export const INTENT_PRESETS = {
 export const resolveBackendMode = (uiMode) => {
     switch (uiMode) {
         case GENERATION_MODES.INPAINT:
-            return { mode: 'inpainting', sendMask: true };
-        case GENERATION_MODES.OUTPAINT:
-            // Маску-зону задаёт прозрачность кадра; ручная маска опциональна.
             return { mode: 'inpainting', sendMask: true };
         case GENERATION_MODES.WHOLE:
         default:

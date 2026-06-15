@@ -15,10 +15,6 @@ describe('resolveBackendMode', () => {
     expect(resolveBackendMode(GENERATION_MODES.INPAINT)).toEqual({ mode: 'inpainting', sendMask: true });
   });
 
-  it('outpaint -> inpainting с маской', () => {
-    expect(resolveBackendMode(GENERATION_MODES.OUTPAINT)).toEqual({ mode: 'inpainting', sendMask: true });
-  });
-
   it('неизвестный режим откатывается на auto без маски', () => {
     expect(resolveBackendMode('garbage')).toEqual({ mode: 'auto', sendMask: false });
   });
