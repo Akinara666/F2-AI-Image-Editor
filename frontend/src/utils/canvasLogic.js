@@ -26,8 +26,11 @@ export const buildMaskBoundaryCanvas = (silhouetteCanvas, paddingPx, blurPx, opt
     const thickness = Math.max(1, options.thickness ?? 2);
     const fill = options.fill ?? [56, 189, 248];
     const edge = options.edge ?? [255, 255, 255];
-    const outer = padding + blur;
-    const margin = outer + thickness + 2;
+    // Линия границы лежит сразу ЗА расстоянием padding, растушёвка — за линией.
+    const edgeStart = padding;
+    const featherStart = padding + thickness;
+    const outer = featherStart + blur;
+    const margin = outer + 2;
     const w = silhouetteCanvas.width + margin * 2;
     const h = silhouetteCanvas.height + margin * 2;
 
@@ -83,15 +86,16 @@ export const buildMaskBoundaryCanvas = (silhouetteCanvas, paddingPx, blurPx, opt
         const d = dist[i];
         if (d > outer) {
             data[p + 3] = 0;
-        } else if (d > padding) {
+        } else if (d > featherStart) {
             // Мягкая растушёвка: градиент шириной blur, угасает от линии наружу.
-            const t = blur > 0 ? (d - padding) / blur : 1;
+            const t = blur > 0 ? (d - featherStart) / blur : 1;
             data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2];
             data[p + 3] = Math.round(FEATHER_ALPHA * (1 - t));
-        } else if (d > padding - thickness) {
+        } else if (d > edgeStart) {
             // Жёсткая граница зоны генерации (двигается параметром padding).
             data[p] = edge[0]; data[p + 1] = edge[1]; data[p + 2] = edge[2]; data[p + 3] = 255;
         } else {
+            // Ядро: сама маска + расширенная зона до padding — 100% генерации.
             data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = CORE_ALPHA;
         }
     }
