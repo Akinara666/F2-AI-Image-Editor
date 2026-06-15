@@ -812,6 +812,21 @@ const Sidebar = ({
                                                 Кликни по мелкому дефекту — он будет закрашен локальной ретушью.
                                             </small>
                                         )}
+                                        {brushMode === 'mask' && (
+                                            <div className="sidebar__mask-panel">
+                                                <div className="input-group sidebar__mask-group">
+                                                    <label className="input-label" htmlFor="param-mask-blur">Размытие маски ({params.mask_blur})</label>
+                                                    <input id="param-mask-blur" type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
+                                                </div>
+                                                <div className="input-group sidebar__mask-group">
+                                                    <label className="input-label" htmlFor="param-mask-padding">Расширение маски ({params.mask_padding})</label>
+                                                    <input id="param-mask-padding" type="range" className="input-range sidebar__range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} />
+                                                </div>
+                                                <small className="sidebar__mask-hint">
+                                                    Blur размягчает край, Padding расширяет зону правки.
+                                                </small>
+                                            </div>
+                                        )}
                                     </ToolPanel>
                                 )}
                                 {SELECTION_TOOL_MODES.includes(brushMode) && (
@@ -1419,25 +1434,6 @@ const Sidebar = ({
                                 ))}
                             </div>
                         </details>
-
-                        {brushMode === 'mask' && (
-                            <div className="input-group sidebar__mask-panel">
-                                <h4 className="sidebar__mask-title">Маска инпейнта</h4>
-
-                                <div className="input-group sidebar__mask-group">
-                                    <label className="input-label" htmlFor="param-mask-blur">Размытие маски ({params.mask_blur})</label>
-                                    <input id="param-mask-blur" type="range" className="input-range sidebar__range" name="mask_blur" min="0" max="128" step="1" value={params.mask_blur} onChange={handleChange} />
-                                </div>
-
-                                <div className="input-group sidebar__mask-group">
-                                    <label className="input-label" htmlFor="param-mask-padding">Расширение маски ({params.mask_padding})</label>
-                                    <input id="param-mask-padding" type="range" className="input-range sidebar__range" name="mask_padding" min="0" max="128" step="1" value={params.mask_padding} onChange={handleChange} />
-                                </div>
-                                <small className="sidebar__mask-hint">
-                                    Blur размягчает край, Padding расширяет зону правки.
-                                </small>
-                            </div>
-                        )}
 
                         <div className="sidebar__actions">
                             <button

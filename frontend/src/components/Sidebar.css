@@ -944,12 +944,6 @@
     box-shadow: var(--shadow-inset);
 }
 
-.sidebar__mask-title {
-    margin: 0 0 var(--spacing-sm) 0;
-    font-size: var(--font-md);
-    color: var(--danger);
-}
-
 .sidebar__mask-group {
     margin-bottom: var(--spacing-sm);
 }
