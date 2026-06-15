@@ -1532,14 +1532,26 @@ async def generate_image(
                 # COMPOSITING
                 # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
                 # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-                if image_input and blend_mask_input:
-                    if result_image.size == image_input.size == blend_mask_input.size:
-                        # Use new feather_blend logic for seamless edges
-                        result_image = feather_blend(
-                            image_input,
-                            result_image,
-                            blend_mask_input,
-                        )
+                if image_input and blend_mask_input and result_image.size == image_input.size == blend_mask_input.size:
+                    blend_background = image_input
+                    if (
+                        has_transparency
+                        and outpaint_generation_mask is not None
+                        and outpaint_generation_mask.size == result_image.size
+                    ):
+                        # Для outpaint фон блендинга должен быть ЧИСТЫМ: резкий
+                        # оригинал там, где он есть, и сгенерированный результат
+                        # в дыре. Иначе перо шва подмешивает blur-заливку с шумом
+                        # (которой засеяна дыра) → шумный стык. Подменяем дыру
+                        # результатом до растушёвки.
+                        blend_background = image_input.copy()
+                        blend_background.paste(result_image, mask=outpaint_generation_mask)
+                    # Use feather_blend logic for seamless edges
+                    result_image = feather_blend(
+                        blend_background,
+                        result_image,
+                        blend_mask_input,
+                    )
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
