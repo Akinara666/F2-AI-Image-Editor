@@ -10,11 +10,16 @@ export const UI_OVERLAY_ROLES = [
 ];
 
 // Из силуэта маски строит наглядную границу зоны генерации: полупрозрачную
-// заливку расширенной области + ЧЁТКУЮ кромку (резкий край даёт порог по альфе
-// после blur-дилатации). Возвращает { canvas, margin } для размещения оверлея.
-// Чистая функция над 2D-canvas; в тестах (jsdom без canvas) не вызывается.
+// заливку расширенной области + ЧЁТКУЮ кромку по изолинии на расстоянии radius.
+//
+// Расширение считается через distance transform (морфологическая дилатация
+// диском), а НЕ через gaussian blur: blur скругляет форму в круг и сливает
+// близкие штрихи в каплю, тогда как distance transform честно «отодвигает»
+// контур на radius пикселей, сохраняя форму (как MaxFilter на бэкенде).
+// Возвращает { canvas, margin }. Чистая функция над 2D-canvas (в jsdom-тестах
+// без canvas не вызывается).
 export const buildMaskBoundaryCanvas = (silhouetteCanvas, radiusPx, options = {}) => {
-    const radius = Math.max(1, Math.min(200, Math.round(radiusPx)));
+    const radius = Math.max(1, Math.min(400, Math.round(radiusPx)));
     const thickness = Math.max(1, options.thickness ?? 2);
     const fill = options.fill ?? [56, 189, 248];
     const edge = options.edge ?? [255, 255, 255];
@@ -30,45 +35,52 @@ export const buildMaskBoundaryCanvas = (silhouetteCanvas, radiusPx, options = {}
         return { canvas: off, margin };
     }
 
-    // Дилатация: размываем силуэт на radius и режем по порогу — получаем жёсткую
-    // расширенную область (аппроксимация padding+blur наружу).
-    ctx.filter = `blur(${radius}px)`;
     ctx.drawImage(silhouetteCanvas, margin, margin);
-    ctx.filter = 'none';
-
     const image = ctx.getImageData(0, 0, w, h);
     const data = image.data;
-    const inside = new Uint8Array(w * h);
+
+    // Расстояние до ближайшего пикселя маски (0 внутри, иначе ~евклид).
+    // Двухпроходный chamfer (вес 1 по прямой, √2 по диагонали).
+    const INF = 1e9;
+    const A = 1;
+    const B = Math.SQRT2;
+    const dist = new Float64Array(w * h);
     for (let i = 0, p = 3; i < w * h; i += 1, p += 4) {
-        inside[i] = data[p] > 40 ? 1 : 0;
+        dist[i] = data[p] > 40 ? 0 : INF;
     }
-
-    const isOutsideWithin = (x, y, t) => {
-        for (let dy = -t; dy <= t; dy += 1) {
-            for (let dx = -t; dx <= t; dx += 1) {
-                const nx = x + dx;
-                const ny = y + dy;
-                if (nx < 0 || ny < 0 || nx >= w || ny >= h || !inside[ny * w + nx]) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-
     for (let y = 0; y < h; y += 1) {
         for (let x = 0; x < w; x += 1) {
             const i = y * w + x;
-            const p = i * 4;
-            if (!inside[i]) {
-                data[p + 3] = 0;
-                continue;
-            }
-            if (isOutsideWithin(x, y, thickness)) {
-                data[p] = edge[0]; data[p + 1] = edge[1]; data[p + 2] = edge[2]; data[p + 3] = 255;
-            } else {
-                data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = 60;
-            }
+            if (dist[i] === 0) continue;
+            let d = dist[i];
+            if (x > 0) d = Math.min(d, dist[i - 1] + A);
+            if (y > 0) d = Math.min(d, dist[i - w] + A);
+            if (x > 0 && y > 0) d = Math.min(d, dist[i - w - 1] + B);
+            if (x < w - 1 && y > 0) d = Math.min(d, dist[i - w + 1] + B);
+            dist[i] = d;
+        }
+    }
+    for (let y = h - 1; y >= 0; y -= 1) {
+        for (let x = w - 1; x >= 0; x -= 1) {
+            const i = y * w + x;
+            if (dist[i] === 0) continue;
+            let d = dist[i];
+            if (x < w - 1) d = Math.min(d, dist[i + 1] + A);
+            if (y < h - 1) d = Math.min(d, dist[i + w] + A);
+            if (x < w - 1 && y < h - 1) d = Math.min(d, dist[i + w + 1] + B);
+            if (x > 0 && y < h - 1) d = Math.min(d, dist[i + w - 1] + B);
+            dist[i] = d;
+        }
+    }
+
+    for (let i = 0, p = 0; i < w * h; i += 1, p += 4) {
+        const d = dist[i];
+        if (d > radius) {
+            data[p + 3] = 0;
+        } else if (d >= radius - thickness) {
+            data[p] = edge[0]; data[p + 1] = edge[1]; data[p + 2] = edge[2]; data[p + 3] = 255;
+        } else {
+            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = 60;
         }
     }
 
