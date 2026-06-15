@@ -106,17 +106,16 @@ def process_mask_for_inpainting(
     if blur_growth_radius > 0:
         generation_mask = generation_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(blur_growth_radius)))
 
-    # Soft blend mask for the final composite. The Gaussian feather has to ramp
-    # *across* the mask boundary, so we must NOT re-clamp it to the full binary
-    # mask — doing so forces a hard 1.0 right up to the edge and collapses the
-    # feather back into a visible seam. Instead we guarantee full opacity only on
-    # an *eroded* core: the deep interior stays 100% generated, while the band
-    # around the boundary keeps a smooth original→generated transition.
+    # Soft blend mask for the final composite. We dilate the mask by mask_blur
+    # and THEN Gaussian-blur it: the dilation shifts the ramp outward so the
+    # interior stays a smooth 1.0 without a hard "core". The earlier approach
+    # (max of the blur with an *eroded* core) left a visible step where the solid
+    # core met the Gaussian tail (~45/255 jump) — exactly the harsh transition
+    # between the solid and feathered parts of the mask. Dilate→blur removes it.
     blend_mask = base_mask
     if mask_blur > 0:
-        blend_mask = base_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
-        core = base_mask.filter(ImageFilter.MinFilter(_odd_kernel_size(mask_blur)))
-        blend_mask = _combine_masks_max(blend_mask, core)
+        blend_mask = base_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_blur)))
+        blend_mask = blend_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
 
     return generation_mask, blend_mask
 
