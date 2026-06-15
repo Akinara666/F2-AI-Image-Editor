@@ -36,8 +36,11 @@ export const applyCanvasInteractionMode = ({
     if (isDrawing) {
         const brush = new fabric.PencilBrush(canvas);
         brush.width = brushMode === 'eraser' ? brushSize * 2 : brushSize;
+        // Маску рисуем сразу полупрозрачной, чтобы живой штрих совпадал с тем,
+        // как путь будет виден внутри maskGroup (opacity 0.5). Иначе штрих
+        // «прыгает» с непрозрачного на прозрачный при отпускании мыши.
         brush.color = brushMode === 'mask'
-            ? 'rgba(255, 0, 0, 1.0)'
+            ? 'rgba(255, 0, 0, 0.5)'
             : (brushMode === 'eraser' ? 'rgba(0, 0, 0, 1.0)' : brushColor);
         canvas.freeDrawingBrush = brush;
     }
@@ -111,7 +114,11 @@ export const setupPathCreationHandling = ({
                 isMask: true,
                 selectable: false,
                 evented: false,
-                opacity: 1.0
+                opacity: 1.0,
+                // Кисть рисует полупрозрачной (0.5) ради совпадения с живым
+                // штрихом; внутри maskGroup (opacity 0.5) альфа штриха должна
+                // быть полной, иначе итог стал бы 0.25, а не 0.5.
+                stroke: 'rgba(255, 0, 0, 1)'
             });
 
             let maskGroup = getMaskGroupFromCanvas(canvas);
