@@ -711,7 +711,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
 
         const maskGroup = getMaskGroupFromCanvas(canvas);
         const { blur, padding, enabled } = maskFeatherPreviewRef.current;
-        if (!enabled || !maskGroup || maskGroup.getObjects().length === 0) {
+        // maskGroup.visible === false — маска спрятана (показан результат
+        // генерации); превью-кромку в этом случае не рисуем.
+        if (!enabled || !maskGroup || maskGroup.visible === false || maskGroup.getObjects().length === 0) {
             canvas.requestRenderAll();
             return;
         }
@@ -841,8 +843,7 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
     // результата, удаление). Снимаем оверлей всегда, когда исчезает maskGroup.
     useEffect(() => {
         if (!fabricCanvas) return undefined;
-        const handleObjectRemoved = (event) => {
-            if (event?.target?.id !== 'maskGroup') return;
+        const dropMaskBoundaryOverlay = () => {
             const overlay = fabricCanvas
                 .getObjects()
                 .find((object) => object.editorRole === 'mask-boundary-overlay');
@@ -851,8 +852,21 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
                 fabricCanvas.requestRenderAll();
             }
         };
+        // Маска удалена (очистка/принятие/удаление) — снимаем кромку.
+        const handleObjectRemoved = (event) => {
+            if (event?.target?.id === 'maskGroup') dropMaskBoundaryOverlay();
+        };
+        // Появился результат генерации (candidate) — маска прячется, но не
+        // удаляется; кромку всё равно убираем, чтобы не висела поверх результата.
+        const handleObjectAdded = (event) => {
+            if (event?.target?.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) dropMaskBoundaryOverlay();
+        };
         fabricCanvas.on('object:removed', handleObjectRemoved);
-        return () => fabricCanvas.off('object:removed', handleObjectRemoved);
+        fabricCanvas.on('object:added', handleObjectAdded);
+        return () => {
+            fabricCanvas.off('object:removed', handleObjectRemoved);
+            fabricCanvas.off('object:added', handleObjectAdded);
+        };
     }, [fabricCanvas]);
 
     const discardCandidateHelper = () => discardCandidate({
