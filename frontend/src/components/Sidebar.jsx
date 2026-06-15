@@ -8,6 +8,7 @@ import {
 } from '../constants';
 import ModelManager from './ModelManager';
 import GenerationModePanel from './editor/GenerationModePanel';
+import OutpaintExpandPanel from './editor/OutpaintExpandPanel';
 import { DRAWING_TOOL_MODES, SELECTION_TOOL_MODES, TOOL_GROUPS, TOOL_MODES } from './editor/toolModes';
 import { ADJUSTMENT_TYPES } from '../utils/imageFilters';
 import { ADJUSTMENT_LABELS } from './AdjustmentsDialog';
@@ -516,6 +517,14 @@ const Sidebar = ({
                             params={params}
                             setParams={setParams}
                         />
+
+                        {generationMode === 'outpaint' && (
+                            <OutpaintExpandPanel
+                                editorRef={editorRef}
+                                showToastSuccess={showToastSuccess}
+                                showToastError={showToastError}
+                            />
+                        )}
 
                         {/* Модель и сэмплер. */}
                         <div className="input-group">
