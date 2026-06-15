@@ -836,6 +836,25 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         });
     }, [fabricCanvas, genFrame]);
 
+    // Превью-кромка живёт отдельным оверлеем (роль mask-boundary-overlay), и её
+    // не удаляют команды, чистящие маску по isMaskObject (очистка, принятие
+    // результата, удаление). Снимаем оверлей всегда, когда исчезает maskGroup.
+    useEffect(() => {
+        if (!fabricCanvas) return undefined;
+        const handleObjectRemoved = (event) => {
+            if (event?.target?.id !== 'maskGroup') return;
+            const overlay = fabricCanvas
+                .getObjects()
+                .find((object) => object.editorRole === 'mask-boundary-overlay');
+            if (overlay) {
+                fabricCanvas.remove(overlay);
+                fabricCanvas.requestRenderAll();
+            }
+        };
+        fabricCanvas.on('object:removed', handleObjectRemoved);
+        return () => fabricCanvas.off('object:removed', handleObjectRemoved);
+    }, [fabricCanvas]);
+
     const discardCandidateHelper = () => discardCandidate({
         fabricCanvas,
         candidateRef,
@@ -2184,18 +2203,23 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
 
         undo: performUndo,
 
-        clearAll: () => clearEditorOverlays({
-            fabricCanvas,
-            genFrame,
-            isMaskObject,
-            isSketchObject,
-            enforceCanvasLayerOrder,
-            syncCandidateFromCanvas,
-            syncMaskStateFromCanvas,
-            syncCanvasInteractionMode,
-            commitUndoSnapshot,
-            getUndoSnapshotParams
-        })
+        clearAll: () => {
+            clearEditorOverlays({
+                fabricCanvas,
+                genFrame,
+                isMaskObject,
+                isSketchObject,
+                enforceCanvasLayerOrder,
+                syncCandidateFromCanvas,
+                syncMaskStateFromCanvas,
+                syncCanvasInteractionMode,
+                commitUndoSnapshot,
+                getUndoSnapshotParams
+            });
+            // Превью-кромка — отдельный оверлей (не isMaskObject), очисткой выше
+            // не удаляется; пересчитываем превью — без маски оно само снимется.
+            applyMaskFeatherPreview();
+        }
     }));
 
     const performUndoRef = useRef(performUndo);
