@@ -13,6 +13,7 @@ import {
     isCandidateObject,
     isMaskObject,
     isSketchObject,
+    buildMaskBoundaryCanvas,
     UI_OVERLAY_ROLES
 } from '../utils/canvasLogic';
 import { CANVAS_DEFAULTS, CANVAS_OBJECT_ROLES } from '../constants';
@@ -693,26 +694,56 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         return setMaskOverlayVisibility(visible, canvas);
     };
 
-    // Живое превью растушёвки/расширения маски: мягкое красное свечение вокруг
-    // maskGroup, пропорциональное mask_blur/mask_padding. Это ЧИСТО визуальная
-    // подсказка на холсте (без undo) — в экспортируемую бинарную маску она не
-    // попадает: в exportCanvasState тень снимается с клона.
+    // Живое превью зоны генерации: поверх маски кладём временный оверлей с
+    // полупрозрачной заливкой расширенной области и ЧЁТКОЙ кромкой по границе
+    // (padding+blur наружу). Роль 'mask-boundary-overlay' входит в
+    // UI_OVERLAY_ROLES, поэтому оверлей не попадает ни в undo, ни в экспорт.
     const maskFeatherPreviewRef = useRef({ blur: 0, padding: 0, enabled: false });
 
     const applyMaskFeatherPreview = (canvas = fabricCanvas) => {
-        const maskGroup = getMaskGroupFromCanvas(canvas);
-        if (!maskGroup) {
+        if (!canvas) {
             return;
         }
+        const prev = canvas.getObjects().find((object) => object.editorRole === 'mask-boundary-overlay');
+        if (prev) {
+            canvas.remove(prev);
+        }
+
+        const maskGroup = getMaskGroupFromCanvas(canvas);
         const { blur, padding, enabled } = maskFeatherPreviewRef.current;
-        // padding расширяет зону жёстко, blur размягчает край — для подсказки
-        // достаточно одного свечения, суммирующего оба эффекта наружу.
-        const glow = enabled ? Math.max(0, blur) + Math.max(0, padding) * 0.5 : 0;
-        maskGroup.set('shadow', glow > 0
-            ? new fabric.Shadow({ color: 'rgba(229, 75, 74, 0.6)', blur: glow, offsetX: 0, offsetY: 0 })
-            : null);
-        maskGroup.dirty = true;
-        canvas?.requestRenderAll();
+        if (!enabled || !maskGroup || maskGroup.getObjects().length === 0) {
+            canvas.requestRenderAll();
+            return;
+        }
+
+        const radius = Math.max(1, Math.max(0, blur) + Math.max(0, padding));
+        // Силуэт снимаем при полной непрозрачности (группа рисуется с opacity
+        // 0.5 — после blur альфа просела бы ниже порога и контур исчез) и без
+        // тени (на случай легаси-shadow на группе).
+        const savedShadow = maskGroup.shadow;
+        const savedOpacity = maskGroup.opacity;
+        maskGroup.shadow = null;
+        maskGroup.opacity = 1;
+        const silhouette = maskGroup.toCanvasElement({ enableRetinaScaling: false });
+        maskGroup.shadow = savedShadow;
+        maskGroup.opacity = savedOpacity;
+
+        const bbox = maskGroup.getBoundingRect(true, true);
+        const { canvas: haloCanvas, margin } = buildMaskBoundaryCanvas(silhouette, radius);
+
+        const overlay = new fabric.Image(haloCanvas, {
+            left: bbox.left - margin,
+            top: bbox.top - margin,
+            selectable: false,
+            evented: false,
+            objectCaching: false,
+            excludeFromExport: true,
+            hoverCursor: 'default',
+            editorRole: 'mask-boundary-overlay'
+        });
+        canvas.add(overlay);
+        overlay.bringToFront();
+        canvas.requestRenderAll();
     };
 
     const setMaskFeatherPreview = ({ blur, padding, enabled }) => {
