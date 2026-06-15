@@ -841,33 +841,14 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
     // Превью-кромка живёт отдельным оверлеем (роль mask-boundary-overlay), и её
     // не удаляют команды, чистящие маску по isMaskObject (очистка, принятие
     // результата, удаление). Снимаем оверлей всегда, когда исчезает maskGroup.
+    // Превью-кромку держим в синхроне с состоянием маски: появилась/спряталась/
+    // удалилась (рисование, очистка, показ результата генерации, его отмена,
+    // тумблер видимости). applyMaskFeatherPreview сам решает — перерисовать или
+    // снять оверлей (учитывает наличие маски и maskGroup.visible).
     useEffect(() => {
-        if (!fabricCanvas) return undefined;
-        const dropMaskBoundaryOverlay = () => {
-            const overlay = fabricCanvas
-                .getObjects()
-                .find((object) => object.editorRole === 'mask-boundary-overlay');
-            if (overlay) {
-                fabricCanvas.remove(overlay);
-                fabricCanvas.requestRenderAll();
-            }
-        };
-        // Маска удалена (очистка/принятие/удаление) — снимаем кромку.
-        const handleObjectRemoved = (event) => {
-            if (event?.target?.id === 'maskGroup') dropMaskBoundaryOverlay();
-        };
-        // Появился результат генерации (candidate) — маска прячется, но не
-        // удаляется; кромку всё равно убираем, чтобы не висела поверх результата.
-        const handleObjectAdded = (event) => {
-            if (event?.target?.editorRole === CANVAS_OBJECT_ROLES.CANDIDATE) dropMaskBoundaryOverlay();
-        };
-        fabricCanvas.on('object:removed', handleObjectRemoved);
-        fabricCanvas.on('object:added', handleObjectAdded);
-        return () => {
-            fabricCanvas.off('object:removed', handleObjectRemoved);
-            fabricCanvas.off('object:added', handleObjectAdded);
-        };
-    }, [fabricCanvas]);
+        applyMaskFeatherPreview();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [hasMaskOverlay, isMaskOverlayVisible]);
 
     const discardCandidateHelper = () => discardCandidate({
         fabricCanvas,
