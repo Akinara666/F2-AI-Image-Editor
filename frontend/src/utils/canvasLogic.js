@@ -9,21 +9,25 @@ export const UI_OVERLAY_ROLES = [
     'mask-boundary-overlay'
 ];
 
-// Из силуэта маски строит наглядную границу зоны генерации: полупрозрачную
-// заливку расширенной области + ЧЁТКУЮ кромку по изолинии на расстоянии radius.
+// Из силуэта маски строит наглядную карту зоны генерации, РАЗДЕЛЯЯ два эффекта:
+//   * расширение (padding) — жёсткая дилатация: чёткая линия границы на
+//     расстоянии padding (двигает саму границу наружу);
+//   * размытие (blur) — мягкая растушёвка: ГРАДИЕНТНАЯ полоса шириной blur
+//     снаружи от линии (плавное угасание = зона блендинга).
 //
-// Расширение считается через distance transform (морфологическая дилатация
-// диском), а НЕ через gaussian blur: blur скругляет форму в круг и сливает
-// близкие штрихи в каплю, тогда как distance transform честно «отодвигает»
-// контур на radius пикселей, сохраняя форму (как MaxFilter на бэкенде).
-// Возвращает { canvas, margin }. Чистая функция над 2D-canvas (в jsdom-тестах
-// без canvas не вызывается).
-export const buildMaskBoundaryCanvas = (silhouetteCanvas, radiusPx, options = {}) => {
-    const radius = Math.max(1, Math.min(400, Math.round(radiusPx)));
+// Расстояние считается через distance transform (двухпроходный chamfer), а НЕ
+// через gaussian blur: blur скругляет форму в круг и сливает штрихи в каплю,
+// тогда как distance transform честно «отодвигает» контур, сохраняя форму
+// (как MaxFilter на бэкенде). Возвращает { canvas, margin }. Чистая функция над
+// 2D-canvas (в jsdom-тестах без canvas не вызывается).
+export const buildMaskBoundaryCanvas = (silhouetteCanvas, paddingPx, blurPx, options = {}) => {
+    const padding = Math.max(0, Math.min(400, Math.round(paddingPx)));
+    const blur = Math.max(0, Math.min(400, Math.round(blurPx)));
     const thickness = Math.max(1, options.thickness ?? 2);
     const fill = options.fill ?? [56, 189, 248];
     const edge = options.edge ?? [255, 255, 255];
-    const margin = radius + thickness + 2;
+    const outer = padding + blur;
+    const margin = outer + thickness + 2;
     const w = silhouetteCanvas.width + margin * 2;
     const h = silhouetteCanvas.height + margin * 2;
 
@@ -73,14 +77,22 @@ export const buildMaskBoundaryCanvas = (silhouetteCanvas, radiusPx, options = {}
         }
     }
 
+    const CORE_ALPHA = 36;     // лёгкая заливка зоны 100% генерации
+    const FEATHER_ALPHA = 120; // старт градиента растушёвки у линии границы
     for (let i = 0, p = 0; i < w * h; i += 1, p += 4) {
         const d = dist[i];
-        if (d > radius) {
+        if (d > outer) {
             data[p + 3] = 0;
-        } else if (d >= radius - thickness) {
+        } else if (d > padding) {
+            // Мягкая растушёвка: градиент шириной blur, угасает от линии наружу.
+            const t = blur > 0 ? (d - padding) / blur : 1;
+            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2];
+            data[p + 3] = Math.round(FEATHER_ALPHA * (1 - t));
+        } else if (d > padding - thickness) {
+            // Жёсткая граница зоны генерации (двигается параметром padding).
             data[p] = edge[0]; data[p + 1] = edge[1]; data[p + 2] = edge[2]; data[p + 3] = 255;
         } else {
-            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = 60;
+            data[p] = fill[0]; data[p + 1] = fill[1]; data[p + 2] = fill[2]; data[p + 3] = CORE_ALPHA;
         }
     }
 

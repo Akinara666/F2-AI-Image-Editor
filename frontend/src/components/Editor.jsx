@@ -716,9 +716,8 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             return;
         }
 
-        const radius = Math.max(1, Math.max(0, blur) + Math.max(0, padding));
         // Силуэт снимаем при полной непрозрачности (группа рисуется с opacity
-        // 0.5 — после blur альфа просела бы ниже порога и контур исчез) и без
+        // 0.5 — после dilate альфа просела бы ниже порога и контур исчез) и без
         // тени (на случай легаси-shadow на группе).
         const savedShadow = maskGroup.shadow;
         const savedOpacity = maskGroup.opacity;
@@ -729,7 +728,13 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
         maskGroup.opacity = savedOpacity;
 
         const bbox = maskGroup.getBoundingRect(true, true);
-        const { canvas: haloCanvas, margin } = buildMaskBoundaryCanvas(silhouette, radius);
+        // padding и blur передаём раздельно: padding двигает жёсткую границу,
+        // blur рисует градиентную полосу растушёвки — их видно по отдельности.
+        const { canvas: haloCanvas, margin } = buildMaskBoundaryCanvas(
+            silhouette,
+            Math.max(0, padding),
+            Math.max(0, blur)
+        );
 
         const overlay = new fabric.Image(haloCanvas, {
             left: bbox.left - margin,
