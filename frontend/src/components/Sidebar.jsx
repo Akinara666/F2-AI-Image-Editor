@@ -396,13 +396,21 @@ const Sidebar = ({
 
             if (response.data.status === 'success') {
                 const result = response.data.data;
+                if (result.transform_status === 'disabled') {
+                    showToastInfo(
+                        'Улучшение промпта выключено на сервере. Включите в backend/.env: '
+                        + 'PROMPT_TRANSFORM_ENABLED=true и PROMPT_TRANSFORM_PROVIDER=qwen_gguf '
+                        + '(нужны llama-cpp-python и GGUF-модель), затем перезапустите backend.'
+                    );
+                    return;
+                }
                 setParams(prev => ({
                     ...prev,
                     prompt: result.transformed_prompt || prev.prompt,
                     negative_prompt: result.transformed_negative_prompt || prev.negative_prompt
                 }));
                 showToastSuccess("Промпт успешно улучшен.");
-                if (result.transform_status && result.transform_status !== 'disabled') {
+                if (result.transform_status) {
                     showToastInfo(`Трансформер: ${result.provider} (${result.latency_ms} мс)`);
                 }
             }
