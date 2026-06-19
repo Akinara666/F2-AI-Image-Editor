@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import random
@@ -901,6 +901,12 @@ def health_check():
 
 @app.get("/")
 def read_root():
+    # При SERVE_FRONTEND корень отдаёт SPA (явный роут перебивает mount на "/"),
+    # иначе — обычная JSON-заглушка API.
+    if settings.SERVE_FRONTEND:
+        index_file = settings.FRONTEND_DIST_DIR / "index.html"
+        if index_file.is_file():
+            return FileResponse(str(index_file))
     return {"message": "AI Image Gen API is running. Visit /docs for Swagger UI."}
 
 @app.get("/models")
@@ -2126,6 +2132,24 @@ async def upscale_image(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upscale failed: {e}")
+
+# Раздача собранного фронтенда (вариант A: один origin = один публичный URL).
+# Монтируется ПОСЛЕ всех API-роутов, поэтому конкретные эндпоинты матчатся
+# первыми, а на "/" уже стоит явный read_root (он перебивает этот mount).
+# html=True отдаёт index.html для каталога; клиентского роутинга у SPA нет.
+if settings.SERVE_FRONTEND:
+    if settings.FRONTEND_DIST_DIR.is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=str(settings.FRONTEND_DIST_DIR), html=True),
+            name="frontend",
+        )
+        logger.info("Serving frontend SPA from %s", settings.FRONTEND_DIST_DIR)
+    else:
+        logger.warning(
+            "SERVE_FRONTEND=true, но сборка не найдена: %s (соберите фронт)",
+            settings.FRONTEND_DIST_DIR,
+        )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

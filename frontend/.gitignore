@@ -1,0 +1,5 @@
+# Локальные env-оверрайды (per-machine / build-time) — не коммитим.
+# .env.local: твой адрес backend для npm run dev.
+# .env.production.local: пишется deploy/run-vast.sh --with-frontend (пустой API-base).
+.env.local
+.env.*.local

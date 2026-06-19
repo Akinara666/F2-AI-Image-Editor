@@ -21,6 +21,12 @@ class Settings:
     BASE_DIR: Path = Path(__file__).parent.parent
     OUTPUT_DIR: Path = BASE_DIR / "static" / "outputs"
     MODELS_DIR: Path = BASE_DIR / "models" / "Stable-diffusion"
+    # Собранный SPA (vite build). При SERVE_FRONTEND=true и наличии папки FastAPI
+    # отдаёт сайт по тому же origin, что и API — один публичный URL без CORS.
+    FRONTEND_DIST_DIR: Path = Path(
+        os.getenv("FRONTEND_DIST_DIR", str(BASE_DIR.parent / "frontend" / "dist"))
+    )
+    SERVE_FRONTEND: bool = os.getenv("SERVE_FRONTEND", "false").lower() == "true"
     
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
