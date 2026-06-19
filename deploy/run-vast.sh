@@ -14,13 +14,16 @@
 #   * поднимает uvicorn на 0.0.0.0:8000;
 #   * (по умолчанию) поднимает Cloudflare quick-tunnel и печатает публичный
 #     https://<random>.trycloudflare.com — это адрес API;
-#   * фронтенд НЕ собирается: его запускают у себя на клиенте через
-#     deploy/run-client.sh <URL> (CORS для localhost уже разрешён).
+#   * с --with-frontend дополнительно собирает SPA и отдаёт его тем же backend-ом
+#     (один URL = полноценный сайт + API, same-origin без CORS); иначе фронт
+#     запускают у себя на клиенте через deploy/run-client.sh <URL>.
 #
 # Флаги:
 #   --no-tunnel      без cloudflared (доступ по проброшенному порту vast / ssh -L)
 #   --no-venv        ставить в текущий python, а не в venv deploy/.venv-vast
 #   --optional       доустановить requirements-optional (xformers, llama-cpp-python)
+#   --with-frontend  собрать фронт и отдавать его backend-ом (один публичный URL =
+#                    сайт; ставит Node при отсутствии)
 #   --no-llm         не скачивать Qwen-GGUF и не включать провайдер qwen_gguf
 #   --llm-url U      URL GGUF-модели (по умолчанию Qwen3-1.7B-Q8_0)
 #   --reinstall      переустановить зависимости и перекачать GGUF, даже если есть
@@ -39,6 +42,7 @@ USE_VENV=1
 OPTIONAL=0
 REINSTALL=0
 WITH_LLM=1
+WITH_FRONTEND=0
 LLM_MODEL_URL="https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"
 PORT=8000
 HOST="0.0.0.0"
@@ -56,6 +60,7 @@ while [ $# -gt 0 ]; do
     --no-tunnel) WITH_TUNNEL=0 ;;
     --no-venv) USE_VENV=0 ;;
     --optional) OPTIONAL=1 ;;
+    --with-frontend) WITH_FRONTEND=1 ;;
     --no-llm) WITH_LLM=0 ;;
     --llm-url) shift; LLM_MODEL_URL="${1:?--llm-url требует значение}" ;;
     --reinstall) REINSTALL=1 ;;
@@ -185,6 +190,33 @@ else
   log "LLM не подключён (--no-llm или модель недоступна) — prompt-трансформация как в env."
 fi
 
+# ---------- фронтенд (вариант A: backend отдаёт SPA) ----------
+build_frontend() {
+  if ! command -v npm >/dev/null 2>&1; then
+    log "Node/npm не найдены — ставлю Node 20 (NodeSource) ..."
+    if command -v apt-get >/dev/null 2>&1; then
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - >/dev/null 2>&1 || true
+      apt-get install -y nodejs >/dev/null 2>&1 || true
+    fi
+  fi
+  command -v npm >/dev/null 2>&1 || { warn "npm недоступен — фронт не собран, поднимаю только API."; return 1; }
+
+  log "Собираю фронтенд (same-origin, пустой API-base) ..."
+  # .env.production.local имеет высший приоритет у vite → пустой VITE_API_BASE_URL
+  # = относительные пути (/generate, /models...), т.е. тот же origin, что и backend.
+  printf 'VITE_API_BASE_URL=\n' >"$REPO_ROOT/frontend/.env.production.local"
+  ( cd "$REPO_ROOT/frontend" && npm ci && npm run build ) \
+    || { warn "Сборка фронта упала — поднимаю только API."; return 1; }
+  ok "Фронтенд собран: frontend/dist"
+}
+
+if [ "$WITH_FRONTEND" -eq 1 ] && build_frontend; then
+  set_env_kv SERVE_FRONTEND true "$ENV_FILE"
+  ok "Фронт отдаётся backend-ом — публичный URL будет полноценным сайтом."
+else
+  set_env_kv SERVE_FRONTEND false "$ENV_FILE"
+fi
+
 # ---------- запуск backend ----------
 UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
 CF_LOG="$SCRIPT_DIR/.cloudflared.log"
@@ -243,11 +275,19 @@ fi
 
 printf "\n${c_green}==========================================================${c_off}\n"
 if [ -n "$PUBLIC_API" ]; then
-  printf   "${c_green}  Backend API (публичный):${c_off}\n  %s\n\n" "$PUBLIC_API"
-  printf   "  На СВОЁМ компьютере (клиенте) выполни:\n"
-  printf   "    bash deploy/run-client.sh %s\n" "$PUBLIC_API"
+  if [ "$WITH_FRONTEND" -eq 1 ]; then
+    printf   "${c_green}  Сайт (фронт + API на одном URL):${c_off}\n  %s\n\n" "$PUBLIC_API"
+    printf   "  Открой этот адрес в браузере — это готовый редактор.\n"
+  else
+    printf   "${c_green}  Backend API (публичный):${c_off}\n  %s\n\n" "$PUBLIC_API"
+    printf   "  На СВОЁМ компьютере (клиенте) выполни:\n"
+    printf   "    bash deploy/run-client.sh %s\n" "$PUBLIC_API"
+  fi
 elif [ "$WITH_TUNNEL" -eq 1 ]; then
   warn "Не удалось извлечь URL туннеля. Смотри: $CF_LOG"
+elif [ "$WITH_FRONTEND" -eq 1 ]; then
+  printf   "${c_green}  Сайт:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
+  printf   "  Пробрось порт и открой в браузере: ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
 else
   printf   "${c_green}  Backend API:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
   printf   "  Пробрось порт с клиента и запусти фронтенд на него, например:\n"
