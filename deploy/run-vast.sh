@@ -229,9 +229,11 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# config.py читает переменные через python-dotenv из backend/.env — это надёжно
-# парсит значения со спецсимволами (regex CORS, и т.п.), в отличие от shell-source.
-cp "$ENV_FILE" "$REPO_ROOT/backend/.env"
+# Один источник правды: указываем backend читать (через python-dotenv) и писать
+# (панель настроек) ОДИН и тот же файл — deploy/backend.vast.env. Никаких копий в
+# backend/.env, поэтому правки из панели переживают перезапуск без асимметрии.
+# Экспорт наследуется в сабшелл ниже; config.py: load_dotenv(ENV_FILE_PATH).
+export ENV_FILE_PATH="$ENV_FILE"
 log "Поднимаю backend на $HOST:$PORT (лог: $UVICORN_LOG) ..."
 ( cd backend && exec "$PY" -m uvicorn main:app --host "$HOST" --port "$PORT" ) >"$UVICORN_LOG" 2>&1 &
 UVICORN_PID=$!

@@ -2,7 +2,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Читаем тот же .env, что правит панель настроек (settings.ENV_FILE_PATH).
+# Если ENV_FILE_PATH задан в окружении (vast: deploy/backend.vast.env) — грузим
+# именно его; иначе None = прежнее поведение (поиск backend/.env). Один источник:
+# backend читает ровно тот файл, в который пишет панель — без копий и асимметрии.
+load_dotenv(os.getenv("ENV_FILE_PATH") or None)
 
 # Presets & configuration
 STYLE_PRESETS = {
@@ -27,8 +31,9 @@ class Settings:
         os.getenv("FRONTEND_DIST_DIR", str(BASE_DIR.parent / "frontend" / "dist"))
     )
     SERVE_FRONTEND: bool = os.getenv("SERVE_FRONTEND", "false").lower() == "true"
-    # Куда панель настроек пишет правки (.env). По умолчанию backend/.env — туда же
-    # run-vast копирует конфиг, и оттуда же load_dotenv() читает на старте.
+    # Файл .env, который панель настроек правит И который backend читает (см.
+    # load_dotenv выше) — один и тот же. По умолчанию backend/.env; на vast
+    # run-vast экспортирует ENV_FILE_PATH=deploy/backend.vast.env (постоянный).
     ENV_FILE_PATH: Path = Path(os.getenv("ENV_FILE_PATH", str(BASE_DIR / ".env")))
     # Секрет для правки настроек из UI. Пусто → редактирование выключено (только
     # просмотр). Живёт ТОЛЬКО здесь, в окружении сервера; во фронт не передаётся.
