@@ -117,17 +117,23 @@ class PromptTransformer:
         self.logger = logger or logging.getLogger("PromptTransformer")
         self._transform_slot_lock = threading.Lock()
         self._transform_inflight = False
+        self._transform_slot_generation = 0
 
-    def _try_acquire_transform_slot(self) -> bool:
+    def _try_acquire_transform_slot(self) -> int:
+        """Returns generation id > 0 on success, 0 if busy."""
         with self._transform_slot_lock:
             if self._transform_inflight:
-                return False
+                return 0
             self._transform_inflight = True
-            return True
+            self._transform_slot_generation += 1
+            return self._transform_slot_generation
 
-    def _release_transform_slot(self) -> None:
+    def _release_transform_slot(self, generation: int) -> None:
+        # Guard against a stale background thread releasing a slot that already
+        # belongs to a newer request (happens when timeout fires early).
         with self._transform_slot_lock:
-            self._transform_inflight = False
+            if self._transform_slot_generation == generation:
+                self._transform_inflight = False
 
     def _is_transform_busy(self) -> bool:
         with self._transform_slot_lock:
@@ -178,7 +184,8 @@ class PromptTransformer:
                 latency_ms=0,
             )
 
-        if not self._try_acquire_transform_slot():
+        slot_gen = self._try_acquire_transform_slot()
+        if not slot_gen:
             self.logger.info(
                 "Prompt transform rejected because previous request is still running: transform_id=%s",
                 transform_id,
@@ -202,7 +209,9 @@ class PromptTransformer:
             try:
                 return self.adapter.run_transform(prompt_clean, context)
             finally:
-                self._release_transform_slot()
+                # Generation guard: if timeout already released this slot and a newer
+                # request grabbed it, this call is a no-op.
+                self._release_transform_slot(slot_gen)
                 self.logger.info("Prompt transform worker finished: transform_id=%s", transform_id)
 
         try:
@@ -243,8 +252,13 @@ class PromptTransformer:
                 latency_ms=latency_ms,
             )
         except Exception as exc:
-            if not worker_started.is_set():
-                self._release_transform_slot()
+            # On timeout the background thread is still running and will call
+            # _release_transform_slot(slot_gen) when done — but that could take
+            # many seconds. Release immediately so the next request isn't blocked.
+            # The generation guard prevents the thread's later release from
+            # accidentally clearing a slot owned by a newer request.
+            if not worker_started.is_set() or isinstance(exc, asyncio.TimeoutError):
+                self._release_transform_slot(slot_gen)
             latency_ms = int((time.perf_counter() - started) * 1000)
             if isinstance(exc, asyncio.TimeoutError):
                 error_message = f"Prompt transform timed out after {self.timeout_ms} ms."
