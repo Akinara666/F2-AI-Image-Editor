@@ -216,11 +216,12 @@ class PromptTransformerTests(unittest.TestCase):
             provider_name="stub",
             adapter=StructuredAdapter(),
         )
-        self.assertTrue(transformer._try_acquire_transform_slot())
+        gen = transformer._try_acquire_transform_slot()
+        self.assertGreater(gen, 0)
         try:
             result = asyncio.run(transformer.transform_prompt("second", use_prompt_transform=True))
         finally:
-            transformer._release_transform_slot()
+            transformer._release_transform_slot(gen)
 
         self.assertEqual(result.transform_status, "busy")
         self.assertEqual(result.transformed_prompt, "")
