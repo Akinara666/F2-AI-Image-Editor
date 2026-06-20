@@ -78,6 +78,21 @@ done
 
 cd "$REPO_ROOT"
 
+# Скрипт работает в foreground и держит uvicorn/туннель. Если запустить его прямо
+# в SSH-сессии и потом отключиться — SIGHUP убьёт процессы, а публичный URL
+# отвалится (классическая «Cloudflare 1033»). Под tmux/screen сессия переживает
+# отключение. Предупреждаем ДО долгой установки, чтобы можно было перезапуститься.
+if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ] && [ -t 1 ]; then
+  printf "${c_yellow}┌──────────────────────────────────────────────────────────────┐${c_off}\n"
+  printf "${c_yellow}│ Похоже, ты НЕ под tmux/screen.                                │${c_off}\n"
+  printf "${c_yellow}│ Закроешь терминал / оборвётся SSH — backend и туннель умрут.  │${c_off}\n"
+  printf "${c_yellow}│ Рекомендую запускать так:                                     │${c_off}\n"
+  printf "${c_yellow}│     tmux new -s app                                           │${c_off}\n"
+  printf "${c_yellow}│     bash deploy/run-vast.sh ...                               │${c_off}\n"
+  printf "${c_yellow}│ Отключиться не закрывая: Ctrl+b, затем d. Вернуться: tmux a.   │${c_off}\n"
+  printf "${c_yellow}└──────────────────────────────────────────────────────────────┘${c_off}\n"
+fi
+
 command -v python3 >/dev/null 2>&1 || { err "python3 не найден в инстансе."; exit 1; }
 command -v curl    >/dev/null 2>&1 || { err "curl не найден (нужен для cloudflared/health)."; exit 1; }
 
@@ -329,6 +344,10 @@ else
   printf   "  Пробрось порт с клиента и запусти фронтенд на него, например:\n"
   printf   "    ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
   printf   "    bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
+fi
+if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ]; then
+  printf "\n  ${c_yellow}Не под tmux: закроешь терминал/оборвёшь SSH — сервер остановится.${c_off}\n"
+  printf "  ${c_yellow}Для фона запусти под:  tmux new -s app  (отключиться: Ctrl+b, d).${c_off}\n"
 fi
 printf "${c_green}==========================================================${c_off}\n\n"
 
