@@ -33,6 +33,8 @@
 #                    Blackwell/sm_120, RTX 50xx; для старых карт можно cu121)
 #   --no-follow      не стримить логи backend в консоль (по умолчанию стримятся
 #                    в реальном времени; лог-файл пишется всегда)
+#   --new-tunnel     поднять НОВЫЙ cloudflared, даже если живой уже есть (сменит URL)
+#   --stop           остановить backend и cloudflared-туннель и выйти
 #   -h | --help      показать справку
 #
 set -euo pipefail
@@ -47,6 +49,8 @@ REINSTALL=0
 WITH_LLM=1
 WITH_FRONTEND=1
 FOLLOW_LOGS=1
+NEW_TUNNEL=0
+STOP=0
 LLM_MODEL_URL="https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"
 PORT=8000
 HOST="0.0.0.0"
@@ -70,6 +74,8 @@ while [ $# -gt 0 ]; do
     --llm-url) shift; LLM_MODEL_URL="${1:?--llm-url требует значение}" ;;
     --reinstall) REINSTALL=1 ;;
     --no-follow) FOLLOW_LOGS=0 ;;
+    --new-tunnel) NEW_TUNNEL=1 ;;
+    --stop) STOP=1 ;;
     --port) shift; PORT="${1:?--port требует значение}" ;;
     --torch-index) shift; TORCH_INDEX="${1:?--torch-index требует значение}" ;;
     -h|--help) usage ;;
@@ -79,6 +85,29 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$REPO_ROOT"
+
+# Состояние процессов/туннеля держим в файлах рядом со скриптом, чтобы cloudflared
+# переживал перезапуск backend (см. секцию «публичный доступ» — рестарт без смены URL).
+UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
+CF_LOG="$SCRIPT_DIR/.cloudflared.log"
+CF_PID_FILE="$SCRIPT_DIR/.cloudflared.pid"
+CF_URL_FILE="$SCRIPT_DIR/.cloudflared.url"
+
+# --stop: погасить backend и туннель и выйти (cleanup-trap туннель не трогает,
+# поэтому нужен явный способ остановить его).
+if [ "$STOP" -eq 1 ]; then
+  if [ -f "$CF_PID_FILE" ]; then
+    cf_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
+    [ -n "$cf_pid" ] && kill "$cf_pid" 2>/dev/null && ok "Остановлен cloudflared (pid=$cf_pid)." || true
+    rm -f "$CF_PID_FILE" "$CF_URL_FILE"
+  fi
+  if pkill -f "uvicorn main:app .*--port $PORT" 2>/dev/null; then
+    ok "Остановлен backend (uvicorn на порту $PORT)."
+  else
+    log "Активного backend на порту $PORT не найдено."
+  fi
+  exit 0
+fi
 
 # Скрипт работает в foreground и держит uvicorn/туннель. Если запустить его прямо
 # в SSH-сессии и потом отключиться — SIGHUP убьёт процессы, а публичный URL
@@ -289,15 +318,13 @@ else
 fi
 
 # ---------- запуск backend ----------
-UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
-CF_LOG="$SCRIPT_DIR/.cloudflared.log"
 UVICORN_PID=""
-CF_PID=""
 TAIL_PID=""
 
+# Туннель НЕ убиваем: он запущен detached и должен пережить рестарт backend, чтобы
+# публичный URL не менялся. Останавливать его — через `run-vast.sh --stop`.
 cleanup() {
   [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null || true
-  [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true
   [ -n "$UVICORN_PID" ] && kill "$UVICORN_PID" 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT
@@ -325,27 +352,59 @@ done
 [ "$healthy" -eq 1 ] && ok "Backend готов." || { err "Backend не ответил вовремя. Лог: $UVICORN_LOG"; tail -n 30 "$UVICORN_LOG" >&2 || true; exit 1; }
 
 # ---------- публичный доступ ----------
+# Cloudflared запускается DETACHED (setsid: своя сессия, не получает Ctrl+C/SIGHUP
+# скрипта) и НЕ убивается в cleanup. Поэтому при повторном запуске скрипта (например
+# чтобы применить правки из панели настроек) живой туннель переиспользуется — и
+# публичный URL не меняется. Форсировать новый — `--new-tunnel`; погасить — `--stop`.
 PUBLIC_API=""
+TUNNEL_REUSED=0
 if [ "$WITH_TUNNEL" -eq 1 ]; then
-  case "$(uname -m)" in
-    x86_64) CF_ARCH=amd64 ;;
-    aarch64|arm64) CF_ARCH=arm64 ;;
-    *) CF_ARCH=amd64 ;;
-  esac
-  CF_BIN="$SCRIPT_DIR/.cloudflared-$CF_ARCH"
-  if [ ! -x "$CF_BIN" ]; then
-    log "Скачиваю cloudflared ($CF_ARCH) ..."
-    curl -fsSL -o "$CF_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
-    chmod +x "$CF_BIN"
+  # Переиспользовать существующий туннель, если он жив и у нас есть его URL.
+  if [ "$NEW_TUNNEL" -eq 0 ] && [ -f "$CF_PID_FILE" ] && [ -f "$CF_URL_FILE" ]; then
+    existing_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
+    existing_url="$(cat "$CF_URL_FILE" 2>/dev/null || true)"
+    if [ -n "$existing_pid" ] && [ -n "$existing_url" ] && kill -0 "$existing_pid" 2>/dev/null; then
+      PUBLIC_API="$existing_url"
+      TUNNEL_REUSED=1
+      ok "Переиспользую живой cloudflared (pid=$existing_pid) — URL прежний."
+    fi
   fi
-  log "Поднимаю Cloudflare quick-tunnel ..."
-  "$CF_BIN" tunnel --no-autoupdate --url "http://localhost:$PORT" >"$CF_LOG" 2>&1 &
-  CF_PID=$!
-  for _ in $(seq 1 30); do
-    PUBLIC_API="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -n1 || true)"
-    [ -n "$PUBLIC_API" ] && break
-    sleep 2
-  done
+
+  if [ "$TUNNEL_REUSED" -eq 0 ]; then
+    # Убить прежний туннель, если он был (новый запрошен или старый мёртв/без URL).
+    if [ -f "$CF_PID_FILE" ]; then
+      old_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
+      [ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
+      rm -f "$CF_PID_FILE" "$CF_URL_FILE"
+    fi
+    case "$(uname -m)" in
+      x86_64) CF_ARCH=amd64 ;;
+      aarch64|arm64) CF_ARCH=arm64 ;;
+      *) CF_ARCH=amd64 ;;
+    esac
+    CF_BIN="$SCRIPT_DIR/.cloudflared-$CF_ARCH"
+    if [ ! -x "$CF_BIN" ]; then
+      log "Скачиваю cloudflared ($CF_ARCH) ..."
+      curl -fsSL -o "$CF_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
+      chmod +x "$CF_BIN"
+    fi
+    log "Поднимаю Cloudflare quick-tunnel (detached) ..."
+    : >"$CF_LOG"
+    # setsid отвязывает от управляющего терминала и группы процессов скрипта —
+    # туннель не падёт от Ctrl+C/выхода скрипта. </dev/null, чтобы не держать stdin.
+    setsid "$CF_BIN" tunnel --no-autoupdate --url "http://localhost:$PORT" >"$CF_LOG" 2>&1 </dev/null &
+    disown 2>/dev/null || true
+    # $! у setsid ненадёжен — берём реальный pid процесса по командной строке.
+    sleep 1
+    CF_PID="$(pgrep -f "$CF_BIN tunnel .*localhost:$PORT" 2>/dev/null | head -n1 || true)"
+    [ -n "$CF_PID" ] && printf '%s\n' "$CF_PID" >"$CF_PID_FILE"
+    for _ in $(seq 1 30); do
+      PUBLIC_API="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -n1 || true)"
+      [ -n "$PUBLIC_API" ] && break
+      sleep 2
+    done
+    [ -n "$PUBLIC_API" ] && printf '%s\n' "$PUBLIC_API" >"$CF_URL_FILE"
+  fi
 fi
 
 printf "\n${c_green}==========================================================${c_off}\n"
@@ -372,9 +431,14 @@ fi
 if [ -n "${ADMIN_TOKEN:-}" ]; then
   printf "\n  ${c_green}Токен панели настроек (шестерёнка в UI):${c_off} %s\n" "$ADMIN_TOKEN"
 fi
+if [ -n "$PUBLIC_API" ] && [ "$WITH_TUNNEL" -eq 1 ]; then
+  printf "\n  Туннель живёт отдельно от backend: Ctrl+C и повторный запуск применят\n"
+  printf "  правки настроек, НЕ меняя этот URL. Сменить URL — флаг --new-tunnel;\n"
+  printf "  полностью остановить (backend + туннель) — %sbash deploy/run-vast.sh --stop%s.\n" "$c_green" "$c_off"
+fi
 if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ]; then
-  printf "\n  ${c_yellow}Не под tmux: закроешь терминал/оборвёшь SSH — сервер остановится.${c_off}\n"
-  printf "  ${c_yellow}Для фона запусти под:  tmux new -s app  (отключиться: Ctrl+b, d).${c_off}\n"
+  printf "\n  ${c_yellow}Не под tmux: закроешь терминал/оборвёшь SSH — backend остановится${c_off}\n"
+  printf "  ${c_yellow}(туннель переживёт). Для фона запусти под: tmux new -s app (выход: Ctrl+b, d).${c_off}\n"
 fi
 printf "${c_green}==========================================================${c_off}\n\n"
 
@@ -383,7 +447,7 @@ if [ "$FOLLOW_LOGS" -eq 1 ]; then
   printf "${c_green}---------- логи backend ----------${c_off}\n"
   # -n +1: показать лог с самого начала (включая запуск); -F: переживать
   # ротацию/пересоздание файла. Туннель-лог добавляем, если он есть.
-  if [ -n "$CF_PID" ]; then
+  if [ "$WITH_TUNNEL" -eq 1 ] && [ -f "$CF_LOG" ]; then
     tail -n +1 -F "$UVICORN_LOG" "$CF_LOG" &
   else
     tail -n +1 -F "$UVICORN_LOG" &
