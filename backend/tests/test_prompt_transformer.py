@@ -243,5 +243,50 @@ class PromptTransformerTests(unittest.TestCase):
         self.assertEqual(adapter.unload_count, 0)
 
 
+class QwenInferenceLockTests(unittest.TestCase):
+    """llama.cpp is not thread-safe: concurrent create_chat_completion on the
+    same Llama object segfaults. The adapter must serialise inference so a retry
+    after a timeout never races into native code while the old call still runs."""
+
+    def test_inference_is_serialised_on_shared_llama(self):
+        from core.llm_adapter import QwenGGUFLoraAdapter
+
+        concurrency = {"current": 0, "max": 0}
+        guard = threading.Lock()
+
+        class FakeLlama:
+            def create_chat_completion(self, **kwargs):
+                with guard:
+                    concurrency["current"] += 1
+                    concurrency["max"] = max(concurrency["max"], concurrency["current"])
+                time.sleep(0.1)
+                with guard:
+                    concurrency["current"] -= 1
+                return {"choices": [{"message": {"content":
+                    '{"positive_prompt":"x","negative_prompt_extra":"","style_tags":[]}'}}]}
+
+        adapter = QwenGGUFLoraAdapter(model_path="dummy")
+        adapter._llm = FakeLlama()  # bypass real model load (ensure_loaded sees it set)
+
+        errors = []
+
+        def worker():
+            try:
+                adapter.run_transform("hello")
+            except Exception as exc:  # pragma: no cover - surface unexpected failure
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(errors, [])
+        # Without the lock, several inferences would overlap (max > 1) and crash
+        # llama.cpp. The lock must keep it strictly sequential.
+        self.assertEqual(concurrency["max"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
