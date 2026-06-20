@@ -212,6 +212,8 @@ echo "ssh -p $VAST_TCP_PORT_22 root@$PUBLIC_IPADDR"
 - **`Permission denied (publickey)`** при подключении по SSH — добавьте свой публичный
   ключ (`~/.ssh/id_ed25519.pub`) в аккаунт Vast.ai (раздел Account, пункт SSH Keys) или при
   создании инстанса.
-- Переменные окружения backend — [`deploy/backend.env.example`](../deploy/backend.env.example);
-  скрипт записывает их в `backend/.env` (читается `python-dotenv`). Справочник —
+- Переменные окружения backend — шаблон [`deploy/backend.env.example`](../deploy/backend.env.example).
+  На vast скрипт создаёт из него рабочий файл `deploy/backend.vast.env` и backend
+  читает/пишет именно его (через `ENV_FILE_PATH`); правки из панели настроек идут
+  туда же. Никакого `backend/.env` на vast не создаётся. Справочник по ключам —
   в [инструкции 01](01-local.md#переменные-окружения).
