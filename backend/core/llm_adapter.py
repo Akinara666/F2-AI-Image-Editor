@@ -212,9 +212,14 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
 
     @staticmethod
     def _extract_json_object(text: str) -> dict[str, Any]:
+        import re
         text = (text or "").strip()
         if not text:
             raise RuntimeError("LLM returned empty response.")
+
+        # Qwen3 thinking mode wraps reasoning in <think>...</think> before the answer.
+        # Strip it so the JSON extractor sees only the actual output.
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
         try:
             return json.loads(text)
