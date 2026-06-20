@@ -208,6 +208,15 @@ get_env_val() {
   sed -n "s|^${key}=||p" "$file" 2>/dev/null | tail -n1
 }
 
+# Случайный токен для панели настроек (hex, без спецсимволов).
+gen_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 16
+  else
+    "$PY" -c "import secrets; print(secrets.token_hex(16))"
+  fi
+}
+
 # Шаблон backend.env.example прописывает LLM_MODEL_PATH=/app/models/llm/model.gguf
 # (путь из Docker) — на vast его надо заменить реальным путём скачанного файла,
 # иначе backend не найдёт модель.
@@ -232,6 +241,17 @@ if [ "$WITH_LLM" -eq 1 ] && [ -f "$LLM_FILE" ]; then
   fi
 else
   log "LLM не подключён (--no-llm или модель недоступна) — prompt-трансформация как в env."
+fi
+
+# ---------- панель настроек ----------
+# Без SETTINGS_ADMIN_TOKEN панель в UI открывается только на чтение. На vast это
+# выглядит как «сломанная» фича. Генерируем случайный токен (если ещё не задан) и
+# печатаем его в баннере — тогда панель сразу редактируема. Свой токен не трогаем.
+ADMIN_TOKEN="$(get_env_val SETTINGS_ADMIN_TOKEN "$ENV_FILE")"
+if [ -z "$ADMIN_TOKEN" ]; then
+  ADMIN_TOKEN="$(gen_token)"
+  set_env_kv SETTINGS_ADMIN_TOKEN "$ADMIN_TOKEN" "$ENV_FILE"
+  ok "Сгенерирован SETTINGS_ADMIN_TOKEN для панели настроек (показан в баннере ниже)."
 fi
 
 # ---------- фронтенд (вариант A: backend отдаёт SPA) ----------
@@ -346,6 +366,9 @@ else
   printf   "  Пробрось порт с клиента и запусти фронтенд на него, например:\n"
   printf   "    ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
   printf   "    bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
+fi
+if [ -n "${ADMIN_TOKEN:-}" ]; then
+  printf "\n  ${c_green}Токен панели настроек (шестерёнка в UI):${c_off} %s\n" "$ADMIN_TOKEN"
 fi
 if [ -z "${TMUX:-}" ] && [ -z "${STY:-}" ]; then
   printf "\n  ${c_yellow}Не под tmux: закроешь терминал/оборвёшь SSH — сервер остановится.${c_off}\n"
