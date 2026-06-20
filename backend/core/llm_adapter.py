@@ -137,6 +137,12 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         self.logger = logger or logging.getLogger("QwenGGUFLoraAdapter")
         self._llm = None
         self._load_lock = threading.Lock()
+        # llama.cpp is NOT thread-safe: concurrent create_chat_completion on the
+        # same Llama object corrupts its internal state and segfaults. After a
+        # transform timeout the background inference thread keeps running, so a
+        # retry could start a second inference on the same object — this lock
+        # serialises them (the retry waits instead of racing into native code).
+        self._inference_lock = threading.Lock()
 
     @staticmethod
     def _validate_runtime_file(path: str, label: str) -> str:
@@ -264,15 +270,19 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             # Qwen3 по умолчанию в thinking-режиме: генерирует <think>...</think>
             # (много токенов, медленно) до ответа. Для SD-промпта это не нужно —
             # /no_think переключает в прямой режим (стандартный флаг Qwen3/llama.cpp).
-            response = self._llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt + " /no_think"},
-                ],
-                temperature=self.temperature,
-                top_p=self.top_p,
-                max_tokens=self.max_tokens,
-            )
+            # Lock сериализует доступ к не-thread-safe объекту Llama (см. __init__):
+            # если предыдущий inference после таймаута ещё крутится, ждём его, а не
+            # лезем в нативный код параллельно (иначе segfault).
+            with self._inference_lock:
+                response = self._llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt + " /no_think"},
+                    ],
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                )
             content = response["choices"][0]["message"]["content"]
             self.logger.info(
                 "Qwen inference finished in %s ms. response_len=%s",
