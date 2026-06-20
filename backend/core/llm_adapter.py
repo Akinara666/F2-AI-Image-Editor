@@ -261,10 +261,13 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self.n_gpu_layers,
                 self._llm is not None,
             )
+            # Qwen3 по умолчанию в thinking-режиме: генерирует <think>...</think>
+            # (много токенов, медленно) до ответа. Для SD-промпта это не нужно —
+            # /no_think переключает в прямой режим (стандартный флаг Qwen3/llama.cpp).
             response = self._llm.create_chat_completion(
                 messages=[
                     {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": user_prompt + " /no_think"},
                 ],
                 temperature=self.temperature,
                 top_p=self.top_p,
