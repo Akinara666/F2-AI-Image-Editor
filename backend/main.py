@@ -1753,7 +1753,12 @@ async def generate_image(
             if negative_transform_result.error:
                 meta["negative_prompt_transform_error"] = negative_transform_result.error
             
-            filename = save_image_with_metadata(result_image, meta, str(settings.OUTPUT_DIR))
+            # PNG-энкод полноразмерной картинки + запись на диск тяжёлые; в event-loop
+            # они блокировали бы весь сервер (включая опрос превью фронтом) ровно в
+            # момент «превью → чёткая». Выносим в поток.
+            filename = await asyncio.to_thread(
+                save_image_with_metadata, result_image, meta, str(settings.OUTPUT_DIR)
+            )
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
