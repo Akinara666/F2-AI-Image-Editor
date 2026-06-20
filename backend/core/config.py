@@ -128,6 +128,11 @@ class Settings:
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
     MAX_CACHED_MODELS: int = 2    # Max underlying model bundles kept in RAM (LRU eviction)
 
+    # Generation only runs one image at a time (serialized by a lock). This caps
+    # how many requests may WAIT for that lock before new ones are rejected fast
+    # with 429 instead of piling up unbounded coroutines. 0 disables the cap.
+    MAX_GENERATION_WAITERS: int = max(0, int(os.getenv("MAX_GENERATION_WAITERS", "8")))
+
     # CORS
     CORS_ALLOW_ORIGINS: list[str] = [
         origin.strip()

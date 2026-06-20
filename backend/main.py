@@ -118,11 +118,15 @@ class _FallbackModelManager:
 AI_RUNTIME_IMPORT_ERROR: Exception | None = None
 
 try:
-    from core.manager import model_manager
+    from core.manager import model_manager, GenerationBusyError
 except Exception as exc:
     AI_RUNTIME_IMPORT_ERROR = exc
     logger.warning("Falling back to lightweight model manager because AI runtime import failed: %s", exc)
     model_manager = _FallbackModelManager(exc)
+
+    class GenerationBusyError(RuntimeError):
+        """Placeholder so the 429 handler can register; never raised in fallback
+        mode (the fallback manager has no generation lock to overflow)."""
 
 LIVE_PREVIEW_METHOD_CHOICES = ("full", "approx_nn", "approx_cheap", "taesd")
 try:
@@ -147,6 +151,13 @@ app.add_middleware(
 
 # Mount static folder for outputs
 app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")
+
+@app.exception_handler(GenerationBusyError)
+async def generation_busy_handler(request: Request, exc: GenerationBusyError):
+    # Backpressure, not an error: the generation wait queue is full. Tell the
+    # client to retry. Starlette matches this before the generic Exception handler.
+    logger.info("Generation rejected (busy): %s", exc)
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -1757,6 +1768,12 @@ async def generate_image(
                 request_id,
                 status="cancelled" if e.status_code == 499 else "error",
             )
+        raise
+    except GenerationBusyError:
+        # Backpressure, not a generation failure: never reached the lock, so no
+        # partial work to clean up. Let the dedicated 429 handler answer.
+        if request_id:
+            generation_preview_store.mark(request_id, status="error")
         raise
     except Exception as e:
         if request_id:

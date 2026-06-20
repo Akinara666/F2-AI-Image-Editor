@@ -37,6 +37,12 @@ ModelFamily = Literal["sd", "sdxl"]
 PipelineType = Literal["text2img", "img2img", "inpainting", "controlnet"]
 
 
+class GenerationBusyError(RuntimeError):
+    """Raised when too many requests are already waiting for the generation lock.
+    The API layer maps this to HTTP 429 so clients can retry instead of the
+    server accumulating unbounded pending coroutines."""
+
+
 @dataclass
 class ModelBundle:
     cache_key: str
@@ -59,6 +65,10 @@ class ModelManager:
         self.current_model_cache_key = None
         self.model_lock = asyncio.Lock()
         self.generation_lock = asyncio.Lock()
+        # Bounded backpressure for the serialized generation lock. Counter is only
+        # touched from coroutine code on the single event loop, so no extra lock.
+        self.max_generation_waiters = settings.MAX_GENERATION_WAITERS
+        self._generation_waiters = 0
         self.active_request_id: Optional[str] = None
         self.cancel_requested = False
         self.active_pipeline = None
@@ -324,24 +334,6 @@ class ModelManager:
         self.current_model_cache_key = None
         self._offload_hook_owner = None
         self._free_cuda_memory()
-
-    def _unload_current_model(self):
-        """No longer fully unloads by default. Models are managed by cpu_offload.
-        This method is kept for explicit hard resets if needed.
-        """
-        self.logger.info("Hard VRAM clear requested.")
-        if self.current_pipeline is not None:
-            # We don't delete the pipeline if it's in the cache,
-            # we just let cpu_offload handle VRAM.
-            # If we wanted to really delete it:
-            # del self.current_pipeline
-            self.current_pipeline = None
-            self.current_cache_key = None
-            self.current_model_cache_key = None
-
-        # Hard cleanup
-        self._free_cuda_memory()
-        self.logger.info("VRAM cleared.")
 
     async def get_model(
         self, 
@@ -669,7 +661,23 @@ class ModelManager:
 
     @asynccontextmanager
     async def generation_session(self, request_id: str):
-        await self.generation_lock.acquire()
+        # Reject early if the wait queue is already full instead of letting
+        # pending coroutines accumulate without bound. 0 disables the cap.
+        if self.max_generation_waiters and self._generation_waiters >= self.max_generation_waiters:
+            self.logger.warning(
+                "Rejecting generation request_id=%s: %s requests already waiting (cap=%s).",
+                request_id,
+                self._generation_waiters,
+                self.max_generation_waiters,
+            )
+            raise GenerationBusyError(
+                "Server is busy: too many generation requests queued. Please retry shortly."
+            )
+        self._generation_waiters += 1
+        try:
+            await self.generation_lock.acquire()
+        finally:
+            self._generation_waiters -= 1
         self.active_request_id = request_id
         self.cancel_requested = request_id in self.cancelled_request_ids
         self.active_pipeline = None

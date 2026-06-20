@@ -215,12 +215,15 @@ class PromptTransformer:
                 self.logger.info("Prompt transform worker finished: transform_id=%s", transform_id)
 
         try:
-            # Model loading happens outside the transform timeout: the first
-            # call may need to read a multi-GB GGUF from disk, and that must
-            # not be mistaken for a slow inference.
-            await asyncio.to_thread(self.adapter.ensure_ready)
+            # Run on the adapter's dedicated single-worker executor (NOT the shared
+            # asyncio default pool that SD generation uses) so a slow/timed-out
+            # inference can never starve image generation. Model loading happens
+            # outside the transform timeout: the first call may read a multi-GB
+            # GGUF from disk, which must not be mistaken for a slow inference.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self.adapter.executor, self.adapter.ensure_ready)
             raw_payload = await asyncio.wait_for(
-                asyncio.to_thread(run_transform_call),
+                loop.run_in_executor(self.adapter.executor, run_transform_call),
                 timeout=max(0.1, self.timeout_ms / 1000.0),
             )
             latency_ms = int((time.perf_counter() - started) * 1000)

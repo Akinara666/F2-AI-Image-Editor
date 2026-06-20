@@ -1,8 +1,10 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from core.config import settings
@@ -14,6 +16,20 @@ class BasePromptLLMAdapter:
         self._state_lock = threading.RLock()
         self._active_calls = 0
         self._unload_requested = False
+        # Dedicated single-worker executor so ALL LLM work (load + inference, for
+        # both the positive and negative transformers that share this adapter)
+        # runs on ONE thread fully isolated from asyncio's shared default pool.
+        # SD generation also offloads to that shared pool — without this isolation
+        # a slow/timed-out inference (Python can't kill the thread) would occupy a
+        # shared worker and could starve image generation, deadlocking it under
+        # the generation lock. max_workers=1 also serialises native llama.cpp calls.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"llm-{self.__class__.__name__}"
+        )
+
+    @property
+    def executor(self) -> ThreadPoolExecutor:
+        return self._executor
 
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         raise NotImplementedError
@@ -137,6 +153,11 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         self.logger = logger or logging.getLogger("QwenGGUFLoraAdapter")
         self._llm = None
         self._load_lock = threading.Lock()
+        # llama.cpp is NOT thread-safe: concurrent create_chat_completion on the
+        # same Llama object corrupts its internal state and segfaults. The
+        # dedicated single-worker executor already serialises calls in the normal
+        # path; this lock is belt-and-suspenders for any direct run_transform use.
+        self._inference_lock = threading.Lock()
 
     @staticmethod
     def _validate_runtime_file(path: str, label: str) -> str:
@@ -216,6 +237,11 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         if not text:
             raise RuntimeError("LLM returned empty response.")
 
+        # Qwen3 thinking mode wraps reasoning in <think>...</think> before the
+        # answer. Even with /no_think the model can still emit it; strip it so the
+        # JSON extractor never picks up a brace from inside the reasoning block.
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -233,7 +259,10 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         started = time.perf_counter()
         self._ensure_model_loaded()
-        assert self._llm is not None
+        # Explicit check (not assert): asserts are stripped under `python -O`,
+        # which would turn a load failure into a silent None dereference.
+        if self._llm is None:
+            raise RuntimeError("Qwen GGUF model is not loaded.")
 
         ctx = context or {}
         user_negative = (ctx.get("user_negative_prompt") or "").strip()
@@ -264,15 +293,17 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             # Qwen3 по умолчанию в thinking-режиме: генерирует <think>...</think>
             # (много токенов, медленно) до ответа. Для SD-промпта это не нужно —
             # /no_think переключает в прямой режим (стандартный флаг Qwen3/llama.cpp).
-            response = self._llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt + " /no_think"},
-                ],
-                temperature=self.temperature,
-                top_p=self.top_p,
-                max_tokens=self.max_tokens,
-            )
+            # Lock сериализует доступ к не-thread-safe объекту Llama (см. __init__).
+            with self._inference_lock:
+                response = self._llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt + " /no_think"},
+                    ],
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    max_tokens=self.max_tokens,
+                )
             content = response["choices"][0]["message"]["content"]
             self.logger.info(
                 "Qwen inference finished in %s ms. response_len=%s",
