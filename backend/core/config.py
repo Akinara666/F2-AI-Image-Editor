@@ -27,7 +27,13 @@ class Settings:
         os.getenv("FRONTEND_DIST_DIR", str(BASE_DIR.parent / "frontend" / "dist"))
     )
     SERVE_FRONTEND: bool = os.getenv("SERVE_FRONTEND", "false").lower() == "true"
-    
+    # Куда панель настроек пишет правки (.env). По умолчанию backend/.env — туда же
+    # run-vast копирует конфиг, и оттуда же load_dotenv() читает на старте.
+    ENV_FILE_PATH: Path = Path(os.getenv("ENV_FILE_PATH", str(BASE_DIR / ".env")))
+    # Секрет для правки настроек из UI. Пусто → редактирование выключено (только
+    # просмотр). Живёт ТОЛЬКО здесь, в окружении сервера; во фронт не передаётся.
+    SETTINGS_ADMIN_TOKEN: str = os.getenv("SETTINGS_ADMIN_TOKEN", "").strip()
+
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
