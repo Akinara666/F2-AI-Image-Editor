@@ -133,7 +133,9 @@ if [ "$REINSTALL" -eq 1 ] || ! deps_ready; then
   "$PY" -m pip install -r backend/requirements.txt
 
   if [ "$OPTIONAL" -eq 1 ]; then
-    log "Ставлю optional-зависимости (xformers, llama-cpp-python) ..."
+    # llama-cpp-python и так ставится автоматически в LLM-секции при включённом
+    # qwen_gguf; уникальная польза --optional — xformers (опц. ускорение SD).
+    log "Ставлю optional-зависимости (в основном xformers; llama-cpp-python ставится сам при LLM) ..."
     "$PY" -m pip install -r backend/requirements-optional.txt || warn "Часть optional-зависимостей не встала — продолжаю."
   fi
   ok "Зависимости готовы."
