@@ -54,7 +54,7 @@ txt2img, img2img, inpainting и outpainting в едином инструмент
 - **История генераций** — панель с предыдущими результатами.
 - **Prompt Transformer** — опциональная локальная LLM (Qwen GGUF + LoRA), адаптирующая исходный запрос под формат Stable Diffusion перед генерацией.
 - **Панель настроек сервера** — правка `backend/.env` (модель, NSFW, движок, LLM, токены) прямо из интерфейса; защищена паролем `SETTINGS_ADMIN_TOKEN`.
-- **Один URL = сайт** — backend может отдавать собранный фронт на том же адресе, что и API (`SERVE_FRONTEND` / `run-vast.sh --with-frontend`), без отдельного запуска фронта и без CORS.
+- **Один URL = сайт** — backend может отдавать собранный фронт на том же адресе, что и API (`SERVE_FRONTEND`; на vast включено по умолчанию, выключить — `run-vast.sh --no-frontend`), без отдельного запуска фронта и без CORS.
 
 ## Технический стек
 
@@ -105,16 +105,18 @@ bash deploy/bootstrap.sh          # автоопределение GPU/CPU, сб
 ### На Vast.ai или готовом CUDA-контейнере (без Docker)
 
 ```bash
-bash deploy/run-vast.sh           # backend и публичный адрес
-# на клиентском компьютере:
-bash deploy/run-client.sh https://<random>.trycloudflare.com
+# по умолчанию: один URL = готовый сайт (backend сам собирает и отдаёт фронт):
+bash deploy/run-vast.sh           # печатает https://<random>.trycloudflare.com
 
-# либо один URL = готовый сайт (backend сам отдаёт фронт, клиент не нужен):
-bash deploy/run-vast.sh --with-frontend
+# либо только API (фронт запускают на клиентском компьютере):
+bash deploy/run-vast.sh --no-frontend
+bash deploy/run-client.sh https://<random>.trycloudflare.com
 ```
 
-Подробности и три способа подключения (Cloudflare Tunnel, проброс порта по SSH,
-нативный порт Vast.ai) — [docs/03-vast-ai.md](docs/03-vast-ai.md).
+Запускай под `tmux`, иначе обрыв SSH остановит сервер. Туннель переживает
+перезапуск backend — URL не меняется при повторном `run-vast.sh` (остановить —
+`--stop`). На GPU-инстансе Qwen сразу получает `LLM_GPU_LAYERS=99`. Подробности и
+три способа подключения — [docs/03-vast-ai.md](docs/03-vast-ai.md).
 
 ## Конфигурация
 
