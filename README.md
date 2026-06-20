@@ -38,13 +38,14 @@ txt2img, img2img, inpainting и outpainting в едином инструмент
 - **Txt2Img / Img2Img** — генерация по текстовому описанию или на основе исходного изображения.
 - **Outpainting** — достраивание изображения за пределами исходных границ при размещении рамки на прозрачной области или у края.
 - **Inpainting** — локальное изменение области по маске; немаскированные пиксели сохраняются без потерь, края смешиваются методом feather-blend.
+- **Явный режим генерации** (вся картинка / inpaint) с пресетами-намерениями и живым предпросмотром границы зоны генерации прямо на холсте.
 - **Sketch-to-Image** — преобразование наброска, выполненного кистью, в готовое изображение.
 - Поддержка **SD и SDXL**; режимы text2img / img2img / inpainting (ControlNet — на стороне backend).
 
 ### Контроль качества
 - **11 семплеров**: Euler a, Euler, DPM++ 2M / 2S a / SDE Karras, DPM2 a Karras, DDIM, DDPM, Heun, UniPC, LMS.
 - **Веса промптов в синтаксисе AUTOMATIC1111** (`(word:1.2)`, `[word]`) через Compel, управление CLIP skip и seed.
-- Опциональный **NSFW-фильтр**.
+- **NSFW-защита** — классификатор проверяет каждую готовую картинку и блокирует NSFW (включена по умолчанию, `NSFW_FILTER_ENABLED=false` — отключить).
 - **Предпросмотр в реальном времени** — декодирование промежуточных латентов во время генерации (быстрые методы `approx_nn` и `TAESD`).
 
 ### Рабочий процесс
@@ -52,6 +53,8 @@ txt2img, img2img, inpainting и outpainting в едином инструмент
 - **Менеджер моделей** — загрузка чекпойнтов из **HuggingFace** и **Civit.ai** непосредственно из интерфейса.
 - **История генераций** — панель с предыдущими результатами.
 - **Prompt Transformer** — опциональная локальная LLM (Qwen GGUF + LoRA), адаптирующая исходный запрос под формат Stable Diffusion перед генерацией.
+- **Панель настроек сервера** — правка `backend/.env` (модель, NSFW, движок, LLM, токены) прямо из интерфейса; защищена паролем `SETTINGS_ADMIN_TOKEN`.
+- **Один URL = сайт** — backend может отдавать собранный фронт на том же адресе, что и API (`SERVE_FRONTEND` / `run-vast.sh --with-frontend`), без отдельного запуска фронта и без CORS.
 
 ## Технический стек
 
@@ -105,6 +108,9 @@ bash deploy/bootstrap.sh          # автоопределение GPU/CPU, сб
 bash deploy/run-vast.sh           # backend и публичный адрес
 # на клиентском компьютере:
 bash deploy/run-client.sh https://<random>.trycloudflare.com
+
+# либо один URL = готовый сайт (backend сам отдаёт фронт, клиент не нужен):
+bash deploy/run-vast.sh --with-frontend
 ```
 
 Подробности и три способа подключения (Cloudflare Tunnel, проброс порта по SSH,
@@ -124,8 +130,11 @@ bash deploy/run-client.sh https://<random>.trycloudflare.com
 | `DEFAULT_MODEL_ID` | `runwayml/stable-diffusion-v1-5` | модель по умолчанию |
 | `SD_ENABLE_CPU_OFFLOAD` | `true` | выгрузка модулей в RAM для экономии видеопамяти |
 | `SD_TORCH_DTYPE` | `auto` | `auto` — bf16 на Ampere и новее, иначе fp16 |
+| `NSFW_FILTER_ENABLED` | `true` | блокирующий NSFW-классификатор (`false` — отключить) |
 | `CIVITAI_API_TOKEN` / `HF_TOKEN` | — | токены для загрузки моделей |
 | `PROMPT_TRANSFORM_ENABLED` | `false` | включение LLM-трансформера промпта |
+| `SERVE_FRONTEND` | `false` | backend отдаёт фронт на том же origin (один URL) |
+| `SETTINGS_ADMIN_TOKEN` | — | пароль для правки настроек из панели в UI (пусто = только просмотр) |
 
 ## Использование
 
