@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+import os
 import random
 from typing import Optional
 from pathlib import Path
@@ -52,6 +53,7 @@ from core.utils import (
     merge_generation_masks,
 )
 from core.config import STYLE_PRESETS, settings
+from core.config_schema import SETTINGS_SCHEMA, ALLOWLIST, coerce_value, is_secret
 from core.prompt_transformer import prompt_transformer
 from core.safety_checker import nsfw_safety_checker
 from core.negative_prompt_transformer import negative_prompt_transformer
@@ -912,6 +914,81 @@ def read_root():
 @app.get("/models")
 def list_models():
     return {"models": ALLOWED_CLOUD_MODELS + _get_managed_model_entries() + _get_local_model_entries()}
+
+
+# --------------------------------------------------------------------------- #
+# Панель настроек: чтение/правка backend/.env (правки применяются после рестарта)
+# --------------------------------------------------------------------------- #
+def _current_config_value(key: str) -> str:
+    """Текущее эффективное значение настройки (как загружено на старте)."""
+    raw = os.getenv(key)
+    if raw is not None:
+        return raw
+    if key == "USE_CUDA":
+        return "true" if settings.DEVICE == "cuda" else "false"
+    if hasattr(settings, key):
+        val = getattr(settings, key)
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        return str(val)
+    return ""
+
+
+@app.get("/config")
+def get_config():
+    values: dict[str, object] = {}
+    for entry in SETTINGS_SCHEMA:
+        key = entry["key"]
+        if is_secret(key):
+            # Секрет наружу не отдаём — только факт, задан ли он.
+            values[key] = {"secret": True, "set": bool(os.getenv(key) or "")}
+        else:
+            values[key] = _current_config_value(key)
+    return {
+        "status": "success",
+        "data": {
+            "schema": SETTINGS_SCHEMA,
+            "values": values,
+            # editable=true только если на сервере задан админ-токен.
+            "editable": bool(settings.SETTINGS_ADMIN_TOKEN),
+            "env_file": str(settings.ENV_FILE_PATH),
+        },
+    }
+
+
+class ConfigPatchRequest(BaseModel):
+    values: dict[str, object]
+
+
+@app.patch("/config")
+def update_config(payload: ConfigPatchRequest, x_admin_token: str = Header(default="")):
+    # Гейт: правка только при заданном на сервере SETTINGS_ADMIN_TOKEN и верном токене.
+    if not settings.SETTINGS_ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail="Редактирование выключено: задайте SETTINGS_ADMIN_TOKEN в backend/.env и перезапустите backend.",
+        )
+    if (x_admin_token or "").strip() != settings.SETTINGS_ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Неверный админ-токен.")
+
+    from dotenv import set_key
+
+    written: list[str] = []
+    for key, raw in (payload.values or {}).items():
+        if key not in ALLOWLIST:
+            raise HTTPException(status_code=422, detail=f"Недопустимый ключ настройки: {key}")
+        # Секрет с пустым значением — не затираем существующий.
+        if is_secret(key) and (raw is None or str(raw).strip() == ""):
+            continue
+        try:
+            value = coerce_value(key, raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        set_key(str(settings.ENV_FILE_PATH), key, value)
+        written.append(key)
+
+    logger.info("Config updated via panel: keys=%s file=%s", written, settings.ENV_FILE_PATH)
+    return {"status": "success", "restart_required": True, "written": written}
 
 
 # --------------------------------------------------------------------------- #

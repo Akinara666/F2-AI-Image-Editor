@@ -1122,3 +1122,30 @@
     cursor: pointer;
     transition: border-color 0.15s ease, color 0.15s ease;
 }
+
+/* Шапка сайдбара: заголовок + кнопка настроек сервера. */
+.sidebar__title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sidebar__settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: var(--trans-fast);
+}
+.sidebar__settings-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+}
