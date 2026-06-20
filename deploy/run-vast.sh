@@ -30,6 +30,8 @@
 #   --port N         порт backend (по умолчанию 8000)
 #   --torch-index U  индекс колёс torch (по умолчанию cu128 — нужен для
 #                    Blackwell/sm_120, RTX 50xx; для старых карт можно cu121)
+#   --no-follow      не стримить логи backend в консоль (по умолчанию стримятся
+#                    в реальном времени; лог-файл пишется всегда)
 #   -h | --help      показать справку
 #
 set -euo pipefail
@@ -43,6 +45,7 @@ OPTIONAL=0
 REINSTALL=0
 WITH_LLM=1
 WITH_FRONTEND=0
+FOLLOW_LOGS=1
 LLM_MODEL_URL="https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"
 PORT=8000
 HOST="0.0.0.0"
@@ -64,6 +67,7 @@ while [ $# -gt 0 ]; do
     --no-llm) WITH_LLM=0 ;;
     --llm-url) shift; LLM_MODEL_URL="${1:?--llm-url требует значение}" ;;
     --reinstall) REINSTALL=1 ;;
+    --no-follow) FOLLOW_LOGS=0 ;;
     --port) shift; PORT="${1:?--port требует значение}" ;;
     --torch-index) shift; TORCH_INDEX="${1:?--torch-index требует значение}" ;;
     -h|--help) usage ;;
@@ -227,8 +231,10 @@ UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
 CF_LOG="$SCRIPT_DIR/.cloudflared.log"
 UVICORN_PID=""
 CF_PID=""
+TAIL_PID=""
 
 cleanup() {
+  [ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null || true
   [ -n "$CF_PID" ] && kill "$CF_PID" 2>/dev/null || true
   [ -n "$UVICORN_PID" ] && kill "$UVICORN_PID" 2>/dev/null || true
 }
@@ -302,6 +308,22 @@ else
   printf   "    bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
 fi
 printf "${c_green}==========================================================${c_off}\n\n"
-log "Логи backend: $UVICORN_LOG   |   Ctrl+C — остановить."
 
+if [ "$FOLLOW_LOGS" -eq 1 ]; then
+  log "Стримлю логи backend (файл: $UVICORN_LOG)   |   Ctrl+C — остановить."
+  printf "${c_green}---------- логи backend ----------${c_off}\n"
+  # -n +1: показать лог с самого начала (включая запуск); -F: переживать
+  # ротацию/пересоздание файла. Туннель-лог добавляем, если он есть.
+  if [ -n "$CF_PID" ]; then
+    tail -n +1 -F "$UVICORN_LOG" "$CF_LOG" &
+  else
+    tail -n +1 -F "$UVICORN_LOG" &
+  fi
+  TAIL_PID=$!
+else
+  log "Логи backend: $UVICORN_LOG   |   Ctrl+C — остановить."
+fi
+
+# Блокируемся до завершения backend; затем гасим tail, чтобы скрипт вышел.
 wait "$UVICORN_PID"
+[ -n "$TAIL_PID" ] && kill "$TAIL_PID" 2>/dev/null || true
