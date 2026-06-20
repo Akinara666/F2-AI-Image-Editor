@@ -205,7 +205,12 @@ build_frontend() {
   # .env.production.local имеет высший приоритет у vite → пустой VITE_API_BASE_URL
   # = относительные пути (/generate, /models...), т.е. тот же origin, что и backend.
   printf 'VITE_API_BASE_URL=\n' >"$REPO_ROOT/frontend/.env.production.local"
-  ( cd "$REPO_ROOT/frontend" && npm ci && npm run build ) \
+  # npm ci строгий и падает при дрейфе lock-файла (опц. транзитивные зависимости
+  # резолвятся по-разному в разных npm/node) → фолбэк на npm install, который
+  # терпим к дрейфу и резолвит под текущее окружение. Для сборки dist этого хватает.
+  ( cd "$REPO_ROOT/frontend" \
+      && { npm ci --no-audit --no-fund || npm install --no-audit --no-fund; } \
+      && npm run build ) \
     || { warn "Сборка фронта упала — поднимаю только API."; return 1; }
   ok "Фронтенд собран: frontend/dist"
 }
