@@ -124,7 +124,10 @@ else
   ok "Зависимости уже установлены (передай --reinstall, чтобы обновить)."
 fi
 
-if ! "$PY" -c "import torch; assert torch.cuda.is_available()" >/dev/null 2>&1; then
+if "$PY" -c "import torch; assert torch.cuda.is_available()" >/dev/null 2>&1; then
+  HAS_CUDA=1
+else
+  HAS_CUDA=0
   warn "torch.cuda.is_available() == False — backend поднимется, но генерация пойдёт на CPU."
   warn "Проверь, что инстанс реально с GPU и драйвер виден (nvidia-smi)."
 fi
@@ -182,6 +185,12 @@ set_env_kv() {
   fi
 }
 
+# Прочитать текущее значение KEY из env-файла (пусто, если ключа нет).
+get_env_val() {
+  local key="$1" file="$2"
+  sed -n "s|^${key}=||p" "$file" 2>/dev/null | tail -n1
+}
+
 # Шаблон backend.env.example прописывает LLM_MODEL_PATH=/app/models/llm/model.gguf
 # (путь из Docker) — на vast его надо заменить реальным путём скачанного файла,
 # иначе backend не найдёт модель.
@@ -189,7 +198,21 @@ if [ "$WITH_LLM" -eq 1 ] && [ -f "$LLM_FILE" ]; then
   set_env_kv LLM_MODEL_PATH "$LLM_FILE" "$ENV_FILE"
   set_env_kv PROMPT_TRANSFORM_ENABLED true "$ENV_FILE"
   set_env_kv PROMPT_TRANSFORM_PROVIDER qwen_gguf "$ENV_FILE"
-  ok "LLM подключён: provider=qwen_gguf, LLM_MODEL_PATH=$LLM_FILE"
+  # На GPU-инстансе держать Qwen на CPU (дефолт LLM_GPU_LAYERS=0) — абсурд:
+  # инференс идёт ~20+ сек, ловит таймаут трансформации и отдаёт мусор. Грузим
+  # все слои на GPU — но ТОЛЬКО если значение ещё дефолтное (пусто/0), чтобы не
+  # затирать осознанную правку из панели настроек при повторном запуске.
+  current_gpu_layers="$(get_env_val LLM_GPU_LAYERS "$ENV_FILE")"
+  if [ "$HAS_CUDA" -eq 1 ]; then
+    if [ -z "$current_gpu_layers" ] || [ "$current_gpu_layers" = "0" ]; then
+      set_env_kv LLM_GPU_LAYERS 99 "$ENV_FILE"
+      ok "LLM подключён: provider=qwen_gguf, GPU-слои=99 (на GPU), LLM_MODEL_PATH=$LLM_FILE"
+    else
+      ok "LLM подключён: provider=qwen_gguf, GPU-слои=$current_gpu_layers (своё значение), LLM_MODEL_PATH=$LLM_FILE"
+    fi
+  else
+    ok "LLM подключён: provider=qwen_gguf, GPU-слои=0 (CPU — медленно), LLM_MODEL_PATH=$LLM_FILE"
+  fi
 else
   log "LLM не подключён (--no-llm или модель недоступна) — prompt-трансформация как в env."
 fi
