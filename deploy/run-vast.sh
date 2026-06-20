@@ -14,16 +14,17 @@
 #   * поднимает uvicorn на 0.0.0.0:8000;
 #   * (по умолчанию) поднимает Cloudflare quick-tunnel и печатает публичный
 #     https://<random>.trycloudflare.com — это адрес API;
-#   * с --with-frontend дополнительно собирает SPA и отдаёт его тем же backend-ом
-#     (один URL = полноценный сайт + API, same-origin без CORS); иначе фронт
-#     запускают у себя на клиенте через deploy/run-client.sh <URL>.
+#   * ПО УМОЛЧАНИЮ собирает SPA и отдаёт его тем же backend-ом (один URL =
+#     полноценный сайт + API, same-origin без CORS) — открыл адрес в браузере и
+#     сразу редактор. С --no-frontend поднимается только API, а фронт запускают
+#     у себя на клиенте через deploy/run-client.sh <URL>.
 #
 # Флаги:
 #   --no-tunnel      без cloudflared (доступ по проброшенному порту vast / ssh -L)
 #   --no-venv        ставить в текущий python, а не в venv deploy/.venv-vast
-#   --optional       доустановить requirements-optional (xformers, llama-cpp-python)
-#   --with-frontend  собрать фронт и отдавать его backend-ом (один публичный URL =
-#                    сайт; ставит Node при отсутствии)
+#   --optional       доустановить xformers (llama-cpp-python ставится сам при LLM)
+#   --no-frontend    (=--api-only) только API, без сборки фронта; фронт — на клиенте
+#   --with-frontend  (по умолчанию и так включено; флаг оставлен для совместимости)
 #   --no-llm         не скачивать Qwen-GGUF и не включать провайдер qwen_gguf
 #   --llm-url U      URL GGUF-модели (по умолчанию Qwen3-1.7B-Q8_0)
 #   --reinstall      переустановить зависимости и перекачать GGUF, даже если есть
@@ -44,7 +45,7 @@ USE_VENV=1
 OPTIONAL=0
 REINSTALL=0
 WITH_LLM=1
-WITH_FRONTEND=0
+WITH_FRONTEND=1
 FOLLOW_LOGS=1
 LLM_MODEL_URL="https://huggingface.co/Qwen/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf"
 PORT=8000
@@ -64,6 +65,7 @@ while [ $# -gt 0 ]; do
     --no-venv) USE_VENV=0 ;;
     --optional) OPTIONAL=1 ;;
     --with-frontend) WITH_FRONTEND=1 ;;
+    --no-frontend|--api-only) WITH_FRONTEND=0 ;;
     --no-llm) WITH_LLM=0 ;;
     --llm-url) shift; LLM_MODEL_URL="${1:?--llm-url требует значение}" ;;
     --reinstall) REINSTALL=1 ;;
