@@ -115,8 +115,10 @@ bash deploy/run-client.sh https://<random>.trycloudflare.com
 
 Запускай под `tmux`, иначе обрыв SSH остановит сервер. Туннель переживает
 перезапуск backend — URL не меняется при повторном `run-vast.sh` (остановить —
-`--stop`). На GPU-инстансе Qwen сразу получает `LLM_GPU_LAYERS=99`. Подробности и
-три способа подключения — [docs/03-vast-ai.md](docs/03-vast-ai.md).
+`--stop`). На GPU-инстансе Qwen сразу получает `LLM_GPU_LAYERS=99`. Провайдер
+туннеля выбирается флагом `--tunnel` (`cloudflare` по умолчанию; `pinggy` / `ngrok`
+/ `localhost-run` / `none` — если Cloudflare недоступен, например в РФ). Подробности
+и способы подключения — [docs/03-vast-ai.md](docs/03-vast-ai.md).
 
 ## Конфигурация
 

@@ -20,7 +20,11 @@
 #     у себя на клиенте через deploy/run-client.sh <URL>.
 #
 # Флаги:
-#   --no-tunnel      без cloudflared (доступ по проброшенному порту vast / ssh -L)
+#   --tunnel P       провайдер публичного туннеля: cloudflare (по умолчанию) |
+#                    ngrok | pinggy | localhost-run | none. В РФ Cloudflare у зрителя
+#                    часто недоступен — для показа из России берите pinggy/ngrok/none.
+#   --no-tunnel      алиас --tunnel none (доступ по нативному порту vast / ssh -L)
+#   --ngrok-token T  authtoken для ngrok (или env NGROK_AUTHTOKEN)
 #   --no-venv        ставить в текущий python, а не в venv deploy/.venv-vast
 #   --optional       доустановить xformers (llama-cpp-python ставится сам при LLM)
 #   --no-frontend    (=--api-only) только API, без сборки фронта; фронт — на клиенте
@@ -33,8 +37,8 @@
 #                    Blackwell/sm_120, RTX 50xx; для старых карт можно cu121)
 #   --no-follow      не стримить логи backend в консоль (по умолчанию стримятся
 #                    в реальном времени; лог-файл пишется всегда)
-#   --new-tunnel     поднять НОВЫЙ cloudflared, даже если живой уже есть (сменит URL)
-#   --stop           остановить backend и cloudflared-туннель и выйти
+#   --new-tunnel     поднять НОВЫЙ туннель, даже если живой уже есть (сменит URL)
+#   --stop           остановить backend и туннель и выйти
 #   -h | --help      показать справку
 #
 set -euo pipefail
@@ -42,7 +46,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 
-WITH_TUNNEL=1
+TUNNEL=cloudflare
+NGROK_TOKEN="${NGROK_AUTHTOKEN:-}"
 USE_VENV=1
 OPTIONAL=0
 REINSTALL=0
@@ -65,7 +70,9 @@ usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "${BASH_SOURC
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --no-tunnel) WITH_TUNNEL=0 ;;
+    --tunnel) shift; TUNNEL="${1:?--tunnel требует значение (cloudflare|ngrok|pinggy|localhost-run|none)}" ;;
+    --no-tunnel) TUNNEL=none ;;
+    --ngrok-token) shift; NGROK_TOKEN="${1:?--ngrok-token требует значение}" ;;
     --no-venv) USE_VENV=0 ;;
     --optional) OPTIONAL=1 ;;
     --with-frontend) WITH_FRONTEND=1 ;;
@@ -86,20 +93,30 @@ done
 
 cd "$REPO_ROOT"
 
-# Состояние процессов/туннеля держим в файлах рядом со скриптом, чтобы cloudflared
+# Нормализуем и проверяем провайдер туннеля.
+TUNNEL="$(printf '%s' "$TUNNEL" | tr '[:upper:]' '[:lower:]')"
+case "$TUNNEL" in
+  cloudflare|ngrok|pinggy|localhost-run|none) ;;
+  *) err "Неизвестный провайдер туннеля: $TUNNEL (cloudflare|ngrok|pinggy|localhost-run|none)"; exit 1 ;;
+esac
+# WITH_TUNNEL — производная: туннель поднимаем для любого провайдера кроме none.
+WITH_TUNNEL=1
+[ "$TUNNEL" = "none" ] && WITH_TUNNEL=0
+
+# Состояние процессов/туннеля держим в файлах рядом со скриптом, чтобы туннель
 # переживал перезапуск backend (см. секцию «публичный доступ» — рестарт без смены URL).
 UVICORN_LOG="$SCRIPT_DIR/.uvicorn.log"
-CF_LOG="$SCRIPT_DIR/.cloudflared.log"
-CF_PID_FILE="$SCRIPT_DIR/.cloudflared.pid"
-CF_URL_FILE="$SCRIPT_DIR/.cloudflared.url"
+TUNNEL_LOG="$SCRIPT_DIR/.tunnel.log"
+TUNNEL_PID_FILE="$SCRIPT_DIR/.tunnel.pid"
+TUNNEL_URL_FILE="$SCRIPT_DIR/.tunnel.url"
 
 # --stop: погасить backend и туннель и выйти (cleanup-trap туннель не трогает,
 # поэтому нужен явный способ остановить его).
 if [ "$STOP" -eq 1 ]; then
-  if [ -f "$CF_PID_FILE" ]; then
-    cf_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
-    [ -n "$cf_pid" ] && kill "$cf_pid" 2>/dev/null && ok "Остановлен cloudflared (pid=$cf_pid)." || true
-    rm -f "$CF_PID_FILE" "$CF_URL_FILE"
+  if [ -f "$TUNNEL_PID_FILE" ]; then
+    t_pid="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
+    [ -n "$t_pid" ] && kill "$t_pid" 2>/dev/null && ok "Остановлен туннель (pid=$t_pid)." || true
+    rm -f "$TUNNEL_PID_FILE" "$TUNNEL_URL_FILE"
   fi
   if pkill -f "uvicorn main:app .*--port $PORT" 2>/dev/null; then
     ok "Остановлен backend (uvicorn на порту $PORT)."
@@ -352,81 +369,170 @@ done
 [ "$healthy" -eq 1 ] && ok "Backend готов." || { err "Backend не ответил вовремя. Лог: $UVICORN_LOG"; tail -n 30 "$UVICORN_LOG" >&2 || true; exit 1; }
 
 # ---------- публичный доступ ----------
-# Cloudflared запускается DETACHED (setsid: своя сессия, не получает Ctrl+C/SIGHUP
+# Туннель запускается DETACHED (setsid: своя сессия, не получает Ctrl+C/SIGHUP
 # скрипта) и НЕ убивается в cleanup. Поэтому при повторном запуске скрипта (например
 # чтобы применить правки из панели настроек) живой туннель переиспользуется — и
 # публичный URL не меняется. Форсировать новый — `--new-tunnel`; погасить — `--stop`.
+#
+# Провайдер выбирается флагом --tunnel. Cloudflare у зрителя в РФ часто недоступен —
+# тогда берут pinggy/ngrok/localhost-run или нативный порт (--tunnel none).
+
+# Достать публичный https-URL текущего провайдера из лога/API.
+extract_tunnel_url() {
+  case "$TUNNEL" in
+    cloudflare)
+      grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | tail -n1 ;;
+    pinggy)
+      grep -Eo 'https://[a-zA-Z0-9.-]+' "$TUNNEL_LOG" 2>/dev/null | grep -i pinggy | grep -vi dashboard | tail -n1 ;;
+    localhost-run)
+      grep -Eo 'https://[a-zA-Z0-9.-]+\.lhr\.life' "$TUNNEL_LOG" 2>/dev/null | tail -n1 ;;
+    ngrok)
+      "$PY" - <<'PYEOF' 2>/dev/null
+import json, urllib.request
+try:
+    d = json.load(urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=2))
+    print(next((t["public_url"] for t in d.get("tunnels", []) if t.get("public_url", "").startswith("https")), ""))
+except Exception:
+    print("")
+PYEOF
+      ;;
+  esac
+}
+
+# Поднять туннель выбранного провайдера detached, записать PID/URL, заполнить PUBLIC_API.
+start_tunnel() {
+  : >"$TUNNEL_LOG"
+  local arch cmd pgrep_pat
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) arch=amd64 ;;
+  esac
+
+  case "$TUNNEL" in
+    cloudflare)
+      local cf_bin="$SCRIPT_DIR/.cloudflared-$arch"
+      if [ ! -x "$cf_bin" ]; then
+        log "Скачиваю cloudflared ($arch) ..."
+        curl -fsSL -o "$cf_bin" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$arch"
+        chmod +x "$cf_bin"
+      fi
+      log "Поднимаю Cloudflare quick-tunnel (detached) ..."
+      cmd=("$cf_bin" tunnel --no-autoupdate --url "http://localhost:$PORT")
+      pgrep_pat="$cf_bin tunnel .*localhost:$PORT" ;;
+    pinggy)
+      command -v ssh >/dev/null 2>&1 || { err "ssh не найден (нужен для pinggy)."; return 1; }
+      log "Поднимаю pinggy-туннель по SSH (detached) ..."
+      cmd=(ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R0:localhost:"$PORT" a.pinggy.io)
+      pgrep_pat="ssh .*pinggy" ;;
+    localhost-run)
+      command -v ssh >/dev/null 2>&1 || { err "ssh не найден (нужен для localhost.run)."; return 1; }
+      log "Поднимаю localhost.run-туннель по SSH (detached) ..."
+      cmd=(ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:"$PORT" localhost.run)
+      pgrep_pat="ssh .*localhost.run" ;;
+    ngrok)
+      if [ -z "$NGROK_TOKEN" ]; then
+        err "ngrok требует токен: --ngrok-token <T> или env NGROK_AUTHTOKEN (регистрация на ngrok.com)."
+        return 1
+      fi
+      local ngrok_bin="$SCRIPT_DIR/.ngrok"
+      if [ ! -x "$ngrok_bin" ]; then
+        log "Скачиваю ngrok ($arch) ..."
+        local tgz="$SCRIPT_DIR/.ngrok.tgz"
+        if curl -fsSL -o "$tgz" "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-$arch.tgz"; then
+          tar -xzf "$tgz" -C "$SCRIPT_DIR" ngrok 2>/dev/null && mv "$SCRIPT_DIR/ngrok" "$ngrok_bin" && chmod +x "$ngrok_bin" || true
+        fi
+        rm -f "$tgz"
+      fi
+      [ -x "$ngrok_bin" ] || { err "Не удалось подготовить ngrok."; return 1; }
+      export NGROK_AUTHTOKEN="$NGROK_TOKEN"
+      log "Поднимаю ngrok-туннель (detached) ..."
+      cmd=("$ngrok_bin" http "$PORT" --log stdout)
+      pgrep_pat="$ngrok_bin http $PORT" ;;
+  esac
+
+  # setsid отвязывает от управляющего терминала и группы процессов скрипта —
+  # туннель не падёт от Ctrl+C/выхода скрипта. </dev/null, чтобы не держать stdin.
+  setsid "${cmd[@]}" >"$TUNNEL_LOG" 2>&1 </dev/null &
+  disown 2>/dev/null || true
+  sleep 1
+  # $! у setsid ненадёжен — берём реальный pid по командной строке.
+  local pid
+  pid="$(pgrep -f "$pgrep_pat" 2>/dev/null | head -n1 || true)"
+  [ -n "$pid" ] && printf '%s\n' "$pid" >"$TUNNEL_PID_FILE"
+
+  local i
+  for i in $(seq 1 30); do
+    PUBLIC_API="$(extract_tunnel_url)"
+    [ -n "$PUBLIC_API" ] && break
+    sleep 2
+  done
+  [ -n "$PUBLIC_API" ] && printf '%s\n' "$PUBLIC_API" >"$TUNNEL_URL_FILE"
+}
+
 PUBLIC_API=""
 TUNNEL_REUSED=0
 if [ "$WITH_TUNNEL" -eq 1 ]; then
   # Переиспользовать существующий туннель, если он жив и у нас есть его URL.
-  if [ "$NEW_TUNNEL" -eq 0 ] && [ -f "$CF_PID_FILE" ] && [ -f "$CF_URL_FILE" ]; then
-    existing_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
-    existing_url="$(cat "$CF_URL_FILE" 2>/dev/null || true)"
+  if [ "$NEW_TUNNEL" -eq 0 ] && [ -f "$TUNNEL_PID_FILE" ] && [ -f "$TUNNEL_URL_FILE" ]; then
+    existing_pid="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
+    existing_url="$(cat "$TUNNEL_URL_FILE" 2>/dev/null || true)"
     if [ -n "$existing_pid" ] && [ -n "$existing_url" ] && kill -0 "$existing_pid" 2>/dev/null; then
       PUBLIC_API="$existing_url"
       TUNNEL_REUSED=1
-      ok "Переиспользую живой cloudflared (pid=$existing_pid) — URL прежний."
+      ok "Переиспользую живой туннель ($TUNNEL, pid=$existing_pid) — URL прежний."
     fi
   fi
 
   if [ "$TUNNEL_REUSED" -eq 0 ]; then
     # Убить прежний туннель, если он был (новый запрошен или старый мёртв/без URL).
-    if [ -f "$CF_PID_FILE" ]; then
-      old_pid="$(cat "$CF_PID_FILE" 2>/dev/null || true)"
+    if [ -f "$TUNNEL_PID_FILE" ]; then
+      old_pid="$(cat "$TUNNEL_PID_FILE" 2>/dev/null || true)"
       [ -n "$old_pid" ] && kill "$old_pid" 2>/dev/null || true
-      rm -f "$CF_PID_FILE" "$CF_URL_FILE"
+      rm -f "$TUNNEL_PID_FILE" "$TUNNEL_URL_FILE"
     fi
-    case "$(uname -m)" in
-      x86_64) CF_ARCH=amd64 ;;
-      aarch64|arm64) CF_ARCH=arm64 ;;
-      *) CF_ARCH=amd64 ;;
-    esac
-    CF_BIN="$SCRIPT_DIR/.cloudflared-$CF_ARCH"
-    if [ ! -x "$CF_BIN" ]; then
-      log "Скачиваю cloudflared ($CF_ARCH) ..."
-      curl -fsSL -o "$CF_BIN" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$CF_ARCH"
-      chmod +x "$CF_BIN"
-    fi
-    log "Поднимаю Cloudflare quick-tunnel (detached) ..."
-    : >"$CF_LOG"
-    # setsid отвязывает от управляющего терминала и группы процессов скрипта —
-    # туннель не падёт от Ctrl+C/выхода скрипта. </dev/null, чтобы не держать stdin.
-    setsid "$CF_BIN" tunnel --no-autoupdate --url "http://localhost:$PORT" >"$CF_LOG" 2>&1 </dev/null &
-    disown 2>/dev/null || true
-    # $! у setsid ненадёжен — берём реальный pid процесса по командной строке.
-    sleep 1
-    CF_PID="$(pgrep -f "$CF_BIN tunnel .*localhost:$PORT" 2>/dev/null | head -n1 || true)"
-    [ -n "$CF_PID" ] && printf '%s\n' "$CF_PID" >"$CF_PID_FILE"
-    for _ in $(seq 1 30); do
-      PUBLIC_API="$(grep -Eo 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' "$CF_LOG" 2>/dev/null | tail -n1 || true)"
-      [ -n "$PUBLIC_API" ] && break
-      sleep 2
-    done
-    [ -n "$PUBLIC_API" ] && printf '%s\n' "$PUBLIC_API" >"$CF_URL_FILE"
+    start_tunnel || warn "Не удалось поднять туннель ($TUNNEL) — см. $TUNNEL_LOG."
   fi
+fi
+
+# Нативный порт vast (--tunnel none): собрать прямой адрес из env-переменных инстанса.
+NATIVE_URL=""
+if [ "$TUNNEL" = "none" ] && [ -n "${PUBLIC_IPADDR:-}" ]; then
+  ext_port_var="VAST_TCP_PORT_$PORT"
+  ext_port="${!ext_port_var:-}"
+  [ -n "$ext_port" ] && NATIVE_URL="http://$PUBLIC_IPADDR:$ext_port"
 fi
 
 printf "\n${c_green}==========================================================${c_off}\n"
 if [ -n "$PUBLIC_API" ]; then
   if [ "$WITH_FRONTEND" -eq 1 ]; then
-    printf   "${c_green}  Сайт (фронт + API на одном URL):${c_off}\n  %s\n\n" "$PUBLIC_API"
+    printf   "${c_green}  Сайт (фронт + API на одном URL, провайдер: %s):${c_off}\n  %s\n\n" "$TUNNEL" "$PUBLIC_API"
     printf   "  Открой этот адрес в браузере — это готовый редактор.\n"
   else
-    printf   "${c_green}  Backend API (публичный):${c_off}\n  %s\n\n" "$PUBLIC_API"
+    printf   "${c_green}  Backend API (публичный, провайдер: %s):${c_off}\n  %s\n\n" "$TUNNEL" "$PUBLIC_API"
     printf   "  На СВОЁМ компьютере (клиенте) выполни:\n"
     printf   "    bash deploy/run-client.sh %s\n" "$PUBLIC_API"
   fi
+  if [ "$TUNNEL" = "cloudflare" ]; then
+    printf "\n  ${c_yellow}В России Cloudflare у зрителя часто недоступен без VPN. Для показа${c_off}\n"
+    printf "  ${c_yellow}из РФ перезапусти с другим провайдером: --tunnel pinggy (или ngrok).${c_off}\n"
+  fi
 elif [ "$WITH_TUNNEL" -eq 1 ]; then
-  warn "Не удалось извлечь URL туннеля. Смотри: $CF_LOG"
-elif [ "$WITH_FRONTEND" -eq 1 ]; then
-  printf   "${c_green}  Сайт:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
-  printf   "  Пробрось порт и открой в браузере: ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
+  warn "Не удалось извлечь URL туннеля ($TUNNEL). Смотри: $TUNNEL_LOG"
+elif [ -n "$NATIVE_URL" ]; then
+  if [ "$WITH_FRONTEND" -eq 1 ]; then
+    printf   "${c_green}  Сайт (нативный порт vast):${c_off}\n  %s\n\n" "$NATIVE_URL"
+    printf   "  Открой в браузере. ${c_yellow}Это HTTP без TLS на нестандартном порту —${c_off}\n"
+    printf   "  ${c_yellow}строгий фильтр (только 443/TLS) может его не пропустить.${c_off}\n"
+  else
+    printf   "${c_green}  Backend API (нативный порт vast):${c_off}\n  %s\n\n" "$NATIVE_URL"
+    printf   "  На клиенте: bash deploy/run-client.sh %s\n" "$NATIVE_URL"
+  fi
 else
-  printf   "${c_green}  Backend API:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
-  printf   "  Пробрось порт с клиента и запусти фронтенд на него, например:\n"
-  printf   "    ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
-  printf   "    bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
+  printf   "${c_green}  Backend:${c_off} http://<host>:%s  (туннель отключён)\n\n" "$PORT"
+  printf   "  Открой порт при создании инстанса (-p %s:%s) — тогда скрипт покажет\n" "$PORT" "$PORT"
+  printf   "  прямой адрес. Либо проброс по SSH: ssh -L %s:127.0.0.1:%s <user>@<vast-host>\n" "$PORT" "$PORT"
+  [ "$WITH_FRONTEND" -eq 0 ] && printf "    затем: bash deploy/run-client.sh http://127.0.0.1:%s\n" "$PORT"
 fi
 if [ -n "${ADMIN_TOKEN:-}" ]; then
   printf "\n  ${c_green}Токен панели настроек (шестерёнка в UI):${c_off} %s\n" "$ADMIN_TOKEN"
@@ -447,8 +553,8 @@ if [ "$FOLLOW_LOGS" -eq 1 ]; then
   printf "${c_green}---------- логи backend ----------${c_off}\n"
   # -n +1: показать лог с самого начала (включая запуск); -F: переживать
   # ротацию/пересоздание файла. Туннель-лог добавляем, если он есть.
-  if [ "$WITH_TUNNEL" -eq 1 ] && [ -f "$CF_LOG" ]; then
-    tail -n +1 -F "$UVICORN_LOG" "$CF_LOG" &
+  if [ "$WITH_TUNNEL" -eq 1 ] && [ -f "$TUNNEL_LOG" ]; then
+    tail -n +1 -F "$UVICORN_LOG" "$TUNNEL_LOG" &
   else
     tail -n +1 -F "$UVICORN_LOG" &
   fi
