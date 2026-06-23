@@ -64,6 +64,31 @@ def encode_image_with_metadata(image: Image.Image, params: dict) -> tuple[bytes,
     return buffer.getvalue(), filename
 
 
+def encode_webp(image: Image.Image, quality: int = 90) -> bytes:
+    """Encode to WebP for fast on-screen delivery over slow links (e.g. tunnels).
+
+    A 1024² PNG is ~1.8–2.5 MB; the same image as WebP q90 is ~0.4–0.6 MB, so the
+    candidate crosses the tunnel ~4–5× faster. WebP keeps an alpha plane, so the
+    lossy mode does not break transparency-dependent paths. The lossless PNG is
+    still persisted to disk separately for history/accept fidelity.
+    """
+    buffer = io.BytesIO()
+    image.save(buffer, "WEBP", quality=quality, method=4)
+    return buffer.getvalue()
+
+
+def encode_result_for_delivery(
+    image: Image.Image, params: dict, webp_quality: int = 90
+) -> tuple[bytes, bytes, str]:
+    """One pass: lossless PNG (for disk) + compact WebP (for the inline response).
+
+    Returns ``(png_bytes, webp_bytes, filename)``.
+    """
+    png_bytes, filename = encode_image_with_metadata(image, params)
+    webp_bytes = encode_webp(image, webp_quality)
+    return png_bytes, webp_bytes, filename
+
+
 def write_output_bytes(data: bytes, filename: str, output_dir: str) -> str:
     """Persist pre-encoded image bytes and apply the cleanup policy.
 

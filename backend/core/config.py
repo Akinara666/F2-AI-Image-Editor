@@ -135,6 +135,11 @@ class Settings:
     DEFAULT_WIDTH: int = 512
     DEFAULT_HEIGHT: int = 512
 
+    # Quality of the WebP candidate sent inline in the /generate response (the
+    # on-screen result). Lower = smaller/faster over a tunnel, slightly lossier.
+    # The lossless PNG is still written to disk regardless.
+    CANDIDATE_WEBP_QUALITY: int = max(1, min(100, int(os.getenv("CANDIDATE_WEBP_QUALITY", "90"))))
+
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
     MAX_CACHED_MODELS: int = 2    # Max underlying model bundles kept in RAM (LRU eviction)

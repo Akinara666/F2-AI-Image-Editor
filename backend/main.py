@@ -50,6 +50,7 @@ except ImportError:
 from core.utils import (
     save_image_with_metadata,
     encode_image_with_metadata,
+    encode_result_for_delivery,
     write_output_bytes,
     process_mask_for_inpainting,
     prepare_image_for_outpainting,
@@ -1790,32 +1791,31 @@ async def generate_image(
             if negative_transform_result.error:
                 meta["negative_prompt_transform_error"] = negative_transform_result.error
             
-            # PNG-энкод полноразмерной картинки тяжёлый и сидит ровно на пути
-            # «превью → чёткая». Кодируем один раз в потоке (не блокируя event-loop),
-            # отдаём картинку инлайном — фронт показывает её без второго запроса к
-            # /outputs, — а запись на диск + чистку каталога уносим в фон, чтобы
-            # ответ не ждал IO.
+            # Картинка крупная и сидит ровно на пути «превью → чёткая». Кодируем
+            # в потоке (не блокируя event-loop): lossless PNG — на диск в фоне, а
+            # на экран отдаём компактный WebP инлайном (через туннель ~4–5× меньше
+            # PNG, без второго запроса к /outputs и без ожидания записи на диск).
             _t_encode = time.perf_counter()
-            png_bytes, filename = await asyncio.to_thread(
-                encode_image_with_metadata, result_image, meta
+            png_bytes, webp_bytes, filename = await asyncio.to_thread(
+                encode_result_for_delivery, result_image, meta, settings.CANDIDATE_WEBP_QUALITY
             )
             encode_ms = (time.perf_counter() - _t_encode) * 1000.0
             background_tasks.add_task(
                 write_output_bytes, png_bytes, filename, str(settings.OUTPUT_DIR)
             )
             _t_b64 = time.perf_counter()
-            image_data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+            image_data_url = "data:image/webp;base64," + base64.b64encode(webp_bytes).decode("ascii")
             b64_ms = (time.perf_counter() - _t_b64) * 1000.0
 
             # Breakdown of the "preview -> sharp" tail so a slow final stage is
             # attributable. vae_decode ≈ pipe_to_result − composite.
             logger.info(
                 "Final-stage timing (ms): request_id=%s mode=%s size=%sx%s steps=%s "
-                "denoise=%.0f pipe_to_result=%.0f composite=%.0f nsfw=%.0f png_encode=%.0f "
-                "b64=%.0f png_kb=%.0f",
+                "denoise=%.0f pipe_to_result=%.0f composite=%.0f nsfw=%.0f encode=%.0f "
+                "b64=%.0f png_kb=%.0f webp_kb=%.0f",
                 request_id, actual_mode, width, height, steps,
                 denoise_ms, decode_tail_ms, composite_ms, nsfw_ms, encode_ms,
-                b64_ms, len(png_bytes) / 1024.0,
+                b64_ms, len(png_bytes) / 1024.0, len(webp_bytes) / 1024.0,
             )
             return {
                 "status": "success",

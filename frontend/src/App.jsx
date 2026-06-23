@@ -369,7 +369,7 @@ function App() {
       formData.append('height', height);
 
       if (initImageBlob) {
-        formData.append('init_image', initImageBlob, 'init.png');
+        formData.append('init_image', initImageBlob, 'init.webp');
       }
       if (sendMask && maskImageBlob) {
         formData.append('mask_image', maskImageBlob, 'mask.png');
