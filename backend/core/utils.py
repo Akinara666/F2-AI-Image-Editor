@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import numpy as np
@@ -29,33 +30,62 @@ def _prune_old_outputs(output_dir: str, max_files: int) -> None:
         pass
 
 
-def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
-    """
-    Saves the image with generation parameters in PNG metadata (tEXt chunk).
-    Returns the filename.
-    """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Convert parameters to string format for metadata
+def _build_png_metadata(params: dict) -> PngImagePlugin.PngInfo:
     meta = PngImagePlugin.PngInfo()
     for key, value in params.items():
         if value is not None:
             meta.add_text(str(key), str(value))
-    
-    # Generate filename
+    return meta
+
+
+def _build_output_filename(params: dict) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Use prompt snippet for filename if available. Whitelist characters so the
     # prompt can never inject path separators or break the /outputs URL.
     prompt_slug = re.sub(r"[^\w-]+", "_", (params.get("prompt") or "gen")[:20]).strip("_")
     if not prompt_slug:
         prompt_slug = "gen"
-    filename = f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
-    filepath = os.path.join(output_dir, filename)
+    return f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
 
-    image.save(filepath, "PNG", pnginfo=meta)
+
+def encode_image_with_metadata(image: Image.Image, params: dict) -> tuple[bytes, str]:
+    """Encode ``image`` to PNG bytes (params in a tEXt chunk) and pick a filename.
+
+    Uses ``compress_level=1``: PNG's default level 6 is markedly slower on large
+    images and sits on the generation request's critical path (the
+    ``preview -> sharp`` transition), while the file-size difference is minor.
+    Returns ``(png_bytes, filename)``; the caller decides when/where to persist
+    (e.g. via a FastAPI BackgroundTask, off the response path).
+    """
+    meta = _build_png_metadata(params)
+    filename = _build_output_filename(params)
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG", pnginfo=meta, compress_level=1)
+    return buffer.getvalue(), filename
+
+
+def write_output_bytes(data: bytes, filename: str, output_dir: str) -> str:
+    """Persist pre-encoded image bytes and apply the cleanup policy.
+
+    Safe to run off the request path (e.g. FastAPI BackgroundTasks), so neither
+    the disk write nor the directory prune block the generation response.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "wb") as output_file:
+        output_file.write(data)
     _prune_old_outputs(output_dir, settings.MAX_STORED_IMAGES)
     return filename
+
+
+def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
+    """Encode + persist in one synchronous call. Returns the filename.
+
+    Kept for callers that are not on the latency-critical generation path
+    (history snapshots, tool edits, upscale).
+    """
+    data, filename = encode_image_with_metadata(image, params)
+    return write_output_bytes(data, filename, output_dir)
 
 def _odd_kernel_size(radius_px: int) -> int:
     return max(3, radius_px * 2 + 1)

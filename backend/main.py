@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,7 @@ import math
 import json
 import uvicorn
 import io
+import base64
 import asyncio
 import traceback
 import uuid
@@ -47,6 +48,8 @@ except ImportError:
 # Import core modules
 from core.utils import (
     save_image_with_metadata,
+    encode_image_with_metadata,
+    write_output_bytes,
     process_mask_for_inpainting,
     prepare_image_for_outpainting,
     feather_blend,
@@ -1195,6 +1198,7 @@ def get_generation_preview(request_id: str):
 
 @app.post("/generate")
 async def generate_image(
+    background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     request_id: Optional[str] = Form(default=None),
     raw_prompt: Optional[str] = Form(default=None),
@@ -1753,15 +1757,22 @@ async def generate_image(
             if negative_transform_result.error:
                 meta["negative_prompt_transform_error"] = negative_transform_result.error
             
-            # PNG-энкод полноразмерной картинки + запись на диск тяжёлые; в event-loop
-            # они блокировали бы весь сервер (включая опрос превью фронтом) ровно в
-            # момент «превью → чёткая». Выносим в поток.
-            filename = await asyncio.to_thread(
-                save_image_with_metadata, result_image, meta, str(settings.OUTPUT_DIR)
+            # PNG-энкод полноразмерной картинки тяжёлый и сидит ровно на пути
+            # «превью → чёткая». Кодируем один раз в потоке (не блокируя event-loop),
+            # отдаём картинку инлайном — фронт показывает её без второго запроса к
+            # /outputs, — а запись на диск + чистку каталога уносим в фон, чтобы
+            # ответ не ждал IO.
+            png_bytes, filename = await asyncio.to_thread(
+                encode_image_with_metadata, result_image, meta
             )
+            background_tasks.add_task(
+                write_output_bytes, png_bytes, filename, str(settings.OUTPUT_DIR)
+            )
+            image_data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
+                "image_data_url": image_data_url,
                 "request_id": request_id,
                 "meta": meta
             }
@@ -2010,6 +2021,7 @@ async def tool_quick_select_refine(
 #_____________апдейт_______ Fast quick-select refine endpoint (selection -> local inpaint)
 @app.post("/quick-select/refine")
 async def quick_select_refine(
+    background_tasks: BackgroundTasks,
     init_image: UploadFile = File(...),
     mask_image: UploadFile = File(None),
     request_id: Optional[str] = Form(default=None),
@@ -2084,6 +2096,7 @@ async def quick_select_refine(
 
     #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
     return await generate_image(
+        background_tasks,
         prompt=quick_prompt,
         request_id=request_id,
         raw_prompt=quick_prompt,
@@ -2112,6 +2125,7 @@ async def quick_select_refine(
 #_____________апдейт_______ Fast spot-heal endpoint (click -> instant local inpaint)
 @app.post("/spot-heal")
 async def spot_heal(
+    background_tasks: BackgroundTasks,
     init_image: UploadFile = File(...),
     mask_image: UploadFile = File(...),
     request_id: Optional[str] = Form(default=None),
@@ -2157,6 +2171,7 @@ async def spot_heal(
 
     #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
     return await generate_image(
+        background_tasks,
         prompt=spot_prompt,
         request_id=request_id,
         raw_prompt=spot_prompt,

@@ -58,6 +58,8 @@ class ModelManager:
         self.device = device
         self.sd_enable_cpu_offload = settings.SD_ENABLE_CPU_OFFLOAD
         self.sd_enable_xformers = settings.SD_ENABLE_XFORMERS
+        self.sd_enable_vae_slicing = settings.SD_ENABLE_VAE_SLICING
+        self.sd_enable_vae_tiling = settings.SD_ENABLE_VAE_TILING
         self.model_bundles_cache = OrderedDict()  # LRU cache: { bundle_key: ModelBundle }
         self.max_cache_size = max_cache_size
         self.current_pipeline = None
@@ -521,9 +523,16 @@ class ModelManager:
             self.logger.info("xformers disabled; using torch SDPA attention for bundle %s.", cache_key)
 
         # VAE slicing/tiling cap the peak VRAM of the decode step (the spike is
-        # most pronounced for SDXL and large / outpainting canvases). They are
-        # effectively free for typical sizes and degrade gracefully if absent.
-        for vae_optimization in ("enable_vae_slicing", "enable_vae_tiling"):
+        # most pronounced for SDXL and large / outpainting canvases). Slicing is
+        # cheap; tiling adds extra decode passes to EVERY final image, so on ample
+        # VRAM it just makes the last step drag and is disabled by default (see
+        # SD_ENABLE_VAE_TILING). Both degrade gracefully if absent.
+        vae_optimizations = []
+        if self.sd_enable_vae_slicing:
+            vae_optimizations.append("enable_vae_slicing")
+        if self.sd_enable_vae_tiling:
+            vae_optimizations.append("enable_vae_tiling")
+        for vae_optimization in vae_optimizations:
             enable_fn = getattr(pipeline, vae_optimization, None)
             if enable_fn is None:
                 continue

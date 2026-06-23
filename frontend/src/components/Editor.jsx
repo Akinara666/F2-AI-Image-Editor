@@ -2010,8 +2010,9 @@ const Editor = forwardRef(({ brushMode, setBrushMode, brushColor, setBrushColor,
             getUndoSnapshotParams
         }),
 
-        addGeneratedImage: async (url) => addGeneratedImage({
+        addGeneratedImage: async (url, imageDataUrl = null) => addGeneratedImage({
             url,
+            imageDataUrl,
             fabricCanvas,
             genFrame,
             candidateRef,

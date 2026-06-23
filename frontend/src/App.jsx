@@ -377,8 +377,10 @@ function App() {
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
           showInfo(`Трансформер промпта: ${response.data.meta.prompt_transform_status}`);
         }
-        // 4. Добавляем результат на холст.
-        await editorRef.current.addGeneratedImage(response.data.url);
+        // 4. Добавляем результат на холст. Картинку backend отдаёт инлайном
+        // (image_data_url) — это убирает второй запрос к /outputs и ожидание
+        // записи на диск ровно в момент «превью → чёткая».
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
 
         const historyMeta = response.data.meta || {
           prompt: normalizedParams.prompt,
@@ -535,7 +537,7 @@ function App() {
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
-        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
         await editorRef.current.acceptCandidateAsync?.();
         showSuccess("Точечная ретушь применена.");
       } else {
@@ -656,7 +658,7 @@ function App() {
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
-        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
         await editorRef.current.acceptCandidateAsync?.();
         showSuccess("Выделенная область перегенерирована.");
       } else {
