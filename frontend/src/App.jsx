@@ -268,6 +268,11 @@ function App() {
         const preview = response.data?.data;
         if (preview) {
           setGenerationPreview(preview);
+          // Backend reports a terminal status — stop polling immediately instead
+          // of hammering /generate/preview while the response/history-save runs.
+          if (preview.status && !['pending', 'running'].includes(preview.status)) {
+            return;
+          }
         }
       } catch (error) {
         if (signal.aborted || axios.isCancel(error)) {
@@ -321,7 +326,15 @@ function App() {
     try {
       void pollGenerationPreview(requestId, previewController.signal);
       // 1. Получаем подготовленные данные из редактора.
+      const _tExport = performance.now();
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
+      // [gen-timing] раскладка задержки ПЕРЕД генерацией: рендер/кодирование
+      // холста vs размер init/маски (который потом грузится на сервер).
+      console.log(
+        `[gen-timing] export=${(performance.now() - _tExport).toFixed(0)}ms `
+        + `init=${initImageBlob ? (initImageBlob.size / 1024).toFixed(0) : 0}KB `
+        + `mask=${maskImageBlob ? (maskImageBlob.size / 1024).toFixed(0) + 'KB' : 'none'}`
+      );
 
       // В режиме inpaint без маски бэкенд вернёт 400 — ловим это заранее и
       // подсказываем, что делать (finally сбросит статус и preview).
@@ -356,17 +369,31 @@ function App() {
       formData.append('height', height);
 
       if (initImageBlob) {
-        formData.append('init_image', initImageBlob, 'init.png');
+        formData.append('init_image', initImageBlob, 'init.webp');
       }
       if (sendMask && maskImageBlob) {
         formData.append('mask_image', maskImageBlob, 'mask.png');
       }
 
       // 3. Отправляем запрос на backend.
+      const _tPost = performance.now();
+      let _uploadDoneAt = null;
       const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        signal: controller.signal
+        signal: controller.signal,
+        onUploadProgress: (e) => {
+          // Момент, когда тело запроса (init-картинка) полностью ушло на сервер —
+          // отделяет аплоад через туннель от генерации + скачивания ответа.
+          if (e.total && e.loaded >= e.total && _uploadDoneAt === null) {
+            _uploadDoneAt = performance.now();
+          }
+        },
       });
+      console.log(
+        `[gen-timing] upload=${_uploadDoneAt ? (_uploadDoneAt - _tPost).toFixed(0) : '?'}ms `
+        + `total_post=${(performance.now() - _tPost).toFixed(0)}ms `
+        + `(total_post = upload + генерация + download ответа)`
+      );
 
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
@@ -377,48 +404,65 @@ function App() {
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
           showInfo(`Трансформер промпта: ${response.data.meta.prompt_transform_status}`);
         }
-        // 4. Добавляем результат на холст.
-        await editorRef.current.addGeneratedImage(response.data.url);
+        // 4. Добавляем результат на холст. Картинку backend отдаёт инлайном
+        // (image_data_url) — это убирает второй запрос к /outputs и ожидание
+        // записи на диск ровно в момент «превью → чёткая».
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
 
-        const historyMeta = response.data.meta || {
-          prompt: normalizedParams.prompt,
-          raw_prompt: normalizedParams.prompt,
-          negative_prompt: normalizedParams.negative_prompt,
-          seed: normalizedParams.seed
-        };
-        let historyDocumentUrl = response.data.url;
-
-        try {
-          const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
-          const historyFormData = new FormData();
-          historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
-          historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
-          historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
-          historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
-          historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
-          historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
-          historyFormData.append('generated_url', response.data.url);
-
-          const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
-          if (historySnapshotResponse.data?.url) {
-            historyDocumentUrl = historySnapshotResponse.data.url;
-          }
-        } catch (historySnapshotError) {
-          console.error("Failed to save full history snapshot", historySnapshotError);
-          showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
+        // Sharp result is on the canvas now: kill the live-preview overlay and
+        // its polling at once, so the blurry 384px preview doesn't linger on top
+        // during the (slower) history snapshot below.
+        previewController.abort();
+        if (currentGenerationRequestIdRef.current === requestId) {
+          currentGenerationRequestIdRef.current = null;
         }
+        setGenerationPreview(null);
 
-        // 5. Обновляем историю генераций.
-        const newHistoryItem = {
-          id: createClientId('history'),
-          url: historyDocumentUrl,
-          generated_url: response.data.url,
-          meta: historyMeta,
-          timestamp: Date.now()
-        };
-        setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+        // История — bookkeeping: снимок всего холста кодируется и грузится
+        // отдельным запросом (через туннель — секунды). Не держим на нём статус
+        // генерации, иначе кнопка «Остановить» висит уже после появления картинки.
+        // Делаем в фоне — кнопка освобождается сразу (finally ниже), а пункт
+        // истории добавится, когда снимок сохранится.
+        void (async () => {
+          const historyMeta = response.data.meta || {
+            prompt: normalizedParams.prompt,
+            raw_prompt: normalizedParams.prompt,
+            negative_prompt: normalizedParams.negative_prompt,
+            seed: normalizedParams.seed
+          };
+          let historyDocumentUrl = response.data.url;
+
+          try {
+            const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
+            const historyFormData = new FormData();
+            historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
+            historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
+            historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
+            historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
+            historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+            historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
+            historyFormData.append('generated_url', response.data.url);
+
+            const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            if (historySnapshotResponse.data?.url) {
+              historyDocumentUrl = historySnapshotResponse.data.url;
+            }
+          } catch (historySnapshotError) {
+            console.error("Failed to save full history snapshot", historySnapshotError);
+            showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
+          }
+
+          const newHistoryItem = {
+            id: createClientId('history'),
+            url: historyDocumentUrl,
+            generated_url: response.data.url,
+            meta: historyMeta,
+            timestamp: Date.now()
+          };
+          setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+        })();
       }
 
     } catch (e) {
@@ -535,7 +579,7 @@ function App() {
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
-        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
         await editorRef.current.acceptCandidateAsync?.();
         showSuccess("Точечная ретушь применена.");
       } else {
@@ -656,7 +700,7 @@ function App() {
       });
 
       if (response.data?.status === 'success' && response.data?.url) {
-        await editorRef.current.addGeneratedImage(response.data.url);
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
         await editorRef.current.acceptCandidateAsync?.();
         showSuccess("Выделенная область перегенерирована.");
       } else {

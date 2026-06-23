@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,6 +13,8 @@ import math
 import json
 import uvicorn
 import io
+import base64
+import time
 import asyncio
 import traceback
 import uuid
@@ -47,6 +49,9 @@ except ImportError:
 # Import core modules
 from core.utils import (
     save_image_with_metadata,
+    encode_image_with_metadata,
+    encode_result_for_delivery,
+    write_output_bytes,
     process_mask_for_inpainting,
     prepare_image_for_outpainting,
     feather_blend,
@@ -1195,6 +1200,7 @@ def get_generation_preview(request_id: str):
 
 @app.post("/generate")
 async def generate_image(
+    background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     request_id: Optional[str] = Form(default=None),
     raw_prompt: Optional[str] = Form(default=None),
@@ -1255,6 +1261,12 @@ async def generate_image(
         denoising_strength = validated["denoising_strength"]
         mask_blur = validated["mask_blur"]
         mask_padding = validated["mask_padding"]
+
+        # Register the preview record as early as possible: the client starts
+        # polling /generate/preview right after clicking, and model prep + prompt
+        # transform below can take a moment — without the record those polls 404.
+        generation_preview_store.start(request_id, steps)
+
         runtime_model_id, downloaded_managed_model = await _prepare_model_for_runtime(model_id, model_entry)
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
@@ -1451,8 +1463,6 @@ async def generate_image(
         if model_manager.is_cancel_requested(request_id):
             raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
-        generation_preview_store.start(request_id, steps)
-
         async with model_manager.generation_session(request_id):
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
@@ -1533,10 +1543,22 @@ async def generate_image(
                 nsfw_negative_prompt_applied,
             )
 
+            # --- Final-stage timing instrumentation -------------------------
+            # last_step_perf[0] is set (inside the worker thread) when the last
+            # denoise step fires; everything between that and the response is the
+            # invisible tail the user perceives as "preview -> sharp hang".
+            last_step_perf = [None]
+            composite_ms = 0.0
+
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 if model_manager.is_cancel_requested(request_id):
                     logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
                     pipeline._interrupt = True
+
+                # img2img/inpaint run fewer than `steps` iterations (strength
+                # scaling), so we can't key off "== steps". Stamp every step; the
+                # final callback wins and marks the start of the decode tail.
+                last_step_perf[0] = time.perf_counter()
 
                 should_publish_preview = (
                     step_index == 0
@@ -1564,6 +1586,7 @@ async def generate_image(
                 return callback_kwargs
 
             # 4. Generate
+            t_gen_start = time.perf_counter()
             if actual_mode == "text2img":
                 result = await asyncio.to_thread(
                     pipe,
@@ -1658,11 +1681,23 @@ async def generate_image(
                         blend_background = image_input.copy()
                         blend_background.paste(result_image, mask=outpaint_generation_mask)
                     # Use feather_blend logic for seamless edges
+                    _t_composite = time.perf_counter()
                     result_image = feather_blend(
                         blend_background,
                         result_image,
                         blend_mask_input,
                     )
+                    composite_ms = (time.perf_counter() - _t_composite) * 1000.0
+
+            # 4.4 Final-stage tail timing: from the last denoise step to here is
+            # VAE decode (+ offload swap) + the inpaint composite above.
+            t_after_pipeline = time.perf_counter()
+            denoise_ms = (
+                (last_step_perf[0] - t_gen_start) * 1000.0 if last_step_perf[0] else 0.0
+            )
+            decode_tail_ms = (
+                (t_after_pipeline - last_step_perf[0]) * 1000.0 if last_step_perf[0] else 0.0
+            )
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
@@ -1671,8 +1706,11 @@ async def generate_image(
         # 4.6 NSFW gate. Когда фильтр включён, каждая готовая картинка проходит
         # классификатор (модель уже подгружена выше). Fail-closed: если он вдруг
         # недоступен — картинку НЕ отдаём.
+        nsfw_ms = 0.0
         if result_image is not None and settings.NSFW_FILTER_ENABLED:
+            _t_nsfw = time.perf_counter()
             verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
+            nsfw_ms = (time.perf_counter() - _t_nsfw) * 1000.0
             if verdict is None:
                 logger.error(
                     "NSFW gate: safety checker unavailable — blocking output (request_id=%s)",
@@ -1753,15 +1791,36 @@ async def generate_image(
             if negative_transform_result.error:
                 meta["negative_prompt_transform_error"] = negative_transform_result.error
             
-            # PNG-энкод полноразмерной картинки + запись на диск тяжёлые; в event-loop
-            # они блокировали бы весь сервер (включая опрос превью фронтом) ровно в
-            # момент «превью → чёткая». Выносим в поток.
-            filename = await asyncio.to_thread(
-                save_image_with_metadata, result_image, meta, str(settings.OUTPUT_DIR)
+            # Картинка крупная и сидит ровно на пути «превью → чёткая». Кодируем
+            # в потоке (не блокируя event-loop): lossless PNG — на диск в фоне, а
+            # на экран отдаём компактный WebP инлайном (через туннель ~4–5× меньше
+            # PNG, без второго запроса к /outputs и без ожидания записи на диск).
+            _t_encode = time.perf_counter()
+            png_bytes, webp_bytes, filename = await asyncio.to_thread(
+                encode_result_for_delivery, result_image, meta, settings.CANDIDATE_WEBP_QUALITY
+            )
+            encode_ms = (time.perf_counter() - _t_encode) * 1000.0
+            background_tasks.add_task(
+                write_output_bytes, png_bytes, filename, str(settings.OUTPUT_DIR)
+            )
+            _t_b64 = time.perf_counter()
+            image_data_url = "data:image/webp;base64," + base64.b64encode(webp_bytes).decode("ascii")
+            b64_ms = (time.perf_counter() - _t_b64) * 1000.0
+
+            # Breakdown of the "preview -> sharp" tail so a slow final stage is
+            # attributable. vae_decode ≈ pipe_to_result − composite.
+            logger.info(
+                "Final-stage timing (ms): request_id=%s mode=%s size=%sx%s steps=%s "
+                "denoise=%.0f pipe_to_result=%.0f composite=%.0f nsfw=%.0f encode=%.0f "
+                "b64=%.0f png_kb=%.0f webp_kb=%.0f",
+                request_id, actual_mode, width, height, steps,
+                denoise_ms, decode_tail_ms, composite_ms, nsfw_ms, encode_ms,
+                b64_ms, len(png_bytes) / 1024.0, len(webp_bytes) / 1024.0,
             )
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
+                "image_data_url": image_data_url,
                 "request_id": request_id,
                 "meta": meta
             }
@@ -2010,6 +2069,7 @@ async def tool_quick_select_refine(
 #_____________апдейт_______ Fast quick-select refine endpoint (selection -> local inpaint)
 @app.post("/quick-select/refine")
 async def quick_select_refine(
+    background_tasks: BackgroundTasks,
     init_image: UploadFile = File(...),
     mask_image: UploadFile = File(None),
     request_id: Optional[str] = Form(default=None),
@@ -2084,6 +2144,7 @@ async def quick_select_refine(
 
     #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
     return await generate_image(
+        background_tasks,
         prompt=quick_prompt,
         request_id=request_id,
         raw_prompt=quick_prompt,
@@ -2112,6 +2173,7 @@ async def quick_select_refine(
 #_____________апдейт_______ Fast spot-heal endpoint (click -> instant local inpaint)
 @app.post("/spot-heal")
 async def spot_heal(
+    background_tasks: BackgroundTasks,
     init_image: UploadFile = File(...),
     mask_image: UploadFile = File(...),
     request_id: Optional[str] = Form(default=None),
@@ -2157,6 +2219,7 @@ async def spot_heal(
 
     #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
     return await generate_image(
+        background_tasks,
         prompt=spot_prompt,
         request_id=request_id,
         raw_prompt=spot_prompt,

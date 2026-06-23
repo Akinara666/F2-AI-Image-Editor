@@ -516,11 +516,10 @@ export const exportCanvasState = async (canvas, frame) => {
         bounds,
         useOpaqueBackground ? '#808080' : null
     );
-    const initBlob = await canvasElementToBlob(
-        initCanvas,
-        useOpaqueBackground ? 'image/jpeg' : 'image/png',
-        0.95
-    );
+    // WebP вместо PNG/JPEG: init-картинка грузится на сервер, и через туннель
+    // PNG (1024² ≈ 1.5–2.5 МБ) аплоадится ~10 с. WebP q0.9 (~0.3–0.6 МБ) — ~1–2 с,
+    // и при этом сохраняет альфу (нужна для определения зон outpaint на бэке).
+    const initBlob = await canvasElementToBlob(initCanvas, 'image/webp', 0.9);
 
     let maskBlob = null;
     if (hasExplicitMasks) {

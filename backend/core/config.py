@@ -50,6 +50,17 @@ class Settings:
     # TF32 accelerates fp32 matmul/conv on Ampere+ tensor cores (e.g. the fp32
     # VAE upcast) with no visible quality loss for diffusion. No-op on older GPUs.
     SD_ALLOW_TF32: bool = os.getenv("SD_ALLOW_TF32", "true").lower() == "true"
+    # VAE slicing is cheap (splits the batch dim) and stays on by default.
+    SD_ENABLE_VAE_SLICING: bool = os.getenv("SD_ENABLE_VAE_SLICING", "true").lower() == "true"
+    # VAE tiling splits the FINAL decode into overlapping tiles to cap peak VRAM.
+    # It adds several extra decode passes + blending to every final image, so on
+    # ample VRAM it is pure overhead that makes the last generation step drag.
+    # Default: follow CPU offload (the low-VRAM regime). With offload off we
+    # assume there is enough VRAM and skip tiling. Force with true/false.
+    SD_ENABLE_VAE_TILING: bool = (
+        os.getenv("SD_ENABLE_VAE_TILING", "").strip().lower()
+        or ("true" if SD_ENABLE_CPU_OFFLOAD else "false")
+    ) == "true"
     # Runtime precision: "auto" picks bf16 on Ampere+ (same exponent range as
     # fp32 -> far fewer black/NaN VAE outputs) and fp16 on older GPUs. Override
     # with fp16 / bf16 / fp32.
@@ -123,6 +134,11 @@ class Settings:
     DEFAULT_GUIDANCE_SCALE: float = 7.5
     DEFAULT_WIDTH: int = 512
     DEFAULT_HEIGHT: int = 512
+
+    # Quality of the WebP candidate sent inline in the /generate response (the
+    # on-screen result). Lower = smaller/faster over a tunnel, slightly lossier.
+    # The lossless PNG is still written to disk regardless.
+    CANDIDATE_WEBP_QUALITY: int = max(1, min(100, int(os.getenv("CANDIDATE_WEBP_QUALITY", "90"))))
 
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup

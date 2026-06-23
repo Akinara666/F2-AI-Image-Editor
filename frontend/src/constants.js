@@ -5,8 +5,8 @@ export const CANVAS_DEFAULTS = {
     CANDIDATE_BORDER_COLOR: '#00ff00',
     MASK_COLOR: 'rgba(255, 0, 0, 0.5)',
     ERASER_COLOR: '#808080',
-    DEFAULT_WIDTH: 512,
-    DEFAULT_HEIGHT: 512
+    DEFAULT_WIDTH: 1024,
+    DEFAULT_HEIGHT: 1024
 };
 
 export const CANVAS_OBJECT_ROLES = {
@@ -96,7 +96,7 @@ export const GENERATION_NUMERIC_PARAM_RULES = {
     frame_size_index: {
         label: "Размер рамки",
         type: "int",
-        defaultValue: 0,
+        defaultValue: 4,
         min: 0,
         max: AVAILABLE_SIZES.length - 1
     },
@@ -117,14 +117,14 @@ export const GENERATION_NUMERIC_PARAM_RULES = {
     cfg: {
         label: "CFG",
         type: "float",
-        defaultValue: 7.5,
+        defaultValue: 5,
         min: 1,
         max: 20
     },
     denoising_strength: {
         label: "Денойзинг",
         type: "float",
-        defaultValue: 0.75,
+        defaultValue: 1,
         min: 0,
         max: 1
     },

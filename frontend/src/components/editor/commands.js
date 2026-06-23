@@ -243,6 +243,7 @@ export const resizeDocumentCanvas = ({
 
 export const addGeneratedImage = async ({
     url,
+    imageDataUrl = null,
     fabricCanvas,
     genFrame,
     candidateRef,
@@ -262,13 +263,18 @@ export const addGeneratedImage = async ({
         setCandidateState(null, null);
     }
 
-    const response = await fetch(resolveApiUrl(url), { mode: 'cors' });
-    if (!response.ok) {
-        throw new Error(`Failed to load generated image: ${response.status}`);
+    // When the backend inlines the full-res result we skip the extra round-trip
+    // to /outputs (the file is being persisted in the background). candidateSourceUrl
+    // still points at that file for later baking/undo.
+    let dataUrl = imageDataUrl;
+    if (!dataUrl) {
+        const response = await fetch(resolveApiUrl(url), { mode: 'cors' });
+        if (!response.ok) {
+            throw new Error(`Failed to load generated image: ${response.status}`);
+        }
+        const imageBlob = await response.blob();
+        dataUrl = await blobToDataURL(imageBlob);
     }
-
-    const imageBlob = await response.blob();
-    const dataUrl = await blobToDataURL(imageBlob);
 
     await new Promise((resolve, reject) => {
         fabric.Image.fromURL(dataUrl, (image) => {

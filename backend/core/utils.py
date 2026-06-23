@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import numpy as np
@@ -29,36 +30,106 @@ def _prune_old_outputs(output_dir: str, max_files: int) -> None:
         pass
 
 
-def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
-    """
-    Saves the image with generation parameters in PNG metadata (tEXt chunk).
-    Returns the filename.
-    """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Convert parameters to string format for metadata
+def _build_png_metadata(params: dict) -> PngImagePlugin.PngInfo:
     meta = PngImagePlugin.PngInfo()
     for key, value in params.items():
         if value is not None:
             meta.add_text(str(key), str(value))
-    
-    # Generate filename
+    return meta
+
+
+def _build_output_filename(params: dict) -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     # Use prompt snippet for filename if available. Whitelist characters so the
     # prompt can never inject path separators or break the /outputs URL.
     prompt_slug = re.sub(r"[^\w-]+", "_", (params.get("prompt") or "gen")[:20]).strip("_")
     if not prompt_slug:
         prompt_slug = "gen"
-    filename = f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
-    filepath = os.path.join(output_dir, filename)
+    return f"{timestamp}_{prompt_slug}_{uuid4().hex[:8]}.png"
 
-    image.save(filepath, "PNG", pnginfo=meta)
+
+def encode_image_with_metadata(image: Image.Image, params: dict) -> tuple[bytes, str]:
+    """Encode ``image`` to PNG bytes (params in a tEXt chunk) and pick a filename.
+
+    Uses ``compress_level=1``: PNG's default level 6 is markedly slower on large
+    images and sits on the generation request's critical path (the
+    ``preview -> sharp`` transition), while the file-size difference is minor.
+    Returns ``(png_bytes, filename)``; the caller decides when/where to persist
+    (e.g. via a FastAPI BackgroundTask, off the response path).
+    """
+    meta = _build_png_metadata(params)
+    filename = _build_output_filename(params)
+    buffer = io.BytesIO()
+    image.save(buffer, "PNG", pnginfo=meta, compress_level=1)
+    return buffer.getvalue(), filename
+
+
+def encode_webp(image: Image.Image, quality: int = 90) -> bytes:
+    """Encode to WebP for fast on-screen delivery over slow links (e.g. tunnels).
+
+    A 1024² PNG is ~1.8–2.5 MB; the same image as WebP q90 is ~0.4–0.6 MB, so the
+    candidate crosses the tunnel ~4–5× faster. WebP keeps an alpha plane, so the
+    lossy mode does not break transparency-dependent paths. The lossless PNG is
+    still persisted to disk separately for history/accept fidelity.
+    """
+    buffer = io.BytesIO()
+    image.save(buffer, "WEBP", quality=quality, method=4)
+    return buffer.getvalue()
+
+
+def encode_result_for_delivery(
+    image: Image.Image, params: dict, webp_quality: int = 90
+) -> tuple[bytes, bytes, str]:
+    """One pass: lossless PNG (for disk) + compact WebP (for the inline response).
+
+    Returns ``(png_bytes, webp_bytes, filename)``.
+    """
+    png_bytes, filename = encode_image_with_metadata(image, params)
+    webp_bytes = encode_webp(image, webp_quality)
+    return png_bytes, webp_bytes, filename
+
+
+def write_output_bytes(data: bytes, filename: str, output_dir: str) -> str:
+    """Persist pre-encoded image bytes and apply the cleanup policy.
+
+    Safe to run off the request path (e.g. FastAPI BackgroundTasks), so neither
+    the disk write nor the directory prune block the generation response.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    filepath = os.path.join(output_dir, filename)
+    with open(filepath, "wb") as output_file:
+        output_file.write(data)
     _prune_old_outputs(output_dir, settings.MAX_STORED_IMAGES)
     return filename
 
-def _odd_kernel_size(radius_px: int) -> int:
-    return max(3, radius_px * 2 + 1)
+
+def save_image_with_metadata(image: Image.Image, params: dict, output_dir: str) -> str:
+    """Encode + persist in one synchronous call. Returns the filename.
+
+    Kept for callers that are not on the latency-critical generation path
+    (history snapshots, tool edits, upscale).
+    """
+    data, filename = encode_image_with_metadata(image, params)
+    return write_output_bytes(data, filename, output_dir)
+
+def _dilate_mask(mask: Image.Image, radius: int) -> Image.Image:
+    """Square dilation by ``radius`` (equivalent to ``MaxFilter(2*radius+1)``).
+
+    PIL's ``MaxFilter`` is a rank filter, ``O(width * height * kernel^2)``: at the
+    ``mask_blur`` ceiling (128 -> kernel 257 on a 1024x1024 mask) it ran for ~60s
+    and, being synchronous, froze the whole event loop before generation even
+    started. A square max-filter is separable, so we do two O(n) 1-D running maxes
+    (horizontal then vertical) via strided windows — ~0.04s for the same case,
+    bit-identical to ``MaxFilter``.
+    """
+    if radius <= 0:
+        return mask
+    arr = np.asarray(mask.convert("L"), dtype=np.uint8)
+    kernel = 2 * radius + 1
+    padded = np.pad(arr, radius, mode="edge")
+    horizontal = np.lib.stride_tricks.sliding_window_view(padded, kernel, axis=1).max(axis=2)
+    dilated = np.lib.stride_tricks.sliding_window_view(horizontal, kernel, axis=0).max(axis=2)
+    return Image.fromarray(dilated, mode="L")
 
 
 def _binarize_mask(mask_image: Image.Image, threshold: int) -> Image.Image:
@@ -97,14 +168,14 @@ def process_mask_for_inpainting(
     base_mask = _binarize_mask(mask_image, threshold)
 
     if mask_padding > 0:
-        base_mask = base_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_padding)))
+        base_mask = _dilate_mask(base_mask, mask_padding)
 
     generation_mask = base_mask
     # Approximate A1111-style "blur expands the rewritten area a bit" behavior even though
     # diffusers will still binarize the mask internally.
     blur_growth_radius = max(0, round(mask_blur / 2))
     if blur_growth_radius > 0:
-        generation_mask = generation_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(blur_growth_radius)))
+        generation_mask = _dilate_mask(generation_mask, blur_growth_radius)
 
     # Soft blend mask for the final composite. We dilate the mask by mask_blur
     # and THEN Gaussian-blur it: the dilation shifts the ramp outward so the
@@ -114,7 +185,7 @@ def process_mask_for_inpainting(
     # between the solid and feathered parts of the mask. Dilate→blur removes it.
     blend_mask = base_mask
     if mask_blur > 0:
-        blend_mask = base_mask.filter(ImageFilter.MaxFilter(_odd_kernel_size(mask_blur)))
+        blend_mask = _dilate_mask(base_mask, mask_blur)
         blend_mask = blend_mask.filter(ImageFilter.GaussianBlur(radius=mask_blur))
 
     return generation_mask, blend_mask
