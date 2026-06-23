@@ -1260,6 +1260,12 @@ async def generate_image(
         denoising_strength = validated["denoising_strength"]
         mask_blur = validated["mask_blur"]
         mask_padding = validated["mask_padding"]
+
+        # Register the preview record as early as possible: the client starts
+        # polling /generate/preview right after clicking, and model prep + prompt
+        # transform below can take a moment — without the record those polls 404.
+        generation_preview_store.start(request_id, steps)
+
         runtime_model_id, downloaded_managed_model = await _prepare_model_for_runtime(model_id, model_entry)
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
@@ -1455,8 +1461,6 @@ async def generate_image(
 
         if model_manager.is_cancel_requested(request_id):
             raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
-
-        generation_preview_store.start(request_id, steps)
 
         async with model_manager.generation_session(request_id):
             if model_manager.is_cancel_requested(request_id):

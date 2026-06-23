@@ -396,45 +396,51 @@ function App() {
         }
         setGenerationPreview(null);
 
-        const historyMeta = response.data.meta || {
-          prompt: normalizedParams.prompt,
-          raw_prompt: normalizedParams.prompt,
-          negative_prompt: normalizedParams.negative_prompt,
-          seed: normalizedParams.seed
-        };
-        let historyDocumentUrl = response.data.url;
+        // История — bookkeeping: снимок всего холста кодируется и грузится
+        // отдельным запросом (через туннель — секунды). Не держим на нём статус
+        // генерации, иначе кнопка «Остановить» висит уже после появления картинки.
+        // Делаем в фоне — кнопка освобождается сразу (finally ниже), а пункт
+        // истории добавится, когда снимок сохранится.
+        void (async () => {
+          const historyMeta = response.data.meta || {
+            prompt: normalizedParams.prompt,
+            raw_prompt: normalizedParams.prompt,
+            negative_prompt: normalizedParams.negative_prompt,
+            seed: normalizedParams.seed
+          };
+          let historyDocumentUrl = response.data.url;
 
-        try {
-          const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
-          const historyFormData = new FormData();
-          historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
-          historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
-          historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
-          historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
-          historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
-          historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
-          historyFormData.append('generated_url', response.data.url);
+          try {
+            const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
+            const historyFormData = new FormData();
+            historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
+            historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
+            historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
+            historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
+            historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+            historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
+            historyFormData.append('generated_url', response.data.url);
 
-          const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
-          if (historySnapshotResponse.data?.url) {
-            historyDocumentUrl = historySnapshotResponse.data.url;
+            const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            if (historySnapshotResponse.data?.url) {
+              historyDocumentUrl = historySnapshotResponse.data.url;
+            }
+          } catch (historySnapshotError) {
+            console.error("Failed to save full history snapshot", historySnapshotError);
+            showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
           }
-        } catch (historySnapshotError) {
-          console.error("Failed to save full history snapshot", historySnapshotError);
-          showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
-        }
 
-        // 5. Обновляем историю генераций.
-        const newHistoryItem = {
-          id: createClientId('history'),
-          url: historyDocumentUrl,
-          generated_url: response.data.url,
-          meta: historyMeta,
-          timestamp: Date.now()
-        };
-        setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+          const newHistoryItem = {
+            id: createClientId('history'),
+            url: historyDocumentUrl,
+            generated_url: response.data.url,
+            meta: historyMeta,
+            timestamp: Date.now()
+          };
+          setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+        })();
       }
 
     } catch (e) {
