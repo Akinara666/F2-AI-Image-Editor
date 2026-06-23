@@ -268,6 +268,11 @@ function App() {
         const preview = response.data?.data;
         if (preview) {
           setGenerationPreview(preview);
+          // Backend reports a terminal status — stop polling immediately instead
+          // of hammering /generate/preview while the response/history-save runs.
+          if (preview.status && !['pending', 'running'].includes(preview.status)) {
+            return;
+          }
         }
       } catch (error) {
         if (signal.aborted || axios.isCancel(error)) {
@@ -381,6 +386,15 @@ function App() {
         // (image_data_url) — это убирает второй запрос к /outputs и ожидание
         // записи на диск ровно в момент «превью → чёткая».
         await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
+
+        // Sharp result is on the canvas now: kill the live-preview overlay and
+        // its polling at once, so the blurry 384px preview doesn't linger on top
+        // during the (slower) history snapshot below.
+        previewController.abort();
+        if (currentGenerationRequestIdRef.current === requestId) {
+          currentGenerationRequestIdRef.current = null;
+        }
+        setGenerationPreview(null);
 
         const historyMeta = response.data.meta || {
           prompt: normalizedParams.prompt,
