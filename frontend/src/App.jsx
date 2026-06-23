@@ -326,7 +326,15 @@ function App() {
     try {
       void pollGenerationPreview(requestId, previewController.signal);
       // 1. Получаем подготовленные данные из редактора.
+      const _tExport = performance.now();
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
+      // [gen-timing] раскладка задержки ПЕРЕД генерацией: рендер/кодирование
+      // холста vs размер init/маски (который потом грузится на сервер).
+      console.log(
+        `[gen-timing] export=${(performance.now() - _tExport).toFixed(0)}ms `
+        + `init=${initImageBlob ? (initImageBlob.size / 1024).toFixed(0) : 0}KB `
+        + `mask=${maskImageBlob ? (maskImageBlob.size / 1024).toFixed(0) + 'KB' : 'none'}`
+      );
 
       // В режиме inpaint без маски бэкенд вернёт 400 — ловим это заранее и
       // подсказываем, что делать (finally сбросит статус и preview).
@@ -368,10 +376,24 @@ function App() {
       }
 
       // 3. Отправляем запрос на backend.
+      const _tPost = performance.now();
+      let _uploadDoneAt = null;
       const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        signal: controller.signal
+        signal: controller.signal,
+        onUploadProgress: (e) => {
+          // Момент, когда тело запроса (init-картинка) полностью ушло на сервер —
+          // отделяет аплоад через туннель от генерации + скачивания ответа.
+          if (e.total && e.loaded >= e.total && _uploadDoneAt === null) {
+            _uploadDoneAt = performance.now();
+          }
+        },
       });
+      console.log(
+        `[gen-timing] upload=${_uploadDoneAt ? (_uploadDoneAt - _tPost).toFixed(0) : '?'}ms `
+        + `total_post=${(performance.now() - _tPost).toFixed(0)}ms `
+        + `(total_post = upload + генерация + download ответа)`
+      );
 
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
