@@ -1550,8 +1550,10 @@ async def generate_image(
                     logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
                     pipeline._interrupt = True
 
-                if (step_index + 1) >= steps:
-                    last_step_perf[0] = time.perf_counter()
+                # img2img/inpaint run fewer than `steps` iterations (strength
+                # scaling), so we can't key off "== steps". Stamp every step; the
+                # final callback wins and marks the start of the decode tail.
+                last_step_perf[0] = time.perf_counter()
 
                 should_publish_preview = (
                     step_index == 0
