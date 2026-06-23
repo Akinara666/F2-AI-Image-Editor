@@ -14,6 +14,7 @@ import json
 import uvicorn
 import io
 import base64
+import time
 import asyncio
 import traceback
 import uuid
@@ -1537,10 +1538,20 @@ async def generate_image(
                 nsfw_negative_prompt_applied,
             )
 
+            # --- Final-stage timing instrumentation -------------------------
+            # last_step_perf[0] is set (inside the worker thread) when the last
+            # denoise step fires; everything between that and the response is the
+            # invisible tail the user perceives as "preview -> sharp hang".
+            last_step_perf = [None]
+            composite_ms = 0.0
+
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 if model_manager.is_cancel_requested(request_id):
                     logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
                     pipeline._interrupt = True
+
+                if (step_index + 1) >= steps:
+                    last_step_perf[0] = time.perf_counter()
 
                 should_publish_preview = (
                     step_index == 0
@@ -1568,6 +1579,7 @@ async def generate_image(
                 return callback_kwargs
 
             # 4. Generate
+            t_gen_start = time.perf_counter()
             if actual_mode == "text2img":
                 result = await asyncio.to_thread(
                     pipe,
@@ -1662,11 +1674,23 @@ async def generate_image(
                         blend_background = image_input.copy()
                         blend_background.paste(result_image, mask=outpaint_generation_mask)
                     # Use feather_blend logic for seamless edges
+                    _t_composite = time.perf_counter()
                     result_image = feather_blend(
                         blend_background,
                         result_image,
                         blend_mask_input,
                     )
+                    composite_ms = (time.perf_counter() - _t_composite) * 1000.0
+
+            # 4.4 Final-stage tail timing: from the last denoise step to here is
+            # VAE decode (+ offload swap) + the inpaint composite above.
+            t_after_pipeline = time.perf_counter()
+            denoise_ms = (
+                (last_step_perf[0] - t_gen_start) * 1000.0 if last_step_perf[0] else 0.0
+            )
+            decode_tail_ms = (
+                (t_after_pipeline - last_step_perf[0]) * 1000.0 if last_step_perf[0] else 0.0
+            )
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
@@ -1675,8 +1699,11 @@ async def generate_image(
         # 4.6 NSFW gate. Когда фильтр включён, каждая готовая картинка проходит
         # классификатор (модель уже подгружена выше). Fail-closed: если он вдруг
         # недоступен — картинку НЕ отдаём.
+        nsfw_ms = 0.0
         if result_image is not None and settings.NSFW_FILTER_ENABLED:
+            _t_nsfw = time.perf_counter()
             verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
+            nsfw_ms = (time.perf_counter() - _t_nsfw) * 1000.0
             if verdict is None:
                 logger.error(
                     "NSFW gate: safety checker unavailable — blocking output (request_id=%s)",
@@ -1762,13 +1789,28 @@ async def generate_image(
             # отдаём картинку инлайном — фронт показывает её без второго запроса к
             # /outputs, — а запись на диск + чистку каталога уносим в фон, чтобы
             # ответ не ждал IO.
+            _t_encode = time.perf_counter()
             png_bytes, filename = await asyncio.to_thread(
                 encode_image_with_metadata, result_image, meta
             )
+            encode_ms = (time.perf_counter() - _t_encode) * 1000.0
             background_tasks.add_task(
                 write_output_bytes, png_bytes, filename, str(settings.OUTPUT_DIR)
             )
+            _t_b64 = time.perf_counter()
             image_data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
+            b64_ms = (time.perf_counter() - _t_b64) * 1000.0
+
+            # Breakdown of the "preview -> sharp" tail so a slow final stage is
+            # attributable. vae_decode ≈ pipe_to_result − composite.
+            logger.info(
+                "Final-stage timing (ms): request_id=%s mode=%s size=%sx%s steps=%s "
+                "denoise=%.0f pipe_to_result=%.0f composite=%.0f nsfw=%.0f png_encode=%.0f "
+                "b64=%.0f png_kb=%.0f",
+                request_id, actual_mode, width, height, steps,
+                denoise_ms, decode_tail_ms, composite_ms, nsfw_ms, encode_ms,
+                b64_ms, len(png_bytes) / 1024.0,
+            )
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
