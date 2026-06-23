@@ -22,13 +22,13 @@ export const DEFAULT_PARAMS = {
   negative_prompt: 'low quality, blurry',
   seed: -1,
   steps: 20,
-  cfg: 7.5,
-  denoising_strength: 0.75,
+  cfg: 5,
+  denoising_strength: 1,
   mask_blur: 4,
   mask_padding: 32,
   model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
-  sampler: AVAILABLE_SAMPLERS[0],
-  frame_size_index: 0
+  sampler: 'DPM++ 2M Karras',
+  frame_size_index: 4
 };
 
 export const DEFAULT_BRUSH_SETTINGS = {
