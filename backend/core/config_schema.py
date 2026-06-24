@@ -45,6 +45,8 @@ SETTINGS_SCHEMA: list[dict[str, Any]] = [
     {"key": "LLM_MAX_NEW_TOKENS", "group": "Улучшение промпта", "label": "LLM max new tokens", "type": "int", "min": 16, "max": 2048},
     {"key": "LLM_TEMPERATURE", "group": "Улучшение промпта", "label": "LLM temperature", "type": "float", "min": 0.0, "max": 2.0},
     {"key": "LLM_TOP_P", "group": "Улучшение промпта", "label": "LLM top_p", "type": "float", "min": 0.0, "max": 1.0},
+    {"key": "LLM_REPEAT_PENALTY", "group": "Улучшение промпта", "label": "LLM repeat penalty (1.0 = выкл)", "type": "float", "min": 1.0, "max": 2.0},
+    {"key": "LLM_SEED", "group": "Улучшение промпта", "label": "LLM seed (-1 = случайный каждый раз)", "type": "int", "min": -1, "max": 2147483647},
     {"key": "LLM_GPU_LAYERS", "group": "Улучшение промпта", "label": "LLM слоёв на GPU (0=CPU, 99=всё на GPU)", "type": "int", "min": 0, "max": 200},
     {"key": "LLM_THREADS", "group": "Улучшение промпта", "label": "LLM потоков CPU", "type": "int", "min": 1, "max": 64},
     {"key": "LLM_CTX_SIZE", "group": "Улучшение промпта", "label": "LLM размер контекста (токены)", "type": "int", "min": 512, "max": 32768},

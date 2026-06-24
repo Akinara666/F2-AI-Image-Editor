@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -136,6 +137,8 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         max_tokens: int = 220,
         temperature: float = 0.2,
         top_p: float = 0.9,
+        repeat_penalty: float = 1.1,
+        seed: int = -1,
         system_prompt: str = "",
         logger: Optional[logging.Logger] = None,
     ):
@@ -149,6 +152,9 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.repeat_penalty = repeat_penalty
+        # < 0 → a fresh random seed per call; >= 0 → fixed (reproducible).
+        self.seed = seed
         self.system_prompt = system_prompt
         self.logger = logger or logging.getLogger("QwenGGUFLoraAdapter")
         self._llm = None
@@ -293,6 +299,17 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             # Qwen3 по умолчанию в thinking-режиме: генерирует <think>...</think>
             # (много токенов, медленно) до ответа. Для SD-промпта это не нужно —
             # /no_think переключает в прямой режим (стандартный флаг Qwen3/llama.cpp).
+            # Свежий случайный сид на каждый вызов (seed < 0) → разные варианты
+            # промпта; иначе фиксированный сид для воспроизводимости. llama.cpp не
+            # пересеивает RNG, если seed не передать, поэтому задаём явно.
+            call_seed = random.randint(0, 2**32 - 1) if self.seed < 0 else self.seed
+            self.logger.info(
+                "Qwen inference start: seed=%s repeat_penalty=%s temperature=%s top_p=%s",
+                call_seed,
+                self.repeat_penalty,
+                self.temperature,
+                self.top_p,
+            )
             # Lock сериализует доступ к не-thread-safe объекту Llama (см. __init__).
             with self._inference_lock:
                 response = self._llm.create_chat_completion(
@@ -302,6 +319,8 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                     ],
                     temperature=self.temperature,
                     top_p=self.top_p,
+                    repeat_penalty=self.repeat_penalty,
+                    seed=call_seed,
                     max_tokens=self.max_tokens,
                 )
             content = response["choices"][0]["message"]["content"]
@@ -379,6 +398,8 @@ def _create_llm_adapter(provider: str) -> BasePromptLLMAdapter:
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
             temperature=settings.LLM_TEMPERATURE,
             top_p=settings.LLM_TOP_P,
+            repeat_penalty=settings.LLM_REPEAT_PENALTY,
+            seed=settings.LLM_SEED,
             system_prompt=settings.LLM_SYSTEM_PROMPT,
         )
     return StubPromptLLMAdapter()

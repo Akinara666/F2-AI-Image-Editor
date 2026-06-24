@@ -122,6 +122,12 @@ class Settings:
     LLM_MAX_NEW_TOKENS: int = int(os.getenv("LLM_MAX_NEW_TOKENS", "220"))
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
     LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    # Penalises token repetition (>1.0 = stronger). 1.0 = off. A mild 1.1 curbs
+    # the "..., ..., ..." degenerate loops Qwen falls into at low temperature.
+    LLM_REPEAT_PENALTY: float = float(os.getenv("LLM_REPEAT_PENALTY", "1.1"))
+    # RNG seed for prompt generation. < 0 → a fresh random seed every call (varied
+    # prompts); >= 0 → fixed seed (reproducible output).
+    LLM_SEED: int = int(os.getenv("LLM_SEED", "-1"))
     LLM_SYSTEM_PROMPT: str = os.getenv(
         "LLM_SYSTEM_PROMPT",
         "You are a Stable Diffusion prompt transformer. "
