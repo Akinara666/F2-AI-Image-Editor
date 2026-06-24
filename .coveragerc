@@ -1,0 +1,17 @@
+[run]
+branch = True
+source =
+    backend
+omit =
+    backend/tests/*
+
+[report]
+precision = 2
+show_missing = True
+skip_empty = True
+
+[html]
+directory = backend/htmlcov
+
+[xml]
+output = backend/coverage.xml

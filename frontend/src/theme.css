@@ -3,6 +3,11 @@
 }
 
 :root {
+    /* Нативные элементы (выпадающие списки, спиннеры, скроллбары)
+       рендерятся браузером в тёмной схеме — иначе option-список
+       получает белый фон при светлом тексте. */
+    color-scheme: dark;
+
     /* ===== Typography ===== */
     --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
@@ -93,6 +98,23 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* ===== Keyboard Focus (WCAG 2.4.7) ===== */
+:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+/* ===== Reduced Motion (WCAG 2.3.3) ===== */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
 /* ===== Animations ===== */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(5px); }
@@ -152,6 +174,12 @@ body {
 
 .btn:active {
     transform: scale(0.97);
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
 }
 
 .btn-primary {
@@ -227,6 +255,17 @@ textarea.input-field {
     resize: vertical;
     min-height: 60px;
     line-height: 1.5;
+}
+
+/* Выпадающий список: фон у option задаём явно — прозрачный фон
+   .input-field на сам список не распространяется. */
+select.input-field option {
+    background-color: var(--bg-panel-solid);
+    color: var(--text-main);
+}
+
+select.input-field option:disabled {
+    color: var(--text-dim);
 }
 
 /* ===== Custom Range Slider ===== */

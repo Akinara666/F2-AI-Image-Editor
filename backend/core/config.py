@@ -2,7 +2,11 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Читаем тот же .env, что правит панель настроек (settings.ENV_FILE_PATH).
+# Если ENV_FILE_PATH задан в окружении (vast: deploy/backend.vast.env) — грузим
+# именно его; иначе None = прежнее поведение (поиск backend/.env). Один источник:
+# backend читает ровно тот файл, в который пишет панель — без копий и асимметрии.
+load_dotenv(os.getenv("ENV_FILE_PATH") or None)
 
 # Presets & configuration
 STYLE_PRESETS = {
@@ -21,24 +25,73 @@ class Settings:
     BASE_DIR: Path = Path(__file__).parent.parent
     OUTPUT_DIR: Path = BASE_DIR / "static" / "outputs"
     MODELS_DIR: Path = BASE_DIR / "models" / "Stable-diffusion"
-    
+    # Собранный SPA (vite build). При SERVE_FRONTEND=true и наличии папки FastAPI
+    # отдаёт сайт по тому же origin, что и API — один публичный URL без CORS.
+    FRONTEND_DIST_DIR: Path = Path(
+        os.getenv("FRONTEND_DIST_DIR", str(BASE_DIR.parent / "frontend" / "dist"))
+    )
+    SERVE_FRONTEND: bool = os.getenv("SERVE_FRONTEND", "false").lower() == "true"
+    # Файл .env, который панель настроек правит И который backend читает (см.
+    # load_dotenv выше) — один и тот же. По умолчанию backend/.env; на vast
+    # run-vast экспортирует ENV_FILE_PATH=deploy/backend.vast.env (постоянный).
+    ENV_FILE_PATH: Path = Path(os.getenv("ENV_FILE_PATH", str(BASE_DIR / ".env")))
+    # Секрет для правки настроек из UI. Пусто → редактирование выключено (только
+    # просмотр). Живёт ТОЛЬКО здесь, в окружении сервера; во фронт не передаётся.
+    SETTINGS_ADMIN_TOKEN: str = os.getenv("SETTINGS_ADMIN_TOKEN", "").strip()
+
     # Model Configuration
     DEFAULT_MODEL_ID: str = os.getenv("DEFAULT_MODEL_ID", "runwayml/stable-diffusion-v1-5")
     DEVICE: str = "cuda" if os.getenv("USE_CUDA", "true").lower() == "true" else "cpu"
     SD_ENABLE_CPU_OFFLOAD: bool = os.getenv("SD_ENABLE_CPU_OFFLOAD", "true").lower() == "true"
+    # Attention backend: torch SDPA is the diffusers default on torch>=2.0 and is
+    # usually as fast as xformers without the extra dependency, so xformers is
+    # opt-in. Enable only if you have a matching xformers build installed.
+    SD_ENABLE_XFORMERS: bool = os.getenv("SD_ENABLE_XFORMERS", "false").lower() == "true"
+    # TF32 accelerates fp32 matmul/conv on Ampere+ tensor cores (e.g. the fp32
+    # VAE upcast) with no visible quality loss for diffusion. No-op on older GPUs.
+    SD_ALLOW_TF32: bool = os.getenv("SD_ALLOW_TF32", "true").lower() == "true"
+    # VAE slicing is cheap (splits the batch dim) and stays on by default.
+    SD_ENABLE_VAE_SLICING: bool = os.getenv("SD_ENABLE_VAE_SLICING", "true").lower() == "true"
+    # VAE tiling splits the FINAL decode into overlapping tiles to cap peak VRAM.
+    # It adds several extra decode passes + blending to every final image, so on
+    # ample VRAM it is pure overhead that makes the last generation step drag.
+    # Default: follow CPU offload (the low-VRAM regime). With offload off we
+    # assume there is enough VRAM and skip tiling. Force with true/false.
+    SD_ENABLE_VAE_TILING: bool = (
+        os.getenv("SD_ENABLE_VAE_TILING", "").strip().lower()
+        or ("true" if SD_ENABLE_CPU_OFFLOAD else "false")
+    ) == "true"
+    # Runtime precision: "auto" picks bf16 on Ampere+ (same exponent range as
+    # fp32 -> far fewer black/NaN VAE outputs) and fp16 on older GPUs. Override
+    # with fp16 / bf16 / fp32.
+    SD_TORCH_DTYPE: str = os.getenv("SD_TORCH_DTYPE", "auto").strip().lower()
+    # Optional one-off tiny inference right after load to pay CUDA kernel
+    # compilation / allocation cost up front so the first real request is fast.
+    SD_WARMUP: bool = os.getenv("SD_WARMUP", "false").lower() == "true"
+    # Единый тумблер NSFW-защиты (default true): дописывает негатив-промпт И
+    # включает классификатор, который проверяет каждую готовую картинку. Модель
+    # safety-checker подгружается ПЕРЕД генерацией (fail-fast), и только когда
+    # фильтр включён. Разрешить NSFW можно ТОЛЬКО явно: NSFW_FILTER_ENABLED=false.
     NSFW_FILTER_ENABLED: bool = os.getenv("NSFW_FILTER_ENABLED", "true").lower() == "true"
     NSFW_NEGATIVE_PROMPT: str = os.getenv(
         "NSFW_NEGATIVE_PROMPT",
         "nsfw, nude, naked, explicit, erotic, porn, sex, uncensored, nipples, breasts, genitalia",
     )
+    NSFW_SAFETY_CHECKER_MODEL: str = os.getenv(
+        "NSFW_SAFETY_CHECKER_MODEL",
+        "CompVis/stable-diffusion-safety-checker",
+    )
     CLIP_SKIP: int = max(1, int(os.getenv("CLIP_SKIP", "1")))
     LIVE_PREVIEW_METHOD: str = os.getenv("LIVE_PREVIEW_METHOD", "approx_nn").strip().lower()
     LIVE_PREVIEW_INTERVAL_STEPS: int = max(1, int(os.getenv("LIVE_PREVIEW_INTERVAL_STEPS", "4")))
     CIVITAI_API_TOKEN: str = os.getenv("CIVITAI_API_TOKEN", "").strip()
+    HF_TOKEN: str = os.getenv("HF_TOKEN", "").strip()
 
     #_____________апдейт_______ Prompt transformer config
     PROMPT_TRANSFORM_ENABLED: bool = os.getenv("PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
-    PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "1500"))
+    # Covers inference only — model loading happens outside this timeout.
+    # CPU GGUF inference of ~220 tokens realistically takes seconds, not ms.
+    PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("PROMPT_TRANSFORM_TIMEOUT_MS", "30000"))
     PROMPT_TRANSFORM_PROVIDER: str = os.getenv("PROMPT_TRANSFORM_PROVIDER", "stub")
     #_____________апдейт_______ Strict mode and merge policy
     PROMPT_TRANSFORM_STRICT: bool = os.getenv("PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
@@ -47,17 +100,34 @@ class Settings:
         "PROMPT_TRANSFORM_UNLOAD_AFTER_CALL",
         "true",
     ).lower() == "true"
+    NEG_PROMPT_TRANSFORM_ENABLED: bool = os.getenv("NEG_PROMPT_TRANSFORM_ENABLED", "false").lower() == "true"
+    NEG_PROMPT_TRANSFORM_TIMEOUT_MS: int = int(os.getenv("NEG_PROMPT_TRANSFORM_TIMEOUT_MS", "30000"))
+    NEG_PROMPT_TRANSFORM_PROVIDER: str = os.getenv("NEG_PROMPT_TRANSFORM_PROVIDER", "stub")
+    NEG_PROMPT_TRANSFORM_STRICT: bool = os.getenv("NEG_PROMPT_TRANSFORM_STRICT", "true").lower() == "true"
+    NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL: bool = os.getenv("NEG_PROMPT_TRANSFORM_UNLOAD_AFTER_CALL", "true").lower() == "true"
+    PROMPT_TRANSFORM_QUEUE_MODE: str = os.getenv("PROMPT_TRANSFORM_QUEUE_MODE", "wait")
+    PROMPT_TRANSFORM_MAX_WAIT_MS: int = int(os.getenv("PROMPT_TRANSFORM_MAX_WAIT_MS", "20000"))
 
     #_____________апдейт_______ GGUF + LoRA LLM runtime config
     LLM_MODEL_PATH: str = os.getenv("LLM_MODEL_PATH", str(BASE_DIR / "models" / "llm" / "model.gguf"))
     LLM_LORA_PATH: str = os.getenv("LLM_LORA_PATH", str(BASE_DIR / "models" / "llm" / "adapter.gguf"))
     LLM_LORA_SCALE: float = float(os.getenv("LLM_LORA_SCALE", "1.0"))
+    LLM_POSITIVE_LORA_PATH: str = os.getenv("LLM_POSITIVE_LORA_PATH", os.getenv("LLM_LORA_PATH", ""))
+    LLM_NEGATIVE_LORA_PATH: str = os.getenv("LLM_NEGATIVE_LORA_PATH", "")
+    LLM_POSITIVE_LORA_SCALE: float = float(os.getenv("LLM_POSITIVE_LORA_SCALE", os.getenv("LLM_LORA_SCALE", "1.0")))
+    LLM_NEGATIVE_LORA_SCALE: float = float(os.getenv("LLM_NEGATIVE_LORA_SCALE", "1.0"))
     LLM_CTX_SIZE: int = int(os.getenv("LLM_CTX_SIZE", "4096"))
     LLM_THREADS: int = int(os.getenv("LLM_THREADS", "6"))
     LLM_GPU_LAYERS: int = int(os.getenv("LLM_GPU_LAYERS", "0"))
     LLM_MAX_NEW_TOKENS: int = int(os.getenv("LLM_MAX_NEW_TOKENS", "220"))
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.2"))
     LLM_TOP_P: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    # Penalises token repetition (>1.0 = stronger). 1.0 = off. A mild 1.1 curbs
+    # the "..., ..., ..." degenerate loops Qwen falls into at low temperature.
+    LLM_REPEAT_PENALTY: float = float(os.getenv("LLM_REPEAT_PENALTY", "1.1"))
+    # RNG seed for prompt generation. < 0 → a fresh random seed every call (varied
+    # prompts); >= 0 → fixed seed (reproducible output).
+    LLM_SEED: int = int(os.getenv("LLM_SEED", "-1"))
     LLM_SYSTEM_PROMPT: str = os.getenv(
         "LLM_SYSTEM_PROMPT",
         "You are a Stable Diffusion prompt transformer. "
@@ -71,9 +141,19 @@ class Settings:
     DEFAULT_WIDTH: int = 512
     DEFAULT_HEIGHT: int = 512
 
+    # Quality of the WebP candidate sent inline in the /generate response (the
+    # on-screen result). Lower = smaller/faster over a tunnel, slightly lossier.
+    # The lossless PNG is still written to disk regardless.
+    CANDIDATE_WEBP_QUALITY: int = max(1, min(100, int(os.getenv("CANDIDATE_WEBP_QUALITY", "90"))))
+
     # Cleanup Policy
     MAX_STORED_IMAGES: int = 100  # Number of images to keep before cleanup
     MAX_CACHED_MODELS: int = 2    # Max underlying model bundles kept in RAM (LRU eviction)
+
+    # Generation only runs one image at a time (serialized by a lock). This caps
+    # how many requests may WAIT for that lock before new ones are rejected fast
+    # with 429 instead of piling up unbounded coroutines. 0 disables the cap.
+    MAX_GENERATION_WAITERS: int = max(0, int(os.getenv("MAX_GENERATION_WAITERS", "8")))
 
     # CORS
     CORS_ALLOW_ORIGINS: list[str] = [

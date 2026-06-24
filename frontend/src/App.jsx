@@ -2,184 +2,33 @@ import React, { useState } from 'react';
 import Editor from './components/Editor';
 import Sidebar from './components/Sidebar';
 import HistoryPanel from './components/HistoryPanel';
+import { resolveBackendMode } from './components/editor/generationModes';
+import { TOOL_MODES } from './components/editor/toolModes';
 import axios from 'axios';
 import { useToast } from './components/ToastProvider';
 import {
   API_ENDPOINTS,
   AVAILABLE_MODELS_PLACEHOLDER,
-  AVAILABLE_SAMPLERS,
   createClientId,
   normalizeGenerationParams,
   resolveApiUrl
 } from './constants';
+import {
+  APP_SETTINGS_STORAGE_KEY,
+  APP_SETTINGS_STORAGE_VERSION,
+  HISTORY_STORAGE_KEY,
+  HISTORY_STORAGE_VERSION,
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  clampSidebarWidth,
+  getHistoryFilename,
+  isMissingHistoryError,
+  loadAppSettingsFromStorage,
+  loadHistoryFromStorage,
+  loadSidebarWidthFromStorage,
+  normalizeHistoryItems
+} from './utils/appState';
 import './theme.css';
 import './App.css';
-
-const HISTORY_STORAGE_KEY = 'generation_history';
-const HISTORY_STORAGE_VERSION = 2;
-const HISTORY_MAX_ITEMS = 50;
-const APP_SETTINGS_STORAGE_KEY = 'generation_app_settings';
-const APP_SETTINGS_STORAGE_VERSION = 1;
-const SIDEBAR_WIDTH_STORAGE_KEY = 'app_sidebar_width';
-const DEFAULT_SIDEBAR_WIDTH = 360;
-const MIN_SIDEBAR_WIDTH = 320;
-const MAX_SIDEBAR_WIDTH = 560;
-const MIN_EDITOR_WIDTH = 320;
-
-const DEFAULT_PARAMS = {
-  prompt: "A futuristic city",
-  negative_prompt: "low quality, blurry",
-  seed: -1,
-  steps: 20,
-  cfg: 7.5,
-  denoising_strength: 0.75,
-  mask_blur: 4,
-  mask_padding: 32,
-  model_id: AVAILABLE_MODELS_PLACEHOLDER[0].id,
-  sampler: AVAILABLE_SAMPLERS[0],
-  frame_size_index: 0
-};
-
-const DEFAULT_BRUSH_SETTINGS = {
-  brushMode: 'none',
-  brushColor: '#ffffff',
-  brushSize: 20
-};
-
-const normalizeHistoryItem = (item) => {
-  if (!item || typeof item !== 'object' || typeof item.url !== 'string' || !item.url.trim()) {
-    return null;
-  }
-
-  const meta = item.meta && typeof item.meta === 'object' && !Array.isArray(item.meta)
-    ? item.meta
-    : {};
-  const timestamp = Number(item.timestamp);
-  const generatedUrl = typeof item.generated_url === 'string' && item.generated_url.trim()
-    ? item.generated_url
-    : null;
-
-  return {
-    id: item.id ?? createClientId('history'),
-    url: item.url,
-    generated_url: generatedUrl,
-    meta,
-    timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now()
-  };
-};
-
-const normalizeHistoryItems = (items) => (
-  (Array.isArray(items) ? items : [])
-    .map(normalizeHistoryItem)
-    .filter(Boolean)
-    .sort((left, right) => right.timestamp - left.timestamp)
-    .slice(0, HISTORY_MAX_ITEMS)
-);
-
-const loadHistoryFromStorage = () => {
-  try {
-    const saved = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (!saved) {
-      return [];
-    }
-
-    const parsed = JSON.parse(saved);
-    const items = Array.isArray(parsed)
-      ? parsed
-      : (Array.isArray(parsed?.items) ? parsed.items : []);
-    return normalizeHistoryItems(items);
-  } catch {
-    return [];
-  }
-};
-
-const loadAppSettingsFromStorage = () => {
-  try {
-    const saved = localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
-    if (!saved) {
-      return {
-        params: { ...DEFAULT_PARAMS },
-        brush: { ...DEFAULT_BRUSH_SETTINGS }
-      };
-    }
-
-    const parsed = JSON.parse(saved);
-    const rawParams = parsed?.params && typeof parsed.params === 'object' ? parsed.params : {};
-    const rawBrush = parsed?.brush && typeof parsed.brush === 'object' ? parsed.brush : {};
-    const { normalized } = normalizeGenerationParams({
-      ...DEFAULT_PARAMS,
-      ...rawParams
-    });
-
-    return {
-      params: {
-        prompt: typeof rawParams.prompt === 'string' ? rawParams.prompt : DEFAULT_PARAMS.prompt,
-        negative_prompt: typeof rawParams.negative_prompt === 'string' ? rawParams.negative_prompt : DEFAULT_PARAMS.negative_prompt,
-        seed: normalized.seed,
-        steps: normalized.steps,
-        cfg: normalized.cfg,
-        denoising_strength: normalized.denoising_strength,
-        mask_blur: normalized.mask_blur,
-        mask_padding: normalized.mask_padding,
-        frame_size_index: normalized.frame_size_index,
-        model_id: typeof rawParams.model_id === 'string' ? rawParams.model_id : DEFAULT_PARAMS.model_id,
-        sampler: typeof rawParams.sampler === 'string' ? rawParams.sampler : DEFAULT_PARAMS.sampler,
-      },
-      brush: {
-        brushMode: typeof rawBrush.brushMode === 'string' ? rawBrush.brushMode : DEFAULT_BRUSH_SETTINGS.brushMode,
-        brushColor: typeof rawBrush.brushColor === 'string' ? rawBrush.brushColor : DEFAULT_BRUSH_SETTINGS.brushColor,
-        brushSize: Number.isFinite(Number(rawBrush.brushSize))
-          ? Math.max(1, Math.min(100, Number(rawBrush.brushSize)))
-          : DEFAULT_BRUSH_SETTINGS.brushSize
-      }
-    };
-  } catch {
-    return {
-      params: { ...DEFAULT_PARAMS },
-      brush: { ...DEFAULT_BRUSH_SETTINGS }
-    };
-  }
-};
-
-const isMissingHistoryError = (error) => {
-  const status = error?.response?.status;
-  if (status === 404 || status === 410) {
-    return true;
-  }
-
-  const message = String(error?.message || error?.response?.data?.detail || '');
-  return /\b(404|410)\b/.test(message);
-};
-
-const getHistoryFilename = (url) => {
-  const path = String(url || '').split('?')[0];
-  const parts = path.split('/').filter(Boolean);
-  return parts[parts.length - 1] || 'image.png';
-};
-
-const clampSidebarWidth = (rawWidth, viewportWidth = window.innerWidth) => {
-  const maxAllowed = Math.min(
-    MAX_SIDEBAR_WIDTH,
-    Math.max(MIN_SIDEBAR_WIDTH, viewportWidth - MIN_EDITOR_WIDTH)
-  );
-  return Math.round(Math.min(maxAllowed, Math.max(MIN_SIDEBAR_WIDTH, rawWidth)));
-};
-
-const loadSidebarWidthFromStorage = () => {
-  if (typeof window === 'undefined') {
-    return DEFAULT_SIDEBAR_WIDTH;
-  }
-
-  try {
-    const saved = Number(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
-    if (!Number.isFinite(saved)) {
-      return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
-    }
-    return clampSidebarWidth(saved, window.innerWidth);
-  } catch {
-    return clampSidebarWidth(DEFAULT_SIDEBAR_WIDTH, window.innerWidth);
-  }
-};
 
 function App() {
   const GENERATION_STATUS = {
@@ -193,31 +42,36 @@ function App() {
   const [availableModels, setAvailableModels] = useState([]);
   const [params, setParams] = useState(initialAppSettings.params);
 
-  // Fetch models on mount
-  React.useEffect(() => {
-    const fetchModels = async () => {
-      try {
-        const response = await axios.get(API_ENDPOINTS.MODELS);
-        if (response.data && response.data.models) {
-          setAvailableModels(response.data.models);
-          // Replace placeholder or missing stored model with the first available model.
-          setParams(prev => ({
-            ...prev,
-            model_id: (
-              prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id
-              || !response.data.models.some((model) => model.id === prev.model_id)
-            )
-              ? response.data.models[0].id
-              : prev.model_id
-          }));
-        }
-      } catch (err) {
-        console.error("Failed to fetch models:", err);
-        showError("Не удалось загрузить список моделей с сервера.");
+  // Загрузка/обновление списка моделей (вызывается при монтировании и из меню моделей).
+  const refreshModels = React.useCallback(async ({ silent = false } = {}) => {
+    try {
+      const response = await axios.get(API_ENDPOINTS.MODELS);
+      const models = response.data?.models;
+      if (Array.isArray(models)) {
+        setAvailableModels(models);
+        // Если выбранной модели больше нет в списке (или это заглушка), берём первую доступную.
+        setParams(prev => ({
+          ...prev,
+          model_id: (
+            prev.model_id === AVAILABLE_MODELS_PLACEHOLDER[0].id
+            || !models.some((model) => model.id === prev.model_id)
+          )
+            ? (models[0]?.id ?? prev.model_id)
+            : prev.model_id
+        }));
+        return models;
       }
-    };
-    fetchModels();
-  }, []);
+      return [];
+    } catch (err) {
+      console.error("Failed to fetch models:", err);
+      if (!silent) showError("Не удалось загрузить список моделей с сервера.");
+      return [];
+    }
+  }, [showError]);
+
+  React.useEffect(() => {
+    refreshModels({ silent: false });
+  }, [refreshModels]);
 
   const [generationStatus, setGenerationStatus] = useState(GENERATION_STATUS.IDLE);
   const [history, setHistory] = useState(loadHistoryFromStorage);
@@ -275,7 +129,7 @@ function App() {
     });
   }, []);
 
-  // Persist history to localStorage
+  // Сохраняем историю в localStorage.
   React.useEffect(() => {
     const normalizedHistory = normalizeHistoryItems(history);
     try {
@@ -283,13 +137,18 @@ function App() {
         version: HISTORY_STORAGE_VERSION,
         items: normalizedHistory
       }));
-    } catch { /* quota exceeded — silently ignore */ }
+    } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
   }, [history]);
 
+  // HEAD-проверку всей истории делаем один раз при первом непустом списке:
+  // раньше каждое изменение history заново опрашивало все элементы. Удаления
+  // отдельных файлов дальше отлавливает onError у <img> в HistoryPanel.
+  const initialHistoryPruneDoneRef = React.useRef(false);
   React.useEffect(() => {
-    if (history.length === 0) {
+    if (initialHistoryPruneDoneRef.current || history.length === 0) {
       return undefined;
     }
+    initialHistoryPruneDoneRef.current = true;
 
     const controller = new AbortController();
     void pruneMissingHistoryItems(history, controller.signal);
@@ -302,7 +161,7 @@ function App() {
   React.useEffect(() => {
     try {
       localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
-    } catch { /* ignore storage issues */ }
+    } catch { /* Ошибки localStorage здесь безопасно игнорировать. */ }
   }, [sidebarWidth]);
 
   React.useEffect(() => {
@@ -345,25 +204,52 @@ function App() {
   const [brushMode, setBrushMode] = useState(initialAppSettings.brush.brushMode);
   const [brushColor, setBrushColor] = useState(initialAppSettings.brush.brushColor);
   const [brushSize, setBrushSize] = useState(initialAppSettings.brush.brushSize);
+  const [generationMode, setGenerationMode] = useState(initialAppSettings.generationMode);
+  const [layers, setLayers] = useState([]);
 
   React.useEffect(() => {
     try {
       localStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify({
         version: APP_SETTINGS_STORAGE_VERSION,
         params,
+        generationMode,
         brush: {
           brushMode,
           brushColor,
           brushSize
         }
       }));
-    } catch { /* quota exceeded — silently ignore */ }
-  }, [params, brushMode, brushColor, brushSize]);
+    } catch { /* Переполнение хранилища не должно ломать интерфейс. */ }
+  }, [params, generationMode, brushMode, brushColor, brushSize]);
 
-  // Ref to Editor's export function
+  // Живое превью растушёвки/расширения маски на холсте: реагирует на слайдеры
+  // mask_blur/mask_padding и включается только в режимах с маской.
+  React.useEffect(() => {
+    editorRef.current?.setMaskFeatherPreview?.({
+      blur: params.mask_blur,
+      padding: params.mask_padding,
+      enabled: generationMode === 'inpaint'
+    });
+  }, [params.mask_blur, params.mask_padding, generationMode]);
+
+  // Смена режима подтягивает уместный инструмент: в inpaint сразу даём кисть
+  // маски, в «вся картинка» уводим на курсор. Outpaint инструмент не трогает —
+  // его зону задаёт прозрачность кадра (ручки холста — отдельный слайс).
+  const handleGenerationModeChange = (nextMode) => {
+    setGenerationMode(nextMode);
+    if (nextMode === 'inpaint') {
+      setBrushMode(TOOL_MODES.MASK);
+    } else if (nextMode === 'whole') {
+      setBrushMode(TOOL_MODES.CURSOR);
+    }
+  };
+
+  // Ссылка на публичные методы редактора.
   const editorRef = React.useRef();
   const abortControllerRef = React.useRef(null);
   const currentGenerationRequestIdRef = React.useRef(null);
+  const spotHealInFlightRef = React.useRef(false);
+  const quickSelectRefineInFlightRef = React.useRef(false);
   const generationStatusRef = React.useRef(GENERATION_STATUS.IDLE);
   const setGenerationLifecycleStatus = (nextStatus) => {
     generationStatusRef.current = nextStatus;
@@ -382,6 +268,11 @@ function App() {
         const preview = response.data?.data;
         if (preview) {
           setGenerationPreview(preview);
+          // Backend reports a terminal status — stop polling immediately instead
+          // of hammering /generate/preview while the response/history-save runs.
+          if (preview.status && !['pending', 'running'].includes(preview.status)) {
+            return;
+          }
         }
       } catch (error) {
         if (signal.aborted || axios.isCancel(error)) {
@@ -393,11 +284,17 @@ function App() {
       }
 
       await new Promise((resolve) => {
-        const timerId = window.setTimeout(resolve, 450);
-        signal.addEventListener('abort', () => {
+        // Снимаем слушатель после срабатывания таймера, иначе за долгую
+        // генерацию на signal накапливаются сотни обработчиков abort.
+        const onAbort = () => {
           window.clearTimeout(timerId);
           resolve();
-        }, { once: true });
+        };
+        const timerId = window.setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, 450);
+        signal.addEventListener('abort', onAbort, { once: true });
       });
     }
   }, []);
@@ -428,10 +325,25 @@ function App() {
 
     try {
       void pollGenerationPreview(requestId, previewController.signal);
-      // 1. Get Crops from Editor
+      // 1. Получаем подготовленные данные из редактора.
+      const _tExport = performance.now();
       const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForGeneration();
+      // [gen-timing] раскладка задержки ПЕРЕД генерацией: рендер/кодирование
+      // холста vs размер init/маски (который потом грузится на сервер).
+      console.log(
+        `[gen-timing] export=${(performance.now() - _tExport).toFixed(0)}ms `
+        + `init=${initImageBlob ? (initImageBlob.size / 1024).toFixed(0) : 0}KB `
+        + `mask=${maskImageBlob ? (maskImageBlob.size / 1024).toFixed(0) + 'KB' : 'none'}`
+      );
 
-      // 2. Prepare FormData
+      // В режиме inpaint без маски бэкенд вернёт 400 — ловим это заранее и
+      // подсказываем, что делать (finally сбросит статус и preview).
+      if (generationMode === 'inpaint' && !maskImageBlob) {
+        showError('Inpaint: нарисуйте маску на области, которую нужно изменить.');
+        return;
+      }
+
+      // 2. Собираем FormData для запроса генерации.
       const formData = new FormData();
       formData.append('request_id', requestId);
       formData.append('prompt', normalizedParams.prompt);
@@ -446,25 +358,42 @@ function App() {
       formData.append('mask_padding', normalizedParams.mask_padding);
       formData.append('model_id', normalizedParams.model_id);
       formData.append('sampler', normalizedParams.sampler);
-      // Smart Mode: if mask exists -> mask, else -> auto (backend handles txt2img/img2img)
-      formData.append('mode', 'auto');
+      formData.append('active_tool', brushMode);
+      // Явный режим из UI: пользователь сам выбрал «вся картинка / inpaint /
+      // outpaint». В режиме «вся картинка» маску не отправляем, даже если она
+      // нарисована, — никакого backend-угадывания.
+      const { mode: backendMode, sendMask } = resolveBackendMode(generationMode);
+      formData.append('mode', backendMode);
 
       formData.append('width', width);
       formData.append('height', height);
 
       if (initImageBlob) {
-        formData.append('init_image', initImageBlob, 'init.png');
+        formData.append('init_image', initImageBlob, 'init.webp');
       }
-      if (maskImageBlob) {
+      if (sendMask && maskImageBlob) {
         formData.append('mask_image', maskImageBlob, 'mask.png');
       }
 
-      // 3. Send Request
-      // Note: Vite proxy set up in vite.config.js to localhost:8000
+      // 3. Отправляем запрос на backend.
+      const _tPost = performance.now();
+      let _uploadDoneAt = null;
       const response = await axios.post(API_ENDPOINTS.GENERATE, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        signal: controller.signal
+        signal: controller.signal,
+        onUploadProgress: (e) => {
+          // Момент, когда тело запроса (init-картинка) полностью ушло на сервер —
+          // отделяет аплоад через туннель от генерации + скачивания ответа.
+          if (e.total && e.loaded >= e.total && _uploadDoneAt === null) {
+            _uploadDoneAt = performance.now();
+          }
+        },
       });
+      console.log(
+        `[gen-timing] upload=${_uploadDoneAt ? (_uploadDoneAt - _tPost).toFixed(0) : '?'}ms `
+        + `total_post=${(performance.now() - _tPost).toFixed(0)}ms `
+        + `(total_post = upload + генерация + download ответа)`
+      );
 
       if (response.data.status === 'success') {
         console.log("Generated:", response.data.url);
@@ -475,47 +404,65 @@ function App() {
         if (response.data?.meta?.prompt_transform_status && response.data.meta.prompt_transform_status !== 'disabled') {
           showInfo(`Трансформер промпта: ${response.data.meta.prompt_transform_status}`);
         }
-        // 4. Add to Canvas
-        await editorRef.current.addGeneratedImage(response.data.url);
+        // 4. Добавляем результат на холст. Картинку backend отдаёт инлайном
+        // (image_data_url) — это убирает второй запрос к /outputs и ожидание
+        // записи на диск ровно в момент «превью → чёткая».
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
 
-        const historyMeta = response.data.meta || {
-          prompt: normalizedParams.prompt,
-          raw_prompt: normalizedParams.prompt,
-          negative_prompt: normalizedParams.negative_prompt,
-          seed: normalizedParams.seed
-        };
-        let historyDocumentUrl = response.data.url;
-
-        try {
-          const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
-          const historyFormData = new FormData();
-          historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
-          historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
-          historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
-          historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
-          historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
-          historyFormData.append('generated_url', response.data.url);
-
-          const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
-          if (historySnapshotResponse.data?.url) {
-            historyDocumentUrl = historySnapshotResponse.data.url;
-          }
-        } catch (historySnapshotError) {
-          console.error("Failed to save full history snapshot", historySnapshotError);
-          showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
+        // Sharp result is on the canvas now: kill the live-preview overlay and
+        // its polling at once, so the blurry 384px preview doesn't linger on top
+        // during the (slower) history snapshot below.
+        previewController.abort();
+        if (currentGenerationRequestIdRef.current === requestId) {
+          currentGenerationRequestIdRef.current = null;
         }
+        setGenerationPreview(null);
 
-        // 5. Add to History
-        const newHistoryItem = {
-          id: createClientId('history'),
-          url: historyDocumentUrl,
-          generated_url: response.data.url,
-          meta: historyMeta,
-          timestamp: Date.now()
-        };
-        setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+        // История — bookkeeping: снимок всего холста кодируется и грузится
+        // отдельным запросом (через туннель — секунды). Не держим на нём статус
+        // генерации, иначе кнопка «Остановить» висит уже после появления картинки.
+        // Делаем в фоне — кнопка освобождается сразу (finally ниже), а пункт
+        // истории добавится, когда снимок сохранится.
+        void (async () => {
+          const historyMeta = response.data.meta || {
+            prompt: normalizedParams.prompt,
+            raw_prompt: normalizedParams.prompt,
+            negative_prompt: normalizedParams.negative_prompt,
+            seed: normalizedParams.seed
+          };
+          let historyDocumentUrl = response.data.url;
+
+          try {
+            const { image: historySnapshotBlob } = await editorRef.current.exportHistorySnapshot();
+            const historyFormData = new FormData();
+            historyFormData.append('image', historySnapshotBlob, 'history-snapshot.png');
+            historyFormData.append('prompt', historyMeta.prompt || normalizedParams.prompt);
+            historyFormData.append('raw_prompt', historyMeta.raw_prompt || normalizedParams.prompt);
+            historyFormData.append('negative_prompt', historyMeta.negative_prompt || normalizedParams.negative_prompt);
+            historyFormData.append('seed', String(historyMeta.seed ?? normalizedParams.seed));
+            historyFormData.append('active_tool', String(historyMeta.active_tool ?? brushMode));
+            historyFormData.append('generated_url', response.data.url);
+
+            const historySnapshotResponse = await axios.post(API_ENDPOINTS.HISTORY_SAVE, historyFormData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            if (historySnapshotResponse.data?.url) {
+              historyDocumentUrl = historySnapshotResponse.data.url;
+            }
+          } catch (historySnapshotError) {
+            console.error("Failed to save full history snapshot", historySnapshotError);
+            showInfo("Сгенерированный фрагмент сохранён, но полный снимок холста сохранить не удалось.");
+          }
+
+          const newHistoryItem = {
+            id: createClientId('history'),
+            url: historyDocumentUrl,
+            generated_url: response.data.url,
+            meta: historyMeta,
+            timestamp: Date.now()
+          };
+          setHistory(prev => normalizeHistoryItems([newHistoryItem, ...prev]));
+        })();
       }
 
     } catch (e) {
@@ -560,6 +507,223 @@ function App() {
       abortControllerRef.current = null;
       currentGenerationRequestIdRef.current = null;
       setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+    }
+  };
+
+  const handleSpotHealPoint = async ({ x, y, radius }) => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (spotHealInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.canSpotHeal?.()) {
+      showInfo("Сначала добавь изображение на холст, затем используй Spot Healing.");
+      return;
+    }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Spot Healing.");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    spotHealInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = createClientId('spot-heal');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
+
+    try {
+      const { image: initImageBlob, mask: maskImageBlob, width, height } = await editorRef.current.exportForSpotHeal({
+        x,
+        y,
+        radius
+      });
+
+      if (!initImageBlob || !maskImageBlob) {
+        throw new Error("Не удалось подготовить область для точечной ретуши.");
+      }
+
+      const formData = new FormData();
+      formData.append('request_id', requestId);
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('active_tool', 'spot_heal');
+      formData.append('width', String(width));
+      formData.append('height', String(height));
+      formData.append('init_image', initImageBlob, 'spot-heal-init.png');
+      formData.append('mask_image', maskImageBlob, 'spot-heal-mask.png');
+
+      const response = await axios.post(API_ENDPOINTS.SPOT_HEAL, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Точечная ретушь применена.");
+      } else {
+        throw new Error("Сервер не вернул результат точечной ретуши.");
+      }
+    } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Spot Healing отменён.");
+        return;
+      }
+      console.error("Spot heal failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Spot Healing: ${errorMsg}`);
+    } finally {
+      spotHealInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
+    }
+  };
+
+  const handleQuickSelectionCopy = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const copied = await editorRef.current.copyQuickSelection?.();
+    if (!copied) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+    showSuccess("Выделенная область скопирована.");
+  };
+
+  const handleQuickSelectionPaste = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    const pasted = await editorRef.current.pasteQuickSelection?.();
+    if (!pasted) {
+      showInfo("Буфер пуст. Сначала скопируй выделение.");
+      return;
+    }
+    showSuccess("Копия вставлена рядом как новый слой.");
+  };
+
+  const handleQuickSelectionRefine = async () => {
+    if (!editorRef.current) {
+      return;
+    }
+    if (generationStatusRef.current !== GENERATION_STATUS.IDLE) {
+      showInfo("Дождись завершения текущей генерации.");
+      return;
+    }
+    if (quickSelectRefineInFlightRef.current) {
+      return;
+    }
+    if (!editorRef.current.hasQuickSelection?.()) {
+      showInfo("Сначала выдели область инструментом Quick Select (W).");
+      return;
+    }
+    if (editorRef.current.hasPendingCandidate?.()) {
+      showInfo("Сначала прими или отклони текущий кандидат, затем запускай Quick Select refine.");
+      return;
+    }
+
+    const { normalized: normalizedParams, invalidFields } = normalizeGenerationParams(params);
+    if (invalidFields.length > 0) {
+      showError(`Некорректные числовые параметры: ${invalidFields.map(field => field.label).join(', ')}`);
+      return;
+    }
+
+    quickSelectRefineInFlightRef.current = true;
+    const controller = new AbortController();
+    const requestId = createClientId('quick-select-refine');
+    abortControllerRef.current = controller;
+    currentGenerationRequestIdRef.current = requestId;
+    setGenerationPreview(null);
+    setGenerationLifecycleStatus(GENERATION_STATUS.GENERATING);
+
+    try {
+      const payload = await editorRef.current.exportForQuickSelectRefine?.();
+      if (!payload?.image || !payload?.selection) {
+        throw new Error("Не удалось подготовить выделение для перегенерации.");
+      }
+
+      const formData = new FormData();
+      formData.append('request_id', requestId);
+      formData.append('prompt', normalizedParams.prompt);
+      formData.append('negative_prompt', normalizedParams.negative_prompt);
+      formData.append('seed', String(normalizedParams.seed));
+      formData.append('steps', String(normalizedParams.steps));
+      formData.append('cfg', String(normalizedParams.cfg));
+      formData.append('denoising_strength', String(normalizedParams.denoising_strength));
+      formData.append('mask_blur', String(normalizedParams.mask_blur));
+      formData.append('mask_padding', String(normalizedParams.mask_padding));
+      formData.append('model_id', normalizedParams.model_id);
+      formData.append('sampler', normalizedParams.sampler);
+      formData.append('width', String(payload.width));
+      formData.append('height', String(payload.height));
+      formData.append('selection_left', String(payload.selection.left));
+      formData.append('selection_top', String(payload.selection.top));
+      formData.append('selection_width', String(payload.selection.width));
+      formData.append('selection_height', String(payload.selection.height));
+      formData.append('active_tool', 'quick_select');
+      formData.append('init_image', payload.image, 'quick-select-init.png');
+      if (payload.mask) {
+        formData.append('mask_image', payload.mask, 'quick-select-mask.png');
+      }
+
+      const response = await axios.post(API_ENDPOINTS.QUICK_SELECT_REFINE, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        signal: controller.signal
+      });
+
+      if (response.data?.status === 'success' && response.data?.url) {
+        await editorRef.current.addGeneratedImage(response.data.url, response.data.image_data_url);
+        await editorRef.current.acceptCandidateAsync?.();
+        showSuccess("Выделенная область перегенерирована.");
+      } else {
+        throw new Error("Сервер не вернул результат quick-select refine.");
+      }
+    } catch (error) {
+      if (axios.isCancel(error)) {
+        showInfo("Quick Select refine отменён.");
+        return;
+      }
+      console.error("Quick-select refine failed", error);
+      const errorMsg = error.response?.data?.detail || error.message;
+      showError(`Ошибка Quick Select refine: ${errorMsg}`);
+    } finally {
+      quickSelectRefineInFlightRef.current = false;
+      if (currentGenerationRequestIdRef.current === requestId) {
+        currentGenerationRequestIdRef.current = null;
+      }
+      abortControllerRef.current = null;
+      setGenerationPreview(null);
+      if (generationStatusRef.current !== GENERATION_STATUS.CANCELLING) {
+        setGenerationLifecycleStatus(GENERATION_STATUS.IDLE);
+      }
     }
   };
 
@@ -662,6 +826,35 @@ function App() {
     event.preventDefault();
   };
 
+  const handleLayersChange = React.useCallback((nextLayers) => {
+    setLayers(Array.isArray(nextLayers) ? nextLayers : []);
+  }, []);
+
+  const handleLayerSelect = React.useCallback((layerId) => {
+    editorRef.current?.selectLayer?.(layerId);
+  }, []);
+
+  const handleLayerToggleVisibility = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerVisibility?.(layerId);
+  }, []);
+
+  const handleLayerAdd = React.useCallback(async () => {
+    const added = await editorRef.current?.addLayer?.();
+    if (!added) {
+      showInfo("Не удалось создать слой: выбери объект на холсте или сначала сгенерируй изображение.");
+    } else {
+      showSuccess("Новый слой создан.");
+    }
+  }, [showInfo, showSuccess]);
+
+  const handleLayerToggleLock = React.useCallback((layerId) => {
+    editorRef.current?.toggleLayerLock?.(layerId);
+  }, []);
+
+  const handleLayerStyleChange = React.useCallback((layerId, patch) => {
+    editorRef.current?.updateLayerStyle?.(layerId, patch);
+  }, []);
+
   return (
     <div
       ref={appContainerRef}
@@ -670,8 +863,11 @@ function App() {
       <div className="sidebar-shell" style={{ width: `${sidebarWidth}px` }}>
         <Sidebar
           availableModels={availableModels}
+          onModelsRefresh={refreshModels}
           params={params}
           setParams={setParams}
+          generationMode={generationMode}
+          setGenerationMode={handleGenerationModeChange}
           isGenerating={isGenerating}
           isBusy={isBusy}
           generationStatus={generationStatus}
@@ -683,6 +879,15 @@ function App() {
           setBrushColor={setBrushColor}
           brushSize={brushSize}
           setBrushSize={setBrushSize}
+          onQuickSelectionCopy={handleQuickSelectionCopy}
+          onQuickSelectionPaste={handleQuickSelectionPaste}
+          onQuickSelectionRefine={handleQuickSelectionRefine}
+          layers={layers}
+          onLayerSelect={handleLayerSelect}
+          onLayerAdd={handleLayerAdd}
+          onLayerToggleVisibility={handleLayerToggleVisibility}
+          onLayerToggleLock={handleLayerToggleLock}
+          onLayerStyleChange={handleLayerStyleChange}
           onUndo={() => editorRef.current?.undo()}
           onClear={() => editorRef.current?.clearAll()}
           editorRef={editorRef}
@@ -702,9 +907,14 @@ function App() {
         <Editor
           ref={editorRef}
           brushMode={brushMode}
+          setBrushMode={setBrushMode}
           brushColor={brushColor}
+          setBrushColor={setBrushColor}
           brushSize={brushSize}
           generationPreview={generationPreview}
+          onSpotHealPoint={handleSpotHealPoint}
+          onLayersChange={handleLayersChange}
+          onToolNotify={showInfo}
         />
       </div>
       <HistoryPanel

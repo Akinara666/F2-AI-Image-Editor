@@ -1,4 +1,5 @@
 import { areTransformsEqual, snapshotObjectTransform } from './helpers';
+import { TOOL_MODES, isAltModifierToolMode, getCursorForToolMode } from './toolModes';
 
 const SNAP_DEADZONE = 2;
 
@@ -11,6 +12,9 @@ const createTransformHelpers = (gridSize) => {
         }
         if (typeof action === 'string' && action.startsWith('scale')) {
             return 'scaling';
+        }
+        if (action === 'rotate') {
+            return 'rotating';
         }
         return null;
     };
@@ -201,7 +205,8 @@ export const setupCanvasViewportAndTransform = ({
     const handleMouseDown = (opt) => {
         const evt = opt.e;
 
-        if (evt.altKey === true || brushModeRef.current === 'hand' || canvas.isSpacePanning) {
+        const isToolAltModifier = isAltModifierToolMode(brushModeRef.current) && evt.altKey === true;
+        if (!isToolAltModifier && (evt.altKey === true || brushModeRef.current === TOOL_MODES.HAND || canvas.isSpacePanning)) {
             isDragging = true;
             canvas.selection = false;
             lastPosX = evt.clientX;
@@ -228,12 +233,17 @@ export const setupCanvasViewportAndTransform = ({
         }
         isDragging = false;
         transformStart = null;
-        canvas.defaultCursor = brushModeRef.current === 'hand' ? 'grab' : 'default';
+        canvas.defaultCursor = getCursorForToolMode(brushModeRef.current);
     };
 
     const handleObjectMoving = (event) => {
         const target = event.target;
         if (!target || !isTransformableObject(target)) {
+            return;
+        }
+        // Снэппинг к сетке считает границы без учёта угла — повернутые
+        // объекты двигаем свободно.
+        if (target.angle) {
             return;
         }
 
@@ -251,6 +261,9 @@ export const setupCanvasViewportAndTransform = ({
     const handleObjectScaling = (event) => {
         const target = event.target;
         if (!target || !isTransformableObject(target)) {
+            return;
+        }
+        if (target.angle) {
             return;
         }
 
@@ -280,7 +293,7 @@ export const setupCanvasViewportAndTransform = ({
             return;
         }
 
-        if (transformStart.action === 'scaling') {
+        if (transformStart.action === 'scaling' && !target.angle) {
             const corner = transformStart.corner || event.transform?.corner || '';
             const baseBounds = getDisplayBoundsFromTransform(transformStart.previous);
             const currentBounds = getDisplayBoundsFromObject(target);

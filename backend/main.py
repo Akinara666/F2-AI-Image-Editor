@@ -1,13 +1,20 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from __future__ import annotations
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+import os
 import random
 from typing import Optional
 from pathlib import Path
 import math
+import json
 import uvicorn
 import io
+import base64
+import time
 import asyncio
 import traceback
 import uuid
@@ -16,32 +23,124 @@ import threading
 from time import monotonic
 from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import parse_qsl, urlencode, urlparse, unquote, urlunparse
-from PIL import Image
-import torch
+from PIL import Image, ImageDraw, ImageFilter, ImageChops
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+try:
+    import torch
+except ModuleNotFoundError:
+    torch = None
+
 from pydantic import BaseModel
-from compel import CompelForSD, CompelForSDXL
+try:
+    # ImportError (not just ModuleNotFoundError): older compel releases lack
+    # these wrappers, and a failed name import must not crash the whole app.
+    from compel import CompelForSD, CompelForSDXL
+except ImportError:
+    CompelForSD = None
+    CompelForSDXL = None
 
 # Import core modules
-from core.manager import model_manager
 from core.utils import (
     save_image_with_metadata,
+    encode_image_with_metadata,
+    encode_result_for_delivery,
+    write_output_bytes,
     process_mask_for_inpainting,
     prepare_image_for_outpainting,
     feather_blend,
     merge_generation_masks,
 )
 from core.config import STYLE_PRESETS, settings
+from core.config_schema import SETTINGS_SCHEMA, ALLOWLIST, coerce_value, is_secret
 from core.prompt_transformer import prompt_transformer
+from core.safety_checker import nsfw_safety_checker
+from core.negative_prompt_transformer import negative_prompt_transformer
 from core.generation_preview import generation_preview_store
-from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
-import logging
-
-# Setup Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+from core.model_downloads import (
+    ModelDownloadError,
+    ModelDownloadManager,
+    list_huggingface_files,
+    search_civitai,
+    search_huggingface,
 )
-logger = logging.getLogger(__name__)
+
+
+class _FallbackPreviewDecoder:
+    def normalize_method(self, method: Optional[str]) -> str:
+        normalized = str(method or settings.LIVE_PREVIEW_METHOD or "full").strip().lower()
+        if normalized in LIVE_PREVIEW_METHOD_CHOICES:
+            return normalized
+        return "full"
+
+    def prepare(self, pipe, model_family: str, method: Optional[str]) -> str:
+        return self.normalize_method(method)
+
+    def decode(self, pipe, latents, model_family: str, method: Optional[str]):
+        return None
+
+
+class _FallbackModelManager:
+    def __init__(self, import_error: Exception):
+        self.device = "cpu"
+        self._import_error = import_error
+
+    @staticmethod
+    def infer_model_family(model_id: str) -> str:
+        lowered = str(model_id or "").lower()
+        sdxl_hints = ("stable-diffusion-xl", "sdxl", "juggernautxl", "realvisxl", "pony", "xl")
+        return "sdxl" if any(hint in lowered for hint in sdxl_hints) else "sd"
+
+    @staticmethod
+    def request_cancel(request_id: str) -> None:
+        return None
+
+    @staticmethod
+    def is_cancel_requested(request_id: str) -> bool:
+        return False
+
+    @staticmethod
+    def bind_active_pipeline(request_id: str, pipe) -> None:
+        return None
+
+    @asynccontextmanager
+    async def generation_session(self, request_id: str):
+        yield
+
+    async def get_model(self, *args, **kwargs):
+        raise RuntimeError(
+            "AI runtime dependencies are unavailable. "
+            "Install torch/diffusers/compel and related backend runtime packages."
+        ) from self._import_error
+
+
+AI_RUNTIME_IMPORT_ERROR: Exception | None = None
+
+try:
+    from core.manager import model_manager, GenerationBusyError
+except Exception as exc:
+    AI_RUNTIME_IMPORT_ERROR = exc
+    logger.warning("Falling back to lightweight model manager because AI runtime import failed: %s", exc)
+    model_manager = _FallbackModelManager(exc)
+
+    class GenerationBusyError(RuntimeError):
+        """Placeholder so the 429 handler can register; never raised in fallback
+        mode (the fallback manager has no generation lock to overflow)."""
+
+LIVE_PREVIEW_METHOD_CHOICES = ("full", "approx_nn", "approx_cheap", "taesd")
+try:
+    from core.preview_decoder import LIVE_PREVIEW_METHOD_CHOICES, preview_decoder
+except Exception as exc:
+    if AI_RUNTIME_IMPORT_ERROR is None:
+        AI_RUNTIME_IMPORT_ERROR = exc
+    logger.warning("Falling back to lightweight preview decoder because preview runtime import failed: %s", exc)
+    preview_decoder = _FallbackPreviewDecoder()
 
 app = FastAPI(title="Local AI Gen Service", version="0.1.0")
 
@@ -58,12 +157,21 @@ app.add_middleware(
 # Mount static folder for outputs
 app.mount("/outputs", StaticFiles(directory=str(settings.OUTPUT_DIR)), name="outputs")
 
+@app.exception_handler(GenerationBusyError)
+async def generation_busy_handler(request: Request, exc: GenerationBusyError):
+    # Backpressure, not an error: the generation wait queue is full. Tell the
+    # client to retry. Starlette matches this before the generic Exception handler.
+    logger.info("Generation rejected (busy): %s", exc)
+    return JSONResponse(status_code=429, content={"detail": str(exc)})
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global Error: {exc}", exc_info=True)
+    # Full details stay in the server log; raw exception text can leak
+    # filesystem paths and environment internals to the client.
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc), "type": type(exc).__name__}
+        content={"detail": "Internal server error", "type": type(exc).__name__}
     )
 
 # --- Presets & configuration ---
@@ -85,11 +193,13 @@ MANAGED_DOWNLOADABLE_MODELS = [
     },
 ]
 MANAGED_MODEL_DOWNLOAD_LOCKS: dict[str, threading.Lock] = {}
+# Менеджер пользовательских загрузок моделей (через меню в редакторе).
+model_download_manager = ModelDownloadManager(settings.MODELS_DIR)
 ALLOWED_SAMPLERS = {
     "Euler a",
     "Euler",
     "DPM++ 2M Karras",
-    "DPM++ 2S a Karras",
+    "DPM++ 2M SDE Karras",
     "DPM++ SDE Karras",
     "DPM2 a Karras",
     "DDIM",
@@ -98,12 +208,22 @@ ALLOWED_SAMPLERS = {
     "UniPC",
     "LMS",
 }
+# diffusers has no true single-step ancestral DPM++ 2S a; the old entry was
+# silently backed by the 2M SDE multistep scheduler. Keep the name as an alias
+# for stored client settings / external API callers.
+SAMPLER_ALIASES = {
+    "DPM++ 2S a Karras": "DPM++ 2M SDE Karras",
+}
 ALLOWED_GENERATION_MODES = {"auto", "text2img", "img2img", "inpainting"}
 LOCAL_MODEL_SUFFIXES = {".safetensors", ".ckpt"}
 ALLOWED_MODEL_FAMILIES = {"sd", "sdxl"}
 MIN_DIMENSION = 64
 MAX_DIMENSION = 2048
-MAX_GENERATION_PIXELS = 1024 * 1024
+# 2 MP: covers native SDXL aspect presets (1024x1024, 896x1152, 1216x832)
+# and portrait/landscape HD like 1024x1536 with VRAM still bounded by
+# VAE tiling + attention slicing. The old 1 MP cap rejected anything
+# larger than the SDXL base square.
+MAX_GENERATION_PIXELS = 2 * 1024 * 1024
 DIMENSION_MULTIPLE = 8
 MIN_STEPS = 1
 MAX_STEPS = 150
@@ -117,10 +237,29 @@ MIN_MASK_BLUR = 0
 MAX_MASK_BLUR = 128
 MIN_MASK_PADDING = 0
 MAX_MASK_PADDING = 128
+#_____________апдейт_______ Supported editor tools metadata
+ALLOWED_EDITOR_TOOLS = {"none", "sketch", "mask", "hand", "eraser", "clone_stamp", "spot_heal", "quick_select"}
 
 
 def _validation_error(detail: str) -> HTTPException:
     return HTTPException(status_code=422, detail=detail)
+
+
+def _ensure_ai_runtime_available() -> None:
+    if AI_RUNTIME_IMPORT_ERROR is None and torch is not None:
+        return
+
+    missing_bits = []
+    if torch is None:
+        missing_bits.append("torch")
+    if AI_RUNTIME_IMPORT_ERROR is not None:
+        missing_bits.append(type(AI_RUNTIME_IMPORT_ERROR).__name__)
+
+    detail = (
+        "AI runtime is unavailable for generation endpoints. "
+        f"Missing or failed dependencies: {', '.join(missing_bits)}."
+    )
+    raise HTTPException(status_code=503, detail=detail)
 
 
 def _merge_negative_prompt_terms(base_prompt: Optional[str], extra_prompt: Optional[str]) -> str:
@@ -155,6 +294,43 @@ def _resolve_preview_method(preview_method: Optional[str]) -> str:
             f"preview_method must be one of: server_default, {', '.join(LIVE_PREVIEW_METHOD_CHOICES)}."
         )
     return raw_value
+
+
+#_____________апдейт_______ Normalize optional active tool from frontend
+def _normalize_active_tool(active_tool: Optional[str]) -> str:
+    value = str(active_tool or "").strip().lower()
+    if not value:
+        return "none"
+    if value in ALLOWED_EDITOR_TOOLS:
+        return value
+    return "none"
+
+
+#_____________апдейт_______ Build rectangular selection mask for quick-select refine
+def _build_quick_select_mask(
+    *,
+    width: int,
+    height: int,
+    selection_left: int,
+    selection_top: int,
+    selection_width: int,
+    selection_height: int,
+    feather: int = 0,
+) -> Image.Image:
+    left = max(0, min(width - 1, int(selection_left)))
+    top = max(0, min(height - 1, int(selection_top)))
+    right = max(left + 1, min(width, left + max(1, int(selection_width))))
+    bottom = max(top + 1, min(height, top + max(1, int(selection_height))))
+
+    if right <= left or bottom <= top:
+        raise _validation_error("Selection bounds are invalid for quick-select refine.")
+
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle([left, top, right, bottom], fill=255)
+    if feather > 0:
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
+    return mask
 
 
 def _resolve_clip_skip_for_diffusers() -> tuple[int, Optional[int]]:
@@ -202,8 +378,17 @@ def _get_local_model_entries() -> list[dict[str, str]]:
         for entry in _get_managed_model_entries()
     }
     entries: list[dict[str, str]] = []
+    nested_model_count = 0
     try:
         for file in sorted(models_dir.iterdir()):
+            if file.is_dir():
+                # Checkpoints are only picked up from the top level; count nested
+                # ones so users who organize models in subfolders get a hint.
+                nested_model_count += sum(
+                    1 for nested in file.rglob("*")
+                    if nested.is_file() and nested.suffix.lower() in LOCAL_MODEL_SUFFIXES
+                )
+                continue
             if not file.is_file() or file.suffix.lower() not in LOCAL_MODEL_SUFFIXES:
                 continue
 
@@ -213,14 +398,30 @@ def _get_local_model_entries() -> list[dict[str, str]]:
                 continue
             if resolved_file in managed_local_paths:
                 continue
+            if resolved_file.stat().st_size <= 0:
+                # 0-byte placeholders / interrupted copies can never be loaded.
+                logger.warning("Skipping empty local model file: %s", resolved_file)
+                continue
 
             entries.append({
                 "id": str(resolved_file),
                 "label": f"{resolved_file.name} (Local)",
                 "family": model_manager.infer_model_family(str(resolved_file)),
+                "source": "local",
+                "filename": resolved_file.name,
+                "downloaded": True,
+                "size_mb": round(resolved_file.stat().st_size / (1024 * 1024), 1),
             })
     except Exception as e:
         logger.error(f"Failed to scan models directory: {e}")
+
+    if nested_model_count:
+        logger.warning(
+            "Found %s checkpoint file(s) in subfolders of %s. Only top-level files are listed — "
+            "move them up one level to use them.",
+            nested_model_count,
+            models_dir,
+        )
 
     return entries
 
@@ -429,6 +630,10 @@ def _validate_generation_inputs(
     mask_blur = _validate_int_field("mask_blur", mask_blur, MIN_MASK_BLUR, MAX_MASK_BLUR)
     mask_padding = _validate_int_field("mask_padding", mask_padding, MIN_MASK_PADDING, MAX_MASK_PADDING)
 
+    if sampler in SAMPLER_ALIASES:
+        normalized_sampler = SAMPLER_ALIASES[sampler]
+        logger.warning("Sampler %r is a legacy alias; using %r.", sampler, normalized_sampler)
+        sampler = normalized_sampler
     if sampler not in ALLOWED_SAMPLERS:
         raise _validation_error(f"Unsupported sampler: {sampler}")
 
@@ -473,28 +678,115 @@ def _validate_generation_inputs(
         "mask_padding": mask_padding,
     }
 
+def _get_compel_for_pipe(pipe, model_family: Optional[str]):
+    """Return a Compel wrapper bound to ``pipe``, reusing it across calls.
+
+    Compel wraps the pipeline's tokenizer/text-encoder, so a fresh instance per
+    generation just re-builds the same bindings. Cache it on the pipe object so
+    its lifetime follows the pipeline (the entry disappears when the bundle is
+    evicted) without keeping the pipe alive via a side cache.
+    """
+    cached = getattr(pipe, "_cached_compel_wrapper", None)
+    if cached is not None:
+        return cached
+
+    if model_family == "sdxl":
+        if CompelForSDXL is None:
+            raise RuntimeError("compel is not installed.")
+        compel = CompelForSDXL(pipe=pipe)
+    else:
+        if CompelForSD is None:
+            raise RuntimeError("compel is not installed.")
+        compel = CompelForSD(pipe=pipe)
+
+    try:
+        pipe._cached_compel_wrapper = compel
+    except Exception:
+        # Some pipeline objects may reject attribute assignment; fall back to
+        # rebuilding per call rather than failing.
+        pass
+    return compel
+
+
 def _process_prompt_with_compel(pipe, prompt: Optional[str], negative_prompt: Optional[str], model_family: Optional[str]) -> dict:
     prompt = prompt or ""
     negative_prompt = negative_prompt or ""
-    
+
+    compel = _get_compel_for_pipe(pipe, model_family)
+    # CompelForSD/SDXL return a LabelledConditioning dataclass (not a tuple).
+    # Encoding positive and negative prompts in one call also lets compel pad
+    # both embeddings to the same length (separate calls can mismatch on long prompts).
+    conditioning = compel(prompt, negative_prompt=negative_prompt)
     if model_family == "sdxl":
-        compel = CompelForSDXL(pipe=pipe)
-        prompt_embeds, pooled_prompt_embeds = compel(prompt)
-        negative_prompt_embeds, negative_pooled_prompt_embeds = compel(negative_prompt)
         return {
-            "prompt_embeds": prompt_embeds,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "negative_prompt_embeds": negative_prompt_embeds,
-            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+            "prompt_embeds": conditioning.embeds,
+            "pooled_prompt_embeds": conditioning.pooled_embeds,
+            "negative_prompt_embeds": conditioning.negative_embeds,
+            "negative_pooled_prompt_embeds": conditioning.negative_pooled_embeds,
         }
-    else:
-        compel = CompelForSD(pipe=pipe)
-        prompt_embeds = compel(prompt)
-        negative_prompt_embeds = compel(negative_prompt)
-        return {
-            "prompt_embeds": prompt_embeds,
-            "negative_prompt_embeds": negative_prompt_embeds,
-        }
+    return {
+        "prompt_embeds": conditioning.embeds,
+        "negative_prompt_embeds": conditioning.negative_embeds,
+    }
+
+
+async def _read_upload_image(upload: UploadFile, *, mode: str) -> Image.Image:
+    content = await upload.read()
+    try:
+        image = Image.open(io.BytesIO(content))
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid image in field: {upload.filename or 'upload'}")
+    return image.convert(mode)
+
+
+def _build_circle_mask(width: int, height: int, cx: int, cy: int, radius: int) -> Image.Image:
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
+    return mask
+
+
+def _parse_selection_points(raw_points: str, width: int, height: int) -> list[tuple[int, int]]:
+    try:
+        payload = json.loads(raw_points)
+    except Exception:
+        raise _validation_error("selection_points must be valid JSON.")
+
+    if not isinstance(payload, list) or len(payload) < 3:
+        raise _validation_error("selection_points must contain at least 3 points.")
+
+    points: list[tuple[int, int]] = []
+    for point in payload:
+        try:
+            if isinstance(point, dict):
+                x = int(point.get("x"))
+                y = int(point.get("y"))
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                x = int(point[0])
+                y = int(point[1])
+            else:
+                raise _validation_error("selection_points items must be [x,y] or {x,y}.")
+        except Exception:
+            raise _validation_error("selection_points items must contain integer x and y.")
+
+        if x < 0 or y < 0 or x >= width or y >= height:
+            raise _validation_error("selection_points must stay inside image bounds.")
+        points.append((x, y))
+
+    return points
+
+
+def _build_polygon_mask(width: int, height: int, points: list[tuple[int, int]]) -> Image.Image:
+    mask = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.polygon(points, fill=255)
+    return mask
+
+
+def _save_tool_image(image: Image.Image, meta: dict[str, object], prompt_slug: str) -> str:
+    tool_meta = dict(meta)
+    tool_meta["prompt"] = prompt_slug
+    return save_image_with_metadata(image, tool_meta, str(settings.OUTPUT_DIR))
 
 # --- Endpoints ---
 
@@ -584,6 +876,8 @@ async def save_history_snapshot(
     raw_prompt: Optional[str] = Form(default=None),
     negative_prompt: Optional[str] = Form(default=None),
     seed: Optional[int] = Form(default=None),
+    #_____________апдейт_______ Persist active editor tool in history metadata
+    active_tool: Optional[str] = Form(default=None),
     generated_url: Optional[str] = Form(default=None),
 ):
     try:
@@ -604,6 +898,8 @@ async def save_history_snapshot(
         "raw_prompt": raw_prompt,
         "negative_prompt": negative_prompt,
         "seed": seed,
+        #_____________апдейт_______ Keep active tool in saved history png metadata
+        "active_tool": _normalize_active_tool(active_tool),
         "generated_url": generated_url,
         "history_kind": "document_snapshot",
     }
@@ -623,6 +919,12 @@ def health_check():
 
 @app.get("/")
 def read_root():
+    # При SERVE_FRONTEND корень отдаёт SPA (явный роут перебивает mount на "/"),
+    # иначе — обычная JSON-заглушка API.
+    if settings.SERVE_FRONTEND:
+        index_file = settings.FRONTEND_DIST_DIR / "index.html"
+        if index_file.is_file():
+            return FileResponse(str(index_file))
     return {"message": "AI Image Gen API is running. Visit /docs for Swagger UI."}
 
 @app.get("/models")
@@ -630,30 +932,207 @@ def list_models():
     return {"models": ALLOWED_CLOUD_MODELS + _get_managed_model_entries() + _get_local_model_entries()}
 
 
+# --------------------------------------------------------------------------- #
+# Панель настроек: чтение/правка backend/.env (правки применяются после рестарта)
+# --------------------------------------------------------------------------- #
+def _current_config_value(key: str) -> str:
+    """Текущее эффективное значение настройки (как загружено на старте)."""
+    raw = os.getenv(key)
+    if raw is not None:
+        return raw
+    if key == "USE_CUDA":
+        return "true" if settings.DEVICE == "cuda" else "false"
+    if hasattr(settings, key):
+        val = getattr(settings, key)
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        return str(val)
+    return ""
+
+
+@app.get("/config")
+def get_config():
+    values: dict[str, object] = {}
+    for entry in SETTINGS_SCHEMA:
+        key = entry["key"]
+        if is_secret(key):
+            # Секрет наружу не отдаём — только факт, задан ли он.
+            values[key] = {"secret": True, "set": bool(os.getenv(key) or "")}
+        else:
+            values[key] = _current_config_value(key)
+    return {
+        "status": "success",
+        "data": {
+            "schema": SETTINGS_SCHEMA,
+            "values": values,
+            # editable=true только если на сервере задан админ-токен.
+            "editable": bool(settings.SETTINGS_ADMIN_TOKEN),
+            "env_file": str(settings.ENV_FILE_PATH),
+        },
+    }
+
+
+class ConfigPatchRequest(BaseModel):
+    values: dict[str, object]
+
+
+@app.patch("/config")
+def update_config(payload: ConfigPatchRequest, x_admin_token: str = Header(default="")):
+    # Гейт: правка только при заданном на сервере SETTINGS_ADMIN_TOKEN и верном токене.
+    if not settings.SETTINGS_ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=403,
+            detail="Редактирование выключено: задайте SETTINGS_ADMIN_TOKEN в backend/.env и перезапустите backend.",
+        )
+    if (x_admin_token or "").strip() != settings.SETTINGS_ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Неверный админ-токен.")
+
+    from dotenv import set_key
+
+    written: list[str] = []
+    for key, raw in (payload.values or {}).items():
+        if key not in ALLOWLIST:
+            raise HTTPException(status_code=422, detail=f"Недопустимый ключ настройки: {key}")
+        # Секрет с пустым значением — не затираем существующий.
+        if is_secret(key) and (raw is None or str(raw).strip() == ""):
+            continue
+        try:
+            value = coerce_value(key, raw)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        set_key(str(settings.ENV_FILE_PATH), key, value)
+        written.append(key)
+
+    logger.info("Config updated via panel: keys=%s file=%s", written, settings.ENV_FILE_PATH)
+    return {"status": "success", "restart_required": True, "written": written}
+
+
+# --------------------------------------------------------------------------- #
+# Управление моделями: скачивание с HuggingFace / Civit.ai + поиск (меню в UI)
+# --------------------------------------------------------------------------- #
+class ModelDownloadRequest(BaseModel):
+    download_url: str
+    filename: str
+    model_id: Optional[str] = None
+    auth: Optional[str] = "none"
+
+
+class ModelDeleteRequest(BaseModel):
+    filename: Optional[str] = None
+    id: Optional[str] = None
+
+
+@app.post("/models/download")
+def start_model_download(payload: ModelDownloadRequest):
+    try:
+        job = model_download_manager.start(
+            url=payload.download_url,
+            filename=payload.filename,
+            model_id=payload.model_id or payload.filename,
+            auth=payload.auth or "none",
+        )
+    except ModelDownloadError as exc:
+        raise _validation_error(str(exc))
+    return job
+
+
+@app.get("/models/downloads")
+def list_model_downloads():
+    return {"downloads": model_download_manager.list_jobs()}
+
+
+@app.get("/models/download/{job_id}")
+def get_model_download(job_id: str):
+    job = model_download_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Download job not found.")
+    return job
+
+
+@app.post("/models/download/{job_id}/cancel")
+def cancel_model_download(job_id: str):
+    if not model_download_manager.cancel(job_id):
+        raise HTTPException(status_code=404, detail="No active download with this id.")
+    return {"status": "canceling", "job_id": job_id}
+
+
+@app.post("/models/delete")
+def delete_model(payload: ModelDeleteRequest):
+    raw = payload.filename or payload.id
+    if not raw:
+        raise _validation_error("filename or id is required.")
+    try:
+        target = model_download_manager.resolve_target(raw)
+    except ModelDownloadError as exc:
+        raise _validation_error(str(exc))
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Model file not found.")
+    try:
+        target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to delete model: {exc}")
+    logger.info("Deleted local model: %s", target.name)
+    return {"status": "deleted", "filename": target.name}
+
+
+@app.get("/models/search/civitai")
+def search_models_civitai(query: str = "", nsfw: bool = False, limit: int = 24):
+    try:
+        results = search_civitai(query, limit=limit, nsfw=nsfw)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"results": results}
+
+
+@app.get("/models/search/huggingface")
+def search_models_huggingface(query: str = "", limit: int = 24):
+    try:
+        results = search_huggingface(query, limit=limit)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"results": results}
+
+
+@app.get("/models/huggingface/files")
+def list_models_huggingface_files(repo: str):
+    try:
+        files = list_huggingface_files(repo)
+    except ModelDownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"repo": repo, "files": files}
+
+
 #_____________апдейт_______ Prompt transformer preview contract
 class PromptTransformPreviewRequest(BaseModel):
     prompt: str
     negative_prompt: Optional[str] = None
     use_prompt_transform: Optional[bool] = None
+    use_negative_prompt_transform: Optional[bool] = None
 
 
 #_____________апдейт_______ Prompt transformer preview endpoint
 @app.post("/prompt/transform")
 async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
     logger.info(
-        "Preview prompt transform requested: prompt_len=%s negative_len=%s use_prompt_transform=%s",
+        "Preview prompt transform requested: prompt_len=%s negative_len=%s use_prompt_transform=%s use_negative_prompt_transform=%s",
         len((payload.prompt or "").strip()),
         len((payload.negative_prompt or "").strip()),
         payload.use_prompt_transform,
+        payload.use_negative_prompt_transform,
     )
     result = await prompt_transformer.transform_prompt(
         raw_prompt=payload.prompt,
         use_prompt_transform=payload.use_prompt_transform,
         context={"user_negative_prompt": payload.negative_prompt or ""},
     )
+    negative_result = await negative_prompt_transformer.transform_negative_prompt(
+        raw_negative_prompt=payload.negative_prompt or "",
+        use_negative_prompt_transform=payload.use_negative_prompt_transform,
+        context={"user_prompt": payload.prompt or ""},
+    )
     #_____________апдейт_______ Strict validation for preview endpoint
     transform_required = settings.PROMPT_TRANSFORM_ENABLED if payload.use_prompt_transform is None else payload.use_prompt_transform
-    if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status != "success":
+    if transform_required and settings.PROMPT_TRANSFORM_STRICT and result.transform_status not in {"success", "skipped_empty", "disabled"}:
         detail = f"Prompt was not transformed. status={result.transform_status}"
         if result.error:
             detail = f"{detail}. error={result.error}"
@@ -666,19 +1145,49 @@ async def preview_prompt_transform(payload: PromptTransformPreviewRequest):
             status_code=422,
             detail=detail,
         )
+    negative_transform_required = (
+        settings.NEG_PROMPT_TRANSFORM_ENABLED
+        if payload.use_negative_prompt_transform is None
+        else payload.use_negative_prompt_transform
+    )
+    if (
+        negative_transform_required
+        and settings.NEG_PROMPT_TRANSFORM_STRICT
+        and len((payload.negative_prompt or "").strip()) > 0
+        and negative_result.transform_status != "success"
+    ):
+        detail = f"Negative prompt was not transformed. status={negative_result.transform_status}"
+        if negative_result.error:
+            detail = f"{detail}. error={negative_result.error}"
+        logger.warning(
+            "Preview negative prompt transform failed in strict mode: status=%s error=%s",
+            negative_result.transform_status,
+            negative_result.error,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=detail,
+        )
     logger.info(
-        "Preview prompt transform completed: status=%s provider=%s latency_ms=%s",
+        "Preview prompt transform completed: status=%s provider=%s latency_ms=%s negative_status=%s negative_provider=%s negative_latency_ms=%s",
         result.transform_status,
         result.provider,
         result.latency_ms,
+        negative_result.transform_status,
+        negative_result.provider,
+        negative_result.latency_ms,
     )
-    return {"status": "success", "data": result.to_dict()}
+    data = result.to_dict()
+    data["negative_prompt_transform"] = negative_result.to_dict()
+    return {"status": "success", "data": data}
 
 
 #_____________апдейт_______ Prompt transformer health endpoint
 @app.get("/prompt/health")
 def prompt_transform_health():
-    return {"status": "success", "data": prompt_transformer.health()}
+    data = prompt_transformer.health()
+    data["negative_prompt_transform"] = negative_prompt_transformer.health()
+    return {"status": "success", "data": data}
 
 
 @app.get("/generate/preview/{request_id}")
@@ -691,10 +1200,12 @@ def get_generation_preview(request_id: str):
 
 @app.post("/generate")
 async def generate_image(
+    background_tasks: BackgroundTasks,
     prompt: str = Form(...),
     request_id: Optional[str] = Form(default=None),
     raw_prompt: Optional[str] = Form(default=None),
     use_prompt_transform: Optional[bool] = Form(default=None),
+    use_negative_prompt_transform: Optional[bool] = Form(default=None),
     negative_prompt: str = Form(default="low quality, bad anatomy, ugly"),
     width: int = Form(default=512),
     height: int = Form(default=512),
@@ -710,11 +1221,16 @@ async def generate_image(
     denoising_strength: float = Form(default=0.75),
     mask_blur: int = Form(default=4),
     mask_padding: int = Form(default=32),
+    #_____________апдейт_______ Active editor tool from frontend for traceability
+    active_tool: Optional[str] = Form(default=None),
     init_image: UploadFile = File(None),
     mask_image: UploadFile = File(None),
 ):
     try:
+        _ensure_ai_runtime_available()
         request_id = (request_id or "").strip() or uuid.uuid4().hex
+        #_____________апдейт_______ Normalize active tool once per request
+        active_tool = _normalize_active_tool(active_tool)
 
         validated = _validate_generation_inputs(
             width=width,
@@ -745,6 +1261,12 @@ async def generate_image(
         denoising_strength = validated["denoising_strength"]
         mask_blur = validated["mask_blur"]
         mask_padding = validated["mask_padding"]
+
+        # Register the preview record as early as possible: the client starts
+        # polling /generate/preview right after clicking, and model prep + prompt
+        # transform below can take a moment — without the record those polls 404.
+        generation_preview_store.start(request_id, steps)
+
         runtime_model_id, downloaded_managed_model = await _prepare_model_for_runtime(model_id, model_entry)
 
         #_____________апдейт_______ Prompt transform pipeline (raw user text -> SD prompt)
@@ -779,6 +1301,45 @@ async def generate_image(
             final_prompt = source_prompt
             final_negative_prompt = negative_prompt
 
+        negative_transform_source = final_negative_prompt
+        negative_transform_result = await negative_prompt_transformer.transform_negative_prompt(
+            raw_negative_prompt=negative_transform_source,
+            use_negative_prompt_transform=use_negative_prompt_transform,
+            context={
+                "mode": mode,
+                "model_id": model_id,
+                "model_family": model_family,
+                "user_prompt": source_prompt,
+            },
+        )
+        logger.info(
+            "Negative prompt transform status=%s provider=%s latency_ms=%s",
+            negative_transform_result.transform_status,
+            negative_transform_result.provider,
+            negative_transform_result.latency_ms,
+        )
+        negative_transform_required = (
+            settings.NEG_PROMPT_TRANSFORM_ENABLED
+            if use_negative_prompt_transform is None
+            else use_negative_prompt_transform
+        )
+        if (
+            negative_transform_required
+            and settings.NEG_PROMPT_TRANSFORM_STRICT
+            and negative_transform_result.transform_status not in {"success", "skipped_empty"}
+        ):
+            detail = (
+                "Negative prompt was not transformed. "
+                f"status={negative_transform_result.transform_status}"
+            )
+            if negative_transform_result.error:
+                detail = f"{detail}. error={negative_transform_result.error}"
+            raise HTTPException(status_code=422, detail=detail)
+        if negative_transform_result.transform_status == "success":
+            final_negative_prompt = negative_transform_result.transformed_negative_prompt
+        else:
+            final_negative_prompt = negative_transform_source
+
         # 0. Apply Preset
         if style_preset:
             final_prompt = f"{final_prompt}, {STYLE_PRESETS[style_preset]}"
@@ -788,6 +1349,10 @@ async def generate_image(
         resolved_preview_method = _resolve_preview_method(preview_method)
         preview_interval_steps = settings.LIVE_PREVIEW_INTERVAL_STEPS
         configured_clip_skip, diffusers_clip_skip = _resolve_clip_skip_for_diffusers()
+        #_____________апдейт_______ Spot-heal profile flag (tool-aware generation behavior)
+        spot_heal_profile_applied = False
+        #_____________апдейт_______ Quick-select profile flag (selection blend refinement)
+        quick_select_profile_applied = False
         nsfw_negative_prompt_applied = False
         if nsfw_filter_active and nsfw_negative_prompt_extra:
             merged_negative_prompt = _merge_negative_prompt_terms(
@@ -872,6 +1437,24 @@ async def generate_image(
              else:
                  actual_mode = "text2img"
 
+        #_____________апдейт_______ Spot-heal tool profile for small-defect retouch
+        if active_tool == "spot_heal" and actual_mode == "inpainting":
+            final_negative_prompt = _merge_negative_prompt_terms(
+                final_negative_prompt,
+                "acne, pimples, dust, scratches, blemish, stain, artifact",
+            )
+            denoising_strength = min(denoising_strength, 0.55)
+            spot_heal_profile_applied = True
+
+        #_____________апдейт_______ Quick-select refine profile for pasted-object seam cleanup
+        if active_tool == "quick_select" and actual_mode == "inpainting":
+            final_negative_prompt = _merge_negative_prompt_terms(
+                final_negative_prompt,
+                "cutout edge, hard seam, duplicate artifact, mismatched texture, ghosting",
+            )
+            denoising_strength = max(denoising_strength, 0.62)
+            quick_select_profile_applied = True
+
         # 2. Load Model
         pipeline_type = actual_mode
         if actual_mode not in ["text2img", "img2img", "inpainting", "controlnet"]:
@@ -880,11 +1463,25 @@ async def generate_image(
         if model_manager.is_cancel_requested(request_id):
             raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
 
-        generation_preview_store.start(request_id, steps)
-
         async with model_manager.generation_session(request_id):
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+            # NSFW-фильтр включён → safety-checker нужен ПЕРЕД генерацией:
+            # подгружаем (скачивается при первом разе) и fail-fast, чтобы не
+            # тратить SD-прогон, если классификатор недоступен.
+            if settings.NSFW_FILTER_ENABLED:
+                checker_ready = await asyncio.to_thread(nsfw_safety_checker.is_available)
+                if not checker_ready:
+                    generation_preview_store.clear(request_id)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            "NSFW-фильтр включён, но safety-checker не загрузился "
+                            f"('{settings.NSFW_SAFETY_CHECKER_MODEL}'). Проверьте доступ к "
+                            "модели или отключите фильтр: NSFW_FILTER_ENABLED=false."
+                        ),
+                    )
 
             pipe = await model_manager.get_model(
                 runtime_model_id,
@@ -901,24 +1498,37 @@ async def generate_image(
                 seed = random.randint(0, 2**32 - 1)
 
             generator = torch.Generator(device=model_manager.device).manual_seed(seed)
-            try:
-                # Use Compel to process the prompts with A1111 weights
-                embeds_kwargs = _process_prompt_with_compel(
-                    pipe,
-                    final_prompt,
-                    final_negative_prompt,
-                    model_family
+            if diffusers_clip_skip is not None:
+                # compel has no clip-skip support, so honoring CLIP_SKIP>1 requires
+                # the plain diffusers parser (A1111 prompt weights are unavailable).
+                logger.info(
+                    "CLIP_SKIP=%s configured; using diffusers prompt parser instead of Compel.",
+                    configured_clip_skip,
                 )
-                prompt_call_kwargs = {
-                    **embeds_kwargs
-                }
-            except Exception as e:
-                logger.warning(f"Compel prompt processing failed: {e}. Falling back to default diffusers parser.")
                 prompt_call_kwargs = {
                     "prompt": final_prompt,
                     "negative_prompt": final_negative_prompt,
                     "clip_skip": diffusers_clip_skip,
                 }
+            else:
+                try:
+                    # Use Compel to process the prompts with A1111 weights
+                    embeds_kwargs = _process_prompt_with_compel(
+                        pipe,
+                        final_prompt,
+                        final_negative_prompt,
+                        model_family
+                    )
+                    prompt_call_kwargs = {
+                        **embeds_kwargs
+                    }
+                except Exception as e:
+                    logger.warning(f"Compel prompt processing failed: {e}. Falling back to default diffusers parser.")
+                    prompt_call_kwargs = {
+                        "prompt": final_prompt,
+                        "negative_prompt": final_negative_prompt,
+                        "clip_skip": diffusers_clip_skip,
+                    }
 
             result_image = None
             logger.info(
@@ -933,10 +1543,22 @@ async def generate_image(
                 nsfw_negative_prompt_applied,
             )
 
+            # --- Final-stage timing instrumentation -------------------------
+            # last_step_perf[0] is set (inside the worker thread) when the last
+            # denoise step fires; everything between that and the response is the
+            # invisible tail the user perceives as "preview -> sharp hang".
+            last_step_perf = [None]
+            composite_ms = 0.0
+
             def step_callback(pipeline, step_index, timestep, callback_kwargs):
                 if model_manager.is_cancel_requested(request_id):
                     logger.info("Interrupting pipeline request_id=%s at step %s", request_id, step_index)
                     pipeline._interrupt = True
+
+                # img2img/inpaint run fewer than `steps` iterations (strength
+                # scaling), so we can't key off "== steps". Stamp every step; the
+                # final callback wins and marks the start of the decode tail.
+                last_step_perf[0] = time.perf_counter()
 
                 should_publish_preview = (
                     step_index == 0
@@ -964,6 +1586,7 @@ async def generate_image(
                 return callback_kwargs
 
             # 4. Generate
+            t_gen_start = time.perf_counter()
             if actual_mode == "text2img":
                 result = await asyncio.to_thread(
                     pipe,
@@ -1043,19 +1666,73 @@ async def generate_image(
                 # COMPOSITING
                 # Essential for "Inpainting" to preserve unmasked pixels bit-perfectly.
                 # Essential for "Outpainting" to keep the original context sharp (not VAE-reconstructed).
-                if image_input and blend_mask_input:
-                    if result_image.size == image_input.size == blend_mask_input.size:
-                        # Use new feather_blend logic for seamless edges
-                        result_image = feather_blend(
-                            image_input,
-                            result_image,
-                            blend_mask_input,
-                            generation_mask_input,
-                        )
+                if image_input and blend_mask_input and result_image.size == image_input.size == blend_mask_input.size:
+                    blend_background = image_input
+                    if (
+                        has_transparency
+                        and outpaint_generation_mask is not None
+                        and outpaint_generation_mask.size == result_image.size
+                    ):
+                        # Для outpaint фон блендинга должен быть ЧИСТЫМ: резкий
+                        # оригинал там, где он есть, и сгенерированный результат
+                        # в дыре. Иначе перо шва подмешивает blur-заливку с шумом
+                        # (которой засеяна дыра) → шумный стык. Подменяем дыру
+                        # результатом до растушёвки.
+                        blend_background = image_input.copy()
+                        blend_background.paste(result_image, mask=outpaint_generation_mask)
+                    # Use feather_blend logic for seamless edges
+                    _t_composite = time.perf_counter()
+                    result_image = feather_blend(
+                        blend_background,
+                        result_image,
+                        blend_mask_input,
+                    )
+                    composite_ms = (time.perf_counter() - _t_composite) * 1000.0
+
+            # 4.4 Final-stage tail timing: from the last denoise step to here is
+            # VAE decode (+ offload swap) + the inpaint composite above.
+            t_after_pipeline = time.perf_counter()
+            denoise_ms = (
+                (last_step_perf[0] - t_gen_start) * 1000.0 if last_step_perf[0] else 0.0
+            )
+            decode_tail_ms = (
+                (t_after_pipeline - last_step_perf[0]) * 1000.0 if last_step_perf[0] else 0.0
+            )
 
             # 4.5 Check for cancellation
             if model_manager.is_cancel_requested(request_id):
                 raise HTTPException(status_code=499, detail="Generation was cancelled by user.")
+
+        # 4.6 NSFW gate. Когда фильтр включён, каждая готовая картинка проходит
+        # классификатор (модель уже подгружена выше). Fail-closed: если он вдруг
+        # недоступен — картинку НЕ отдаём.
+        nsfw_ms = 0.0
+        if result_image is not None and settings.NSFW_FILTER_ENABLED:
+            _t_nsfw = time.perf_counter()
+            verdict = await asyncio.to_thread(nsfw_safety_checker.is_nsfw, result_image)
+            nsfw_ms = (time.perf_counter() - _t_nsfw) * 1000.0
+            if verdict is None:
+                logger.error(
+                    "NSFW gate: safety checker unavailable — blocking output (request_id=%s)",
+                    request_id,
+                )
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "NSFW-фильтр недоступен (safety-checker не загрузился). "
+                        "Картинка заблокирована. Проверьте доступ к модели "
+                        f"'{settings.NSFW_SAFETY_CHECKER_MODEL}' или отключите фильтр: "
+                        "NSFW_FILTER_ENABLED=false."
+                    ),
+                )
+            if verdict is True:
+                logger.warning("NSFW gate: blocked flagged image (request_id=%s)", request_id)
+                generation_preview_store.clear(request_id)
+                raise HTTPException(
+                    status_code=422,
+                    detail="Результат заблокирован NSFW-фильтром.",
+                )
 
         # 5. Save & Return
         if result_image:
@@ -1083,11 +1760,17 @@ async def generate_image(
                 #_____________апдейт_______ Prompt transformation trace
                 "raw_prompt": transform_result.raw_prompt,
                 "transformed_prompt": transform_result.transformed_prompt,
-                "transformed_negative_prompt": transform_result.transformed_negative_prompt,
+                "transformed_negative_prompt": final_negative_prompt,
+                "transformed_negative_prompt_from_positive": transform_result.transformed_negative_prompt,
                 "prompt_transform_status": transform_result.transform_status,
                 "prompt_transform_provider": transform_result.provider,
                 "prompt_transform_latency_ms": transform_result.latency_ms,
                 "prompt_transform_strict": settings.PROMPT_TRANSFORM_STRICT,
+                "negative_prompt_transform_source": negative_transform_source,
+                "negative_prompt_transform_status": negative_transform_result.transform_status,
+                "negative_prompt_transform_provider": negative_transform_result.provider,
+                "negative_prompt_transform_latency_ms": negative_transform_result.latency_ms,
+                "negative_prompt_transform_strict": settings.NEG_PROMPT_TRANSFORM_STRICT,
                 "nsfw_filter_active": nsfw_filter_active,
                 "nsfw_negative_prompt_applied": nsfw_negative_prompt_applied,
                 "nsfw_negative_prompt_extra": nsfw_negative_prompt_extra if nsfw_filter_active else "",
@@ -1095,25 +1778,66 @@ async def generate_image(
                 "diffusers_clip_skip": diffusers_clip_skip,
                 "preview_method": resolved_preview_method,
                 "preview_interval_steps": preview_interval_steps,
+                #_____________апдейт_______ Active editor tool trace from frontend
+                "active_tool": active_tool,
+                #_____________апдейт_______ Spot-heal profile telemetry
+                "spot_heal_profile_applied": spot_heal_profile_applied,
+                #_____________апдейт_______ Quick-select profile telemetry
+                "quick_select_profile_applied": quick_select_profile_applied,
             }
             #_____________апдейт_______ Keep error details only when fallback happened
             if transform_result.error:
                 meta["prompt_transform_error"] = transform_result.error
+            if negative_transform_result.error:
+                meta["negative_prompt_transform_error"] = negative_transform_result.error
             
-            filename = save_image_with_metadata(result_image, meta, str(settings.OUTPUT_DIR))
+            # Картинка крупная и сидит ровно на пути «превью → чёткая». Кодируем
+            # в потоке (не блокируя event-loop): lossless PNG — на диск в фоне, а
+            # на экран отдаём компактный WebP инлайном (через туннель ~4–5× меньше
+            # PNG, без второго запроса к /outputs и без ожидания записи на диск).
+            _t_encode = time.perf_counter()
+            png_bytes, webp_bytes, filename = await asyncio.to_thread(
+                encode_result_for_delivery, result_image, meta, settings.CANDIDATE_WEBP_QUALITY
+            )
+            encode_ms = (time.perf_counter() - _t_encode) * 1000.0
+            background_tasks.add_task(
+                write_output_bytes, png_bytes, filename, str(settings.OUTPUT_DIR)
+            )
+            _t_b64 = time.perf_counter()
+            image_data_url = "data:image/webp;base64," + base64.b64encode(webp_bytes).decode("ascii")
+            b64_ms = (time.perf_counter() - _t_b64) * 1000.0
+
+            # Breakdown of the "preview -> sharp" tail so a slow final stage is
+            # attributable. vae_decode ≈ pipe_to_result − composite.
+            logger.info(
+                "Final-stage timing (ms): request_id=%s mode=%s size=%sx%s steps=%s "
+                "denoise=%.0f pipe_to_result=%.0f composite=%.0f nsfw=%.0f encode=%.0f "
+                "b64=%.0f png_kb=%.0f webp_kb=%.0f",
+                request_id, actual_mode, width, height, steps,
+                denoise_ms, decode_tail_ms, composite_ms, nsfw_ms, encode_ms,
+                b64_ms, len(png_bytes) / 1024.0, len(webp_bytes) / 1024.0,
+            )
             return {
                 "status": "success",
                 "url": f"/outputs/{filename}",
+                "image_data_url": image_data_url,
                 "request_id": request_id,
                 "meta": meta
             }
             
     except HTTPException as e:
-        if 'request_id' in locals() and request_id:
+        # request_id is a Form parameter, so it is always bound here.
+        if request_id:
             generation_preview_store.mark(
                 request_id,
                 status="cancelled" if e.status_code == 499 else "error",
             )
+        raise
+    except GenerationBusyError:
+        # Backpressure, not a generation failure: never reached the lock, so no
+        # partial work to clean up. Let the dedicated 429 handler answer.
+        if request_id:
+            generation_preview_store.mark(request_id, status="error")
         raise
     except Exception as e:
         if request_id:
@@ -1121,6 +1845,411 @@ async def generate_image(
         logger.error(f"Generation failed: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tools/spot-heal")
+async def tool_spot_heal(
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(default=None),
+    center_x: Optional[int] = Form(default=None),
+    center_y: Optional[int] = Form(default=None),
+    radius: int = Form(default=20),
+    mask_blur: int = Form(default=8),
+    mask_padding: int = Form(default=4),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    radius = _validate_int_field("radius", radius, 1, 512)
+    mask_blur = _validate_int_field("mask_blur", mask_blur, 0, 128)
+    mask_padding = _validate_int_field("mask_padding", mask_padding, 0, 128)
+
+    if mask_image is not None:
+        raw_mask = await _read_upload_image(mask_image, mode="L")
+        raw_mask = raw_mask.resize(source.size, Image.Resampling.NEAREST)
+    else:
+        if center_x is None or center_y is None:
+            raise _validation_error("Provide mask_image or center_x/center_y.")
+        if center_x < 0 or center_y < 0 or center_x >= source.width or center_y >= source.height:
+            raise _validation_error("center_x/center_y must be inside image bounds.")
+        raw_mask = _build_circle_mask(source.width, source.height, center_x, center_y, radius)
+
+    generation_mask, blend_mask = process_mask_for_inpainting(
+        raw_mask,
+        mask_padding=mask_padding,
+        mask_blur=mask_blur,
+    )
+    healed = source.filter(ImageFilter.MedianFilter(size=5)).filter(ImageFilter.GaussianBlur(radius=1.4))
+    result = feather_blend(source, healed, blend_mask)
+
+    filename = _save_tool_image(
+        result,
+        {
+            "tool": "spot_heal",
+            "mask_blur": mask_blur,
+            "mask_padding": mask_padding,
+            "radius": radius,
+        },
+        "tool_spot_heal",
+    )
+    return {
+        "status": "success",
+        "url": f"/outputs/{filename}",
+        "meta": {
+            "tool": "spot_heal",
+            "width": source.width,
+            "height": source.height,
+            "mask_blur": mask_blur,
+            "mask_padding": mask_padding,
+        },
+    }
+
+
+@app.post("/tools/clone-stamp")
+async def tool_clone_stamp(
+    init_image: UploadFile = File(...),
+    source_x: int = Form(...),
+    source_y: int = Form(...),
+    target_x: int = Form(...),
+    target_y: int = Form(...),
+    radius: int = Form(default=24),
+    feather: int = Form(default=8),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    radius = _validate_int_field("radius", radius, 1, 512)
+    feather = _validate_int_field("feather", feather, 0, 128)
+
+    for field_name, x_value, y_value in (
+        ("source", source_x, source_y),
+        ("target", target_x, target_y),
+    ):
+        if x_value < 0 or y_value < 0 or x_value >= source.width or y_value >= source.height:
+            raise _validation_error(f"{field_name}_x/{field_name}_y must be inside image bounds.")
+
+    crop_box = (
+        max(0, source_x - radius),
+        max(0, source_y - radius),
+        min(source.width, source_x + radius + 1),
+        min(source.height, source_y + radius + 1),
+    )
+    patch = source.crop(crop_box)
+    patch_layer = Image.new("RGB", source.size, (0, 0, 0))
+    patch_presence = Image.new("L", source.size, 0)
+
+    target_left = target_x - patch.width // 2
+    target_top = target_y - patch.height // 2
+    patch_layer.paste(patch, (target_left, target_top))
+    patch_presence.paste(255, (target_left, target_top, target_left + patch.width, target_top + patch.height))
+
+    circle_mask = _build_circle_mask(source.width, source.height, target_x, target_y, radius)
+    composed_mask = ImageChops.multiply(circle_mask, patch_presence)
+    if feather > 0:
+        composed_mask = composed_mask.filter(ImageFilter.GaussianBlur(radius=feather))
+
+    result = Image.composite(patch_layer, source, composed_mask)
+    filename = _save_tool_image(
+        result,
+        {
+            "tool": "clone_stamp",
+            "radius": radius,
+            "feather": feather,
+            "source_x": source_x,
+            "source_y": source_y,
+            "target_x": target_x,
+            "target_y": target_y,
+        },
+        "tool_clone_stamp",
+    )
+    return {
+        "status": "success",
+        "url": f"/outputs/{filename}",
+        "meta": {
+            "tool": "clone_stamp",
+            "width": source.width,
+            "height": source.height,
+            "radius": radius,
+            "feather": feather,
+        },
+    }
+
+
+@app.post("/tools/quick-select/refine")
+async def tool_quick_select_refine(
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(default=None),
+    selection_points: Optional[str] = Form(default=None),
+    selection_left: Optional[int] = Form(default=None),
+    selection_top: Optional[int] = Form(default=None),
+    selection_width: Optional[int] = Form(default=None),
+    selection_height: Optional[int] = Form(default=None),
+    expand: int = Form(default=6),
+    feather: int = Form(default=8),
+):
+    source = await _read_upload_image(init_image, mode="RGB")
+    expand = _validate_int_field("expand", expand, 0, 128)
+    feather = _validate_int_field("feather", feather, 0, 128)
+
+    if mask_image is not None:
+        raw_mask = await _read_upload_image(mask_image, mode="L")
+        raw_mask = raw_mask.resize(source.size, Image.Resampling.NEAREST)
+    elif selection_points:
+        points = _parse_selection_points(selection_points, source.width, source.height)
+        raw_mask = _build_polygon_mask(source.width, source.height, points)
+    elif (
+        selection_left is not None
+        and selection_top is not None
+        and selection_width is not None
+        and selection_height is not None
+    ):
+        if selection_width <= 0 or selection_height <= 0:
+            raise _validation_error("selection_width and selection_height must be > 0.")
+        if selection_left < 0 or selection_top < 0:
+            raise _validation_error("selection_left and selection_top must be >= 0.")
+        if selection_left + selection_width > source.width or selection_top + selection_height > source.height:
+            raise _validation_error("selection rectangle must stay inside image bounds.")
+        raw_mask = Image.new("L", source.size, 0)
+        draw = ImageDraw.Draw(raw_mask)
+        draw.rectangle(
+            (
+                selection_left,
+                selection_top,
+                selection_left + selection_width,
+                selection_top + selection_height,
+            ),
+            fill=255,
+        )
+    else:
+        raise _validation_error(
+            "Provide mask_image, selection_points, or selection_left/top/width/height."
+        )
+
+    generation_mask, blend_mask = process_mask_for_inpainting(
+        raw_mask,
+        mask_padding=expand,
+        mask_blur=feather,
+    )
+    bbox = generation_mask.getbbox()
+
+    generation_filename = _save_tool_image(
+        generation_mask,
+        {
+            "tool": "quick_select_refine_generation_mask",
+            "expand": expand,
+            "feather": feather,
+        },
+        "tool_quick_select_generation_mask",
+    )
+    blend_filename = _save_tool_image(
+        blend_mask,
+        {
+            "tool": "quick_select_refine_blend_mask",
+            "expand": expand,
+            "feather": feather,
+        },
+        "tool_quick_select_blend_mask",
+    )
+
+    return {
+        "status": "success",
+        "data": {
+            "generation_mask_url": f"/outputs/{generation_filename}",
+            "blend_mask_url": f"/outputs/{blend_filename}",
+            "bbox": {
+                "left": int(bbox[0]) if bbox else 0,
+                "top": int(bbox[1]) if bbox else 0,
+                "right": int(bbox[2]) if bbox else 0,
+                "bottom": int(bbox[3]) if bbox else 0,
+            },
+            "width": source.width,
+            "height": source.height,
+            "expand": expand,
+            "feather": feather,
+        },
+    }
+
+
+#_____________апдейт_______ Fast quick-select refine endpoint (selection -> local inpaint)
+@app.post("/quick-select/refine")
+async def quick_select_refine(
+    background_tasks: BackgroundTasks,
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(None),
+    request_id: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
+    negative_prompt: Optional[str] = Form(default=None),
+    width: int = Form(default=512),
+    height: int = Form(default=512),
+    steps: int = Form(default=16),
+    cfg: float = Form(default=7.0),
+    seed: int = Form(default=-1),
+    model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    model_family: Optional[str] = Form(default=None),
+    sampler: str = Form(default="Euler a"),
+    denoising_strength: float = Form(default=0.62),
+    mask_blur: int = Form(default=12),
+    mask_padding: int = Form(default=20),
+    selection_left: Optional[int] = Form(default=None),
+    selection_top: Optional[int] = Form(default=None),
+    selection_width: Optional[int] = Form(default=None),
+    selection_height: Optional[int] = Form(default=None),
+    selection_feather: int = Form(default=10),
+):
+    #_____________апдейт_______ Quick-select prompt defaults and safety caps
+    quick_prompt = (prompt or "").strip() or (
+        "blend duplicated object naturally, preserve scene lighting, preserve perspective, seamless composition"
+    )
+    quick_negative_prompt = (negative_prompt or "").strip() or (
+        "hard seam, cutout edge, duplicate artifact, ghosting, blurry edge, mismatch texture"
+    )
+    quick_steps = max(6, min(28, int(steps)))
+    quick_cfg = max(4.0, min(14.0, float(cfg)))
+    quick_denoising_strength = max(0.45, min(0.8, float(denoising_strength)))
+    quick_mask_blur = max(0, min(96, int(mask_blur)))
+    quick_mask_padding = max(0, min(96, int(mask_padding)))
+    quick_selection_feather = max(0, min(64, int(selection_feather)))
+
+    #_____________апдейт_______ Build mask from contour upload or rectangle fallback
+    if mask_image is not None:
+        mask_upload = mask_image
+        selection_log = "custom_mask"
+    else:
+        if None in (selection_left, selection_top, selection_width, selection_height):
+            raise _validation_error(
+                "quick-select refine requires either mask_image or selection_left/top/width/height."
+            )
+        selection_mask = _build_quick_select_mask(
+            width=width,
+            height=height,
+            selection_left=selection_left,
+            selection_top=selection_top,
+            selection_width=selection_width,
+            selection_height=selection_height,
+            feather=quick_selection_feather,
+        )
+        mask_buffer = io.BytesIO()
+        selection_mask.save(mask_buffer, format="PNG")
+        mask_buffer.seek(0)
+        mask_upload = UploadFile(filename="quick-select-mask.png", file=mask_buffer)
+        selection_log = f"{selection_left},{selection_top},{selection_width},{selection_height}"
+
+    logger.info(
+        "Quick-select refine request: request_id=%s model_id=%s size=%sx%s selection=%s steps=%s cfg=%s denoise=%s",
+        request_id,
+        model_id,
+        width,
+        height,
+        selection_log,
+        quick_steps,
+        quick_cfg,
+        quick_denoising_strength,
+    )
+
+    #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
+    return await generate_image(
+        background_tasks,
+        prompt=quick_prompt,
+        request_id=request_id,
+        raw_prompt=quick_prompt,
+        use_prompt_transform=False,
+        negative_prompt=quick_negative_prompt,
+        width=width,
+        height=height,
+        steps=quick_steps,
+        cfg=quick_cfg,
+        seed=seed,
+        model_id=model_id,
+        model_family=model_family,
+        sampler=sampler,
+        mode="inpainting",
+        style_preset=None,
+        preview_method=None,
+        denoising_strength=quick_denoising_strength,
+        mask_blur=quick_mask_blur,
+        mask_padding=quick_mask_padding,
+        init_image=init_image,
+        mask_image=mask_upload,
+        active_tool="quick_select",
+    )
+
+
+#_____________апдейт_______ Fast spot-heal endpoint (click -> instant local inpaint)
+@app.post("/spot-heal")
+async def spot_heal(
+    background_tasks: BackgroundTasks,
+    init_image: UploadFile = File(...),
+    mask_image: UploadFile = File(...),
+    request_id: Optional[str] = Form(default=None),
+    prompt: Optional[str] = Form(default=None),
+    negative_prompt: Optional[str] = Form(default=None),
+    width: int = Form(default=512),
+    height: int = Form(default=512),
+    steps: int = Form(default=12),
+    cfg: float = Form(default=6.0),
+    seed: int = Form(default=-1),
+    model_id: str = Form(default=settings.DEFAULT_MODEL_ID),
+    model_family: Optional[str] = Form(default=None),
+    sampler: str = Form(default="Euler a"),
+    denoising_strength: float = Form(default=0.45),
+    mask_blur: int = Form(default=8),
+    mask_padding: int = Form(default=16),
+):
+    #_____________апдейт_______ Spot-heal safe defaults with strict caps for responsiveness
+    spot_prompt = (prompt or "").strip() or (
+        "clean seamless local retouch, preserve original composition, preserve lighting, preserve texture"
+    )
+    spot_negative_prompt = (negative_prompt or "").strip() or (
+        "artifact, blur, smudge, overprocessed, oversmoothed, distorted details"
+    )
+    spot_steps = max(4, min(24, int(steps)))
+    spot_cfg = max(3.0, min(12.0, float(cfg)))
+    spot_denoising_strength = max(0.2, min(0.65, float(denoising_strength)))
+    spot_mask_blur = max(0, min(64, int(mask_blur)))
+    spot_mask_padding = max(0, min(64, int(mask_padding)))
+
+    logger.info(
+        "Spot-heal request received: request_id=%s model_id=%s size=%sx%s steps=%s cfg=%s denoise=%s mask_blur=%s mask_padding=%s",
+        request_id,
+        model_id,
+        width,
+        height,
+        spot_steps,
+        spot_cfg,
+        spot_denoising_strength,
+        spot_mask_blur,
+        spot_mask_padding,
+    )
+
+    #_____________апдейт_______ Reuse core generation endpoint with forced inpainting profile
+    return await generate_image(
+        background_tasks,
+        prompt=spot_prompt,
+        request_id=request_id,
+        raw_prompt=spot_prompt,
+        use_prompt_transform=False,
+        negative_prompt=spot_negative_prompt,
+        width=width,
+        height=height,
+        steps=spot_steps,
+        cfg=spot_cfg,
+        seed=seed,
+        model_id=model_id,
+        model_family=model_family,
+        sampler=sampler,
+        mode="inpainting",
+        style_preset=None,
+        preview_method=None,
+        denoising_strength=spot_denoising_strength,
+        mask_blur=spot_mask_blur,
+        mask_padding=spot_mask_padding,
+        init_image=init_image,
+        mask_image=mask_image,
+        active_tool="spot_heal",
+    )
+
+MIN_SCALE_FACTOR = 0.1
+MAX_SCALE_FACTOR = 16.0
+# Cap on the upscaled output area: prevents a large upload x16 from
+# allocating a multi-gigabyte PIL buffer and OOM-killing the process.
+MAX_UPSCALE_PIXELS = 4096 * 4096
+
 
 @app.post("/upscale")
 async def upscale_image(
@@ -1131,20 +2260,58 @@ async def upscale_image(
     Architecture placeholder for Upscaling.
     Currently implements a simple resize, but ready for SwinIR/RealESRGAN integration.
     """
+    if not math.isfinite(scale_factor) or scale_factor < MIN_SCALE_FACTOR or scale_factor > MAX_SCALE_FACTOR:
+        raise HTTPException(
+            status_code=422,
+            detail=f"scale_factor must be a finite number between {MIN_SCALE_FACTOR} and {MAX_SCALE_FACTOR}.",
+        )
     try:
         content = await image.read()
         pil_image = Image.open(io.BytesIO(content)).convert("RGB")
-        
+
         # Placeholder implementation: Bicubic resize
         new_width = int(pil_image.width * scale_factor)
         new_height = int(pil_image.height * scale_factor)
+        if new_width < 1 or new_height < 1:
+            raise HTTPException(
+                status_code=422,
+                detail="Upscaled image dimensions must be at least 1x1 pixel.",
+            )
+        if new_width * new_height > MAX_UPSCALE_PIXELS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Upscaled image area {new_width}x{new_height} exceeds the limit "
+                    f"of {MAX_UPSCALE_PIXELS} pixels. Reduce scale_factor or input size."
+                ),
+            )
         upscaled = pil_image.resize((new_width, new_height), Image.BICUBIC)
-        
+
         filename = save_image_with_metadata(upscaled, {"upscale": scale_factor}, str(settings.OUTPUT_DIR))
         return {"status": "success", "url": f"/outputs/{filename}"}
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upscale failed: {e}")
+
+# Раздача собранного фронтенда (вариант A: один origin = один публичный URL).
+# Монтируется ПОСЛЕ всех API-роутов, поэтому конкретные эндпоинты матчатся
+# первыми, а на "/" уже стоит явный read_root (он перебивает этот mount).
+# html=True отдаёт index.html для каталога; клиентского роутинга у SPA нет.
+if settings.SERVE_FRONTEND:
+    if settings.FRONTEND_DIST_DIR.is_dir():
+        app.mount(
+            "/",
+            StaticFiles(directory=str(settings.FRONTEND_DIST_DIR), html=True),
+            name="frontend",
+        )
+        logger.info("Serving frontend SPA from %s", settings.FRONTEND_DIST_DIR)
+    else:
+        logger.warning(
+            "SERVE_FRONTEND=true, но сборка не найдена: %s (соберите фронт)",
+            settings.FRONTEND_DIST_DIR,
+        )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

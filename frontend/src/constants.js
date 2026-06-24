@@ -5,8 +5,8 @@ export const CANVAS_DEFAULTS = {
     CANDIDATE_BORDER_COLOR: '#00ff00',
     MASK_COLOR: 'rgba(255, 0, 0, 0.5)',
     ERASER_COLOR: '#808080',
-    DEFAULT_WIDTH: 512,
-    DEFAULT_HEIGHT: 512
+    DEFAULT_WIDTH: 1024,
+    DEFAULT_HEIGHT: 1024
 };
 
 export const CANVAS_OBJECT_ROLES = {
@@ -32,6 +32,9 @@ export const resolveApiUrl = (path = "") => {
 
 export const API_ENDPOINTS = {
     GENERATE: `${API_BASE_URL}/generate`,
+    CONFIG: `${API_BASE_URL}/config`,
+    SPOT_HEAL: `${API_BASE_URL}/spot-heal`,
+    QUICK_SELECT_REFINE: `${API_BASE_URL}/quick-select/refine`,
     PROMPT_TRANSFORM: `${API_BASE_URL}/prompt/transform`,
     PROMPT_HEALTH: `${API_BASE_URL}/prompt/health`,
     GENERATION_PREVIEW: (requestId) => `${API_BASE_URL}/generate/preview/${requestId}`,
@@ -39,7 +42,15 @@ export const API_ENDPOINTS = {
     CANCEL: `${API_BASE_URL}/cancel`,
     HISTORY_SAVE: `${API_BASE_URL}/history/save`,
     HISTORY_DELETE: `${API_BASE_URL}/history/delete`,
-    MODELS: `${API_BASE_URL}/models`
+    MODELS: `${API_BASE_URL}/models`,
+    MODELS_DOWNLOAD: `${API_BASE_URL}/models/download`,
+    MODELS_DOWNLOADS: `${API_BASE_URL}/models/downloads`,
+    MODELS_DOWNLOAD_STATUS: (jobId) => `${API_BASE_URL}/models/download/${jobId}`,
+    MODELS_DOWNLOAD_CANCEL: (jobId) => `${API_BASE_URL}/models/download/${jobId}/cancel`,
+    MODELS_DELETE: `${API_BASE_URL}/models/delete`,
+    MODELS_SEARCH_CIVITAI: `${API_BASE_URL}/models/search/civitai`,
+    MODELS_SEARCH_HF: `${API_BASE_URL}/models/search/huggingface`,
+    MODELS_HF_FILES: `${API_BASE_URL}/models/huggingface/files`
 };
 
 // Initial placeholder shown while fetching the real list from the backend
@@ -51,7 +62,7 @@ export const AVAILABLE_SAMPLERS = [
     "Euler a",
     "Euler",
     "DPM++ 2M Karras",
-    "DPM++ 2S a Karras",
+    "DPM++ 2M SDE Karras",
     "DPM++ SDE Karras",
     "DPM2 a Karras",
     "DDIM",
@@ -61,18 +72,31 @@ export const AVAILABLE_SAMPLERS = [
     "LMS"
 ];
 
+// Старое имя «DPM++ 2S a Karras» фактически работало как 2M SDE — честно
+// переименовано; сохранённые настройки мигрируются при загрузке.
+export const LEGACY_SAMPLER_ALIASES = {
+    "DPM++ 2S a Karras": "DPM++ 2M SDE Karras"
+};
+
+// Новые пресеты добавляются только в конец: frame_size_index хранится в
+// localStorage, и перестановка сломала бы сохранённый выбор пользователя.
 export const AVAILABLE_SIZES = [
     { width: 512, height: 512, label: "512 x 512 (Квадрат)" },
     { width: 768, height: 512, label: "768 x 512 (Альбом)" },
     { width: 512, height: 768, label: "512 x 768 (Портрет)" },
-    { width: 768, height: 768, label: "768 x 768 (Квадрат HD)" }
+    { width: 768, height: 768, label: "768 x 768 (Квадрат HD)" },
+    { width: 1024, height: 1024, label: "1024 x 1024 (SDXL Квадрат)" },
+    { width: 1152, height: 896, label: "1152 x 896 (SDXL Альбом)" },
+    { width: 896, height: 1152, label: "896 x 1152 (SDXL Портрет)" },
+    { width: 1536, height: 1024, label: "1536 x 1024 (Широкий HD)" },
+    { width: 1024, height: 1536, label: "1024 x 1536 (Высокий HD)" }
 ];
 
 export const GENERATION_NUMERIC_PARAM_RULES = {
     frame_size_index: {
         label: "Размер рамки",
         type: "int",
-        defaultValue: 0,
+        defaultValue: 4,
         min: 0,
         max: AVAILABLE_SIZES.length - 1
     },
@@ -93,14 +117,14 @@ export const GENERATION_NUMERIC_PARAM_RULES = {
     cfg: {
         label: "CFG",
         type: "float",
-        defaultValue: 7.5,
+        defaultValue: 5,
         min: 1,
         max: 20
     },
     denoising_strength: {
         label: "Денойзинг",
         type: "float",
-        defaultValue: 0.75,
+        defaultValue: 1,
         min: 0,
         max: 1
     },

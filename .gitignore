@@ -2,9 +2,26 @@
 backend/.env
 backend/venv/
 frontend/node_modules/
+deploy/backend/*.env
+# Runtime env-файлы деплоя (создаются bootstrap.sh / CD на сервере). Шаблон
+# deploy/backend.env.example остаётся в репозитории.
+deploy/backend.env
+deploy/backend.*.env
+# Рантайм-артефакты bare-деплоя под vast.ai (deploy/run-vast.sh / run-client.sh)
+deploy/.venv-vast/
+deploy/.cloudflared-*
+deploy/.cloudflared.log
+deploy/.uvicorn.log
+frontend/.env.local
 
 # Build artifacts
 frontend/dist/
+frontend/coverage/
+backend/htmlcov/
+backend/coverage.xml
+backend/coverage.json
+.coverage
+.coverage.*
 __pycache__/
 
 # Generated outputs

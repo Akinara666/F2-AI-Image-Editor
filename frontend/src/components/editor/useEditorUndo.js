@@ -1,8 +1,19 @@
 import { useRef } from 'react';
 import { fabric } from 'fabric';
 import { createClientId } from '../../constants';
+import { UI_OVERLAY_ROLES } from '../../utils/canvasLogic';
 
 const MAX_UNDO_STEPS = 50;
+
+const UNDO_LAYER_PROPS = [
+    'editorLayerId',
+    'editorLayerName',
+    'editorLayerOpacity',
+    'editorLayerFillOpacity',
+    'editorLayerBlendMode',
+    'editorLayerLocked'
+];
+
 const UNDO_SERIALIZED_PROPS = [
     'editorRole',
     'id',
@@ -11,7 +22,8 @@ const UNDO_SERIALIZED_PROPS = [
     'candidateSourceUrl',
     'assetId',
     'objectCaching',
-    'noScaleCache'
+    'noScaleCache',
+    ...UNDO_LAYER_PROPS
 ];
 
 const UNDO_IMAGE_PROPS = [
@@ -38,7 +50,8 @@ const UNDO_IMAGE_PROPS = [
     'objectCaching',
     'noScaleCache',
     'cropX',
-    'cropY'
+    'cropY',
+    ...UNDO_LAYER_PROPS
 ];
 
 const pickObjectProps = (object, propertyNames) => (
@@ -196,7 +209,11 @@ export const useEditorUndo = () => {
             frameVisual: serializeWithCache(frameVisualObject, undoFrameVisualCacheRef, serializeFrameVisualState),
             objects: canvas
                 .getObjects()
-                .filter((object) => object !== frameObject && object !== frameVisualObject)
+                .filter((object) => (
+                    object !== frameObject
+                    && object !== frameVisualObject
+                    && !UI_OVERLAY_ROLES.includes(object?.editorRole)
+                ))
                 .map(serializeUndoObject)
         };
     };
@@ -256,7 +273,11 @@ export const useEditorUndo = () => {
 
         canvas.discardActiveObject();
         canvas.getObjects()
-            .filter((object) => object !== frameObject && object !== frameVisualObject)
+            .filter((object) => (
+                object !== frameObject
+                && object !== frameVisualObject
+                && !UI_OVERLAY_ROLES.includes(object?.editorRole)
+            ))
             .forEach((object) => canvas.remove(object));
 
         frameObject.set(snapshot.frame);

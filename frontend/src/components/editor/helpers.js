@@ -16,7 +16,10 @@ export const snapshotObjectTransform = (object) => ({
     width: object.width,
     height: object.height,
     scaleX: object.scaleX,
-    scaleY: object.scaleY
+    scaleY: object.scaleY,
+    angle: object.angle,
+    flipX: object.flipX,
+    flipY: object.flipY
 });
 
 export const areTransformsEqual = (left, right) => (
@@ -26,6 +29,9 @@ export const areTransformsEqual = (left, right) => (
     && left.height === right.height
     && left.scaleX === right.scaleX
     && left.scaleY === right.scaleY
+    && left.angle === right.angle
+    && left.flipX === right.flipX
+    && left.flipY === right.flipY
 );
 
 export const serializeFrameState = (object) => ({

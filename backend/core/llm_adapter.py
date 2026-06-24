@@ -1,8 +1,11 @@
 import json
 import logging
 import os
+import random
+import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Optional
 
 from core.config import settings
@@ -14,9 +17,31 @@ class BasePromptLLMAdapter:
         self._state_lock = threading.RLock()
         self._active_calls = 0
         self._unload_requested = False
+        # Dedicated single-worker executor so ALL LLM work (load + inference, for
+        # both the positive and negative transformers that share this adapter)
+        # runs on ONE thread fully isolated from asyncio's shared default pool.
+        # SD generation also offloads to that shared pool — without this isolation
+        # a slow/timed-out inference (Python can't kill the thread) would occupy a
+        # shared worker and could starve image generation, deadlocking it under
+        # the generation lock. max_workers=1 also serialises native llama.cpp calls.
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"llm-{self.__class__.__name__}"
+        )
+
+    @property
+    def executor(self) -> ThreadPoolExecutor:
+        return self._executor
 
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         raise NotImplementedError
+
+    def ensure_ready(self) -> None:
+        """Pre-load heavy resources (weights) before the timed transform call.
+
+        Callers run this outside their transform timeout so that a multi-GB
+        model load is not mistaken for a slow inference. No-op by default.
+        """
+        return None
 
     def _get_logger(self) -> logging.Logger:
         return getattr(self, "logger", logging.getLogger(self.__class__.__name__))
@@ -53,6 +78,15 @@ class BasePromptLLMAdapter:
     def health(self) -> dict[str, Any]:
         return {"status": "ok", "adapter": self.__class__.__name__}
 
+    def should_unload_after_call(self) -> bool:
+        """Whether unloading after every call actually frees a scarce resource.
+
+        Defaults to True so callers honouring unload_after_call keep their old
+        behaviour. Adapters that gain nothing from per-call unloading (e.g. a
+        CPU-only model whose unload only churns disk reads) override this.
+        """
+        return True
+
     def unload(self) -> None:
         with self._state_lock:
             if self._active_calls > 0:
@@ -85,6 +119,10 @@ class StubPromptLLMAdapter(BasePromptLLMAdapter):
             "style_tags": [],
         }
 
+    def should_unload_after_call(self) -> bool:
+        # Nothing is ever loaded, so per-call unloading is pointless.
+        return False
+
 
 #_____________апдейт_______ Qwen GGUF + LoRA adapter (lazy-loaded)
 class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
@@ -99,6 +137,8 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         max_tokens: int = 220,
         temperature: float = 0.2,
         top_p: float = 0.9,
+        repeat_penalty: float = 1.1,
+        seed: int = -1,
         system_prompt: str = "",
         logger: Optional[logging.Logger] = None,
     ):
@@ -112,10 +152,18 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.repeat_penalty = repeat_penalty
+        # < 0 → a fresh random seed per call; >= 0 → fixed (reproducible).
+        self.seed = seed
         self.system_prompt = system_prompt
         self.logger = logger or logging.getLogger("QwenGGUFLoraAdapter")
         self._llm = None
         self._load_lock = threading.Lock()
+        # llama.cpp is NOT thread-safe: concurrent create_chat_completion on the
+        # same Llama object corrupts its internal state and segfaults. The
+        # dedicated single-worker executor already serialises calls in the normal
+        # path; this lock is belt-and-suspenders for any direct run_transform use.
+        self._inference_lock = threading.Lock()
 
     @staticmethod
     def _validate_runtime_file(path: str, label: str) -> str:
@@ -195,6 +243,11 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
         if not text:
             raise RuntimeError("LLM returned empty response.")
 
+        # Qwen3 thinking mode wraps reasoning in <think>...</think> before the
+        # answer. Even with /no_think the model can still emit it; strip it so the
+        # JSON extractor never picks up a brace from inside the reasoning block.
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -206,10 +259,16 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             raise RuntimeError("LLM response does not contain JSON object.")
         return json.loads(text[start : end + 1])
 
+    def ensure_ready(self) -> None:
+        self._ensure_model_loaded()
+
     def transform_to_sd(self, prompt: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         started = time.perf_counter()
         self._ensure_model_loaded()
-        assert self._llm is not None
+        # Explicit check (not assert): asserts are stripped under `python -O`,
+        # which would turn a load failure into a silent None dereference.
+        if self._llm is None:
+            raise RuntimeError("Qwen GGUF model is not loaded.")
 
         ctx = context or {}
         user_negative = (ctx.get("user_negative_prompt") or "").strip()
@@ -237,15 +296,33 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self.n_gpu_layers,
                 self._llm is not None,
             )
-            response = self._llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=self.temperature,
-                top_p=self.top_p,
-                max_tokens=self.max_tokens,
+            # Qwen3 по умолчанию в thinking-режиме: генерирует <think>...</think>
+            # (много токенов, медленно) до ответа. Для SD-промпта это не нужно —
+            # /no_think переключает в прямой режим (стандартный флаг Qwen3/llama.cpp).
+            # Свежий случайный сид на каждый вызов (seed < 0) → разные варианты
+            # промпта; иначе фиксированный сид для воспроизводимости. llama.cpp не
+            # пересеивает RNG, если seed не передать, поэтому задаём явно.
+            call_seed = random.randint(0, 2**32 - 1) if self.seed < 0 else self.seed
+            self.logger.info(
+                "Qwen inference start: seed=%s repeat_penalty=%s temperature=%s top_p=%s",
+                call_seed,
+                self.repeat_penalty,
+                self.temperature,
+                self.top_p,
             )
+            # Lock сериализует доступ к не-thread-safe объекту Llama (см. __init__).
+            with self._inference_lock:
+                response = self._llm.create_chat_completion(
+                    messages=[
+                        {"role": "system", "content": self.system_prompt or settings.LLM_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt + " /no_think"},
+                    ],
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    repeat_penalty=self.repeat_penalty,
+                    seed=call_seed,
+                    max_tokens=self.max_tokens,
+                )
             content = response["choices"][0]["message"]["content"]
             self.logger.info(
                 "Qwen inference finished in %s ms. response_len=%s",
@@ -263,6 +340,13 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
             len(parsed.get("style_tags") or []),
         )
         return parsed
+
+    def should_unload_after_call(self) -> bool:
+        # Unloading only frees VRAM when some layers live on the GPU. For pure
+        # CPU inference (n_gpu_layers == 0) an unload merely forces the next call
+        # to re-read the multi-GB GGUF from disk with no memory benefit, so keep
+        # the model resident.
+        return self.n_gpu_layers != 0
 
     def health(self) -> dict[str, Any]:
         loaded = self._llm is not None
@@ -286,11 +370,23 @@ class QwenGGUFLoraAdapter(BasePromptLLMAdapter):
                 self._llm = None
         import gc
         gc.collect()
+        # When layers were offloaded to the GPU, releasing the Python object is
+        # not enough: the CUDA caching allocator keeps the freed blocks until an
+        # explicit empty_cache(). Skipping this would leave VRAM occupied right
+        # before a heavy SD/SDXL load and could trigger a spurious OOM.
+        if self.n_gpu_layers != 0:
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+            except Exception as exc:
+                self.logger.warning("Could not free CUDA cache after LLM unload: %s", exc)
 
 
 #_____________апдейт_______ Provider factory
-def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
-    provider = (provider_name or "stub").strip().lower()
+def _create_llm_adapter(provider: str) -> BasePromptLLMAdapter:
     if provider in {"qwen_gguf", "qwen_gguf_lora"}:
         return QwenGGUFLoraAdapter(
             model_path=settings.LLM_MODEL_PATH,
@@ -302,6 +398,26 @@ def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
             max_tokens=settings.LLM_MAX_NEW_TOKENS,
             temperature=settings.LLM_TEMPERATURE,
             top_p=settings.LLM_TOP_P,
+            repeat_penalty=settings.LLM_REPEAT_PENALTY,
+            seed=settings.LLM_SEED,
             system_prompt=settings.LLM_SYSTEM_PROMPT,
         )
     return StubPromptLLMAdapter()
+
+
+# Adapters are cached per provider so that the positive and negative prompt
+# transformers reuse a single underlying model instead of each loading its own
+# copy of the (multi-GB) GGUF weights into memory.
+_adapter_cache: dict[str, BasePromptLLMAdapter] = {}
+_adapter_cache_lock = threading.Lock()
+
+
+def build_llm_adapter(provider_name: str) -> BasePromptLLMAdapter:
+    provider = (provider_name or "stub").strip().lower()
+    with _adapter_cache_lock:
+        cached = _adapter_cache.get(provider)
+        if cached is not None:
+            return cached
+        adapter = _create_llm_adapter(provider)
+        _adapter_cache[provider] = adapter
+        return adapter
